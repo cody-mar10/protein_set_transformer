@@ -9,12 +9,12 @@ authors = [{ name = "Cody Martin", email = "codycmar10@gmail.com" }]
 description = "Training and inference on protein sets (genomes)"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
 ]
-dependencies = ["torch>=2", "lightning[extras]", "tables"]
+dependencies = ["torch>=2", "jsonargparse[signatures]", "lightning", "tables"]
 
 [project.scripts]
 pst = "pst:main.main"
