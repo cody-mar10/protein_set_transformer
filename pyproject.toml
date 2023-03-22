@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ptn-set-transformer"
+version = "0.0.1"
+authors = [{ name = "Cody Martin", email = "codycmar10@gmail.com" }]
+description = "Training and inference on protein sets (genomes)"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
+dependencies = ["torch>=2", "lightning[extras]", "tables"]
+
+[project.scripts]
+pst = "pst:main.main"
+
+[project.urls]
+"Homepage" = "https://github.com/cody-mar10/protein_set_transformer"
+"Bug Tracker" = "https://github.com/cody-mar10/protein_set_transformer/issues"
