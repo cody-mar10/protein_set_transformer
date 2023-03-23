@@ -29,8 +29,8 @@ class DeepSet(nn.Module):
     ) -> None:
         super(DeepSet, self).__init__()
         self.n_outputs = n_outputs
-        self.dim_output = out_dim
-        self.encoder = nn.Sequential(
+        self.out_dim = out_dim
+        self._encoder = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
@@ -40,35 +40,45 @@ class DeepSet(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
         )
-        self.decoder = nn.Sequential(
+        self._decoder = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, self.n_outputs * self.dim_output),
+            nn.Linear(hidden_dim, self.n_outputs * self.out_dim),
         )
+
+    def encode(
+        self, X: torch.Tensor, row_mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        # X: [b, p, d]
+        # X.mean(-2) = mean over p dim -> [b, d]
+        # ie average over all ptns for each genome
+        # this part is crucial for making this set size invariant
+        # but each genome also has diff number of ptns -> so need to calc number of actual ptns
+        X = self._encoder(X)
+        if row_mask is None:
+            X = X.mean(-2)
+        else:
+            n_items = row_mask.sum(-1)
+            X = X.sum(-2) / n_items.unsqueeze(1)
+
+        return X
+
+    def decode(self, X: torch.Tensor) -> torch.Tensor:
+        return self._decoder(X).reshape(-1, self.n_outputs, self.out_dim)
 
     def forward(
         self,
         X: torch.Tensor,
         row_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        X = self.encoder(X)
+        return self.decode(self.encode(X, row_mask=row_mask))
 
-        # X: [b, p, d]
-        # X.mean(-2) = mean over p dim -> [b, d]
-        # ie average over all ptns for each genome
-        # this part is crucial for making this set size invariant
-        # but each genome also has diff number of ptns -> so need to calc number of actual ptns
-        if row_mask is None:
-            X = X.mean(-2)
-        else:
-            n_ptns = row_mask.sum(-1)
-            X = X.sum(-2) / n_ptns.unsqueeze(1)
-        X = self.decoder(X).reshape(-1, self.n_outputs, self.dim_output)
-        return X
+
+LayerType = Type[ISAB] | Type[SAB]
 
 
 class SetTransformer(nn.Module):
@@ -79,27 +89,46 @@ class SetTransformer(nn.Module):
         out_dim: int,
         hidden_dim: int = 128,
         num_heads: int = 4,
-        enc_layer: Type[ISAB] | Type[SAB] = ISAB,
-        dec_layer: Type[ISAB] | Type[SAB] = SAB,
+        num_indices: int = 32,
         n_enc_layers: int = 2,
         n_dec_layers: int = 2,
         dropout: float = 0.0,
         bias: bool = True,
         norm: bool = True,
-        **kwargs,
     ) -> None:
+        """A SetTransformer implementation that uses an encoder-decoder framework.
+
+        The encoder represents set elements to be most similar within a set and
+        identifies set elements that are similar between sets.
+
+        The decoder decodes individual set element representations to encode
+        a set-level representation that also respects set-set relationships.
+
+        Args:
+            in_dim (int): data feature dimension
+            n_outputs (int): number of outputs
+            out_dim (int): data output embedding dimension
+            hidden_dim (int, optional): dimension of the hidden layers. Defaults to 128.
+            num_heads (int, optional): number of attention heads. Defaults to 4.
+            num_indices (int, optional): projection dimension for large set efficient multiheaded attention. Defaults to 32.
+            n_enc_layers (int, optional): number of encoder layers. Defaults to 2.
+            n_dec_layers (int, optional): number of decoder layers, not including a pooling attention layer at the beginning and the fully connected layers at the end. Defaults to 2.
+            dropout (float, optional): dropout probability during training. Defaults to 0.0.
+            bias (bool, optional): Include bias in linear layers. Defaults to True.
+            norm (bool, optional): Include a LayerNorm operation after each attention block. Defaults to True.
+        """
         super(SetTransformer, self).__init__()
         self._encoder = nn.ModuleList()
         start_dim = in_dim
         for _ in range(n_enc_layers):
-            layer = enc_layer(
+            layer = ISAB(
                 in_dim=start_dim,
                 out_dim=hidden_dim,
                 num_heads=num_heads,
                 dropout=dropout,
                 bias=bias,
                 norm=norm,
-                **kwargs,
+                num_indices=num_indices,
             )
             self._encoder.append(layer)
             start_dim = hidden_dim
@@ -118,20 +147,14 @@ class SetTransformer(nn.Module):
             )
         )
 
-        if issubclass(dec_layer, SAB):
-            # ISAB needs num_indices
-            # but SAB needs no other args
-            kwargs = dict()
-
         for _ in range(n_dec_layers):
-            layer = dec_layer(
+            layer = SAB(
                 in_dim=hidden_dim,
                 out_dim=hidden_dim,
                 num_heads=num_heads,
                 dropout=dropout,
                 bias=bias,
                 norm=norm,
-                **kwargs,
             )
             self._decoder.append(layer)
 

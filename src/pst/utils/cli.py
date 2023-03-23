@@ -1,0 +1,318 @@
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Any, Literal, Optional
+
+
+@dataclass
+class TrainerArgs:
+    devices: int
+    accelerator: Literal["cpu", "gpu", "tpu", "auto"]
+    default_root_dir: Path
+    max_epochs: int
+
+
+@dataclass
+class OptimizerArgs:
+    lr: float
+    weight_decay: float
+    betas: tuple[float, float]
+    patience: int
+
+
+@dataclass
+class ModelArgs:
+    # skip in_dim
+    out_dim: int
+    hidden_dim: int
+    num_heads: int
+    n_outputs: int
+    num_indices: int
+    n_enc_layers: int
+    n_dec_layers: int
+    dropout: float
+    bias: bool
+    norm: bool
+    sample_scale: float
+    sample_rate: float
+    loss_alpha: float
+
+
+@dataclass
+class DataArgs:
+    data_file: Path
+    metadata_file: Path
+    batch_size: int
+    split_ratio: Optional[tuple[float, ...]]
+    num_workers: int
+    pin_memory: bool
+
+
+@dataclass
+class Args:
+    model: dict[str, Any]
+    data: dict[str, Any]
+    trainer: dict[str, Any]
+    optimizer: dict[str, Any]
+
+
+def add_data_args(parser: argparse.ArgumentParser):
+    data_args = parser.add_argument_group("DATA ARGS")
+    data_args.add_argument(
+        "-d",
+        "--data_file",
+        metavar="FILE",
+        type=Path,
+        required=True,
+        help="input protein embeddings file in .h5 format",
+    )
+    data_args.add_argument(
+        "-m",
+        "--metadata_file",
+        metavar="FILE",
+        type=Path,
+        required=True,
+        help="metadata file",
+    )
+    data_args.add_argument(
+        "-b",
+        "--batch_size",
+        metavar="INT",
+        type=int,
+        default=128,
+        help="batch size (default: %(default)s)",
+    )
+    data_args.add_argument(
+        "--split_ratio",
+        metavar="[FLOAT FLOAT]",
+        nargs=2,
+        type=float,
+        default=(0.8, 0.2),
+        help="train/val split ratios (default: %(default)s)",
+    )
+    data_args.add_argument(
+        "--num_workers",
+        metavar="INT",
+        type=int,
+        default=0,
+        help="additional cpu workers to load data (default: %(default)s)",
+    )
+    data_args.add_argument(
+        "--no-pin_memory",
+        action="store_true",
+        help="whether to pin memory onto a CUDA GPU (default: %(default)s)",
+    )
+
+
+def parse_data_args(args: argparse.Namespace) -> DataArgs:
+    return DataArgs(
+        data_file=args.data_file,
+        metadata_file=args.metadata_file,
+        batch_size=args.batch_size,
+        split_ratio=tuple(args.split_ratio),
+        num_workers=args.num_workers,
+        pin_memory=not args.no_pin_memory,
+    )
+
+
+def add_model_args(parser: argparse.ArgumentParser):
+    parser.add_argument_group("MODEL ARGS")
+    parser.add_argument(
+        "--out_dim",
+        metavar="INT",
+        type=int,
+        default=64,
+        help="output dimension (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--hidden_dim",
+        metavar="INT",
+        type=int,
+        default=128,
+        help="hidden layer dimension (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--num_heads",
+        metavar="INT",
+        type=int,
+        default=4,
+        help="number of attention heads (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--n_outputs",
+        metavar="INT",
+        type=int,
+        default=1,
+        help="number of model outputs per genome (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--num_indices",
+        metavar="INT",
+        type=int,
+        default=32,
+        help="number of projection indices for efficient large-set pairwise attention (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--n_enc_layers",
+        metavar="INT",
+        type=int,
+        default=2,
+        help="number of encoder layers (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--n_dec_layers",
+        metavar="INT",
+        type=int,
+        default=2,
+        help="number of decoder layers (not including first pooled attention layer and any subsequent fully connected layers) (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--dropout",
+        metavar="FLOAT",
+        type=float,
+        default=0.0,
+        help="dropout proportion during training (default: %(default)s)",
+    )
+    # ignoring bias and norm -> will be set to always on for now
+    parser.add_argument(
+        "--sample_scale",
+        metavar="FLOAT",
+        type=float,
+        default=7.0,
+        help="exponential decay scale factor for weighting negative samples during loss (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--sample_rate",
+        metavar="FLOAT",
+        type=float,
+        default=0.5,
+        help="PointSwap sampler swapping rate (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--loss_alpha",
+        metavar="FLOAT",
+        type=float,
+        default=0.1,
+        help="constant term in loss function (default: %(default)s)",
+    )
+
+
+def parser_model_args(args: argparse.Namespace) -> ModelArgs:
+    return ModelArgs(
+        out_dim=args.out_dim,
+        hidden_dim=args.hidden_dim,
+        num_heads=args.num_heads,
+        n_outputs=args.n_outputs,
+        num_indices=args.num_indices,
+        n_enc_layers=args.n_enc_layers,
+        n_dec_layers=args.n_dec_layers,
+        dropout=args.dropout,
+        bias=True,
+        norm=True,
+        sample_scale=args.sample_scale,
+        sample_rate=args.sample_rate,
+        loss_alpha=args.loss_alpha,
+    )
+
+
+def add_trainer_args(parser: argparse.ArgumentParser):
+    parser.add_argument_group("TRAINER ARGS")
+    parser.add_argument(
+        "--devices",
+        metavar="INT",
+        type=int,
+        default=1,
+        help="number of accelerator devices to use. For CPUs, this sets the total thread usage. (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--accelerator",
+        metavar="DEVICE",
+        choices={"cpu", "gpu", "tpu", "auto"},
+        default="gpu",
+        help="accelerator to use (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--default_root_dir",
+        metavar="DIR",
+        type=Path,
+        default=Path.cwd().joinpath("lightning_root"),
+        help="lightning root dir for model checkpointing (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--max_epochs",
+        metavar="INT",
+        type=int,
+        default=1000,
+        help="max number of training epochs (default: %(default)s)",
+    )
+
+
+def parser_trainer_args(args: argparse.Namespace) -> TrainerArgs:
+    return TrainerArgs(
+        devices=args.devices,
+        accelerator=args.accelerator,
+        default_root_dir=args.default_root_dir,
+        max_epochs=args.max_epochs,
+    )
+
+
+def add_optimizer_args(parser: argparse.ArgumentParser):
+    parser.add_argument_group("OPTIMIZER ARGS")
+    parser.add_argument(
+        "--lr",
+        metavar="FLOAT",
+        type=float,
+        default=1e-3,
+        help="learning rate (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--weight_decay",
+        metavar="FLOAT",
+        type=float,
+        default=0.0,
+        help="optimizer weight decay (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--patience",
+        metavar="int",
+        type=int,
+        default=5,
+        help="number of epochs for plateau learning rate scheduler to wait for a stagnating training session to reduce the learning rate (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--betas",
+        metavar="[FLOAT FLOAT]",
+        type=float,
+        nargs=2,
+        default=(0.9, 0.999),
+        help="optimizer betas (default: %(default)s)",
+    )
+
+
+def parser_optimizer_args(args: argparse.Namespace) -> OptimizerArgs:
+    return OptimizerArgs(
+        lr=args.lr,
+        weight_decay=args.weight_decay,
+        betas=tuple(args.betas),
+        patience=args.patience,
+    )
+
+
+def parse_args() -> Args:
+    parser = argparse.ArgumentParser(
+        description="Train or predict genome-level embeddings based on sets of protein-level embeddings"
+    )
+    add_data_args(parser)
+    add_trainer_args(parser)
+    add_model_args(parser)
+    add_optimizer_args(parser)
+
+    args = parser.parse_args()
+    return Args(
+        model=asdict(parser_model_args(args)),
+        data=asdict(parse_data_args(args)),
+        trainer=asdict(parser_trainer_args(args)),
+        optimizer=asdict(parser_optimizer_args(args)),
+    )
