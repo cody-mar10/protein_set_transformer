@@ -59,8 +59,8 @@ class Args:
 
 
 def add_data_args(parser: argparse.ArgumentParser):
-    data_args = parser.add_argument_group("DATA ARGS")
-    data_args.add_argument(
+    group = parser.add_argument_group("DATA ARGS")
+    group.add_argument(
         "-d",
         "--data_file",
         metavar="FILE",
@@ -68,7 +68,7 @@ def add_data_args(parser: argparse.ArgumentParser):
         required=True,
         help="input protein embeddings file in .h5 format",
     )
-    data_args.add_argument(
+    group.add_argument(
         "-m",
         "--metadata_file",
         metavar="FILE",
@@ -76,7 +76,7 @@ def add_data_args(parser: argparse.ArgumentParser):
         required=True,
         help="metadata file",
     )
-    data_args.add_argument(
+    group.add_argument(
         "-b",
         "--batch_size",
         metavar="INT",
@@ -84,7 +84,7 @@ def add_data_args(parser: argparse.ArgumentParser):
         default=128,
         help="batch size (default: %(default)s)",
     )
-    data_args.add_argument(
+    group.add_argument(
         "--split_ratio",
         metavar="[FLOAT FLOAT]",
         nargs=2,
@@ -92,14 +92,14 @@ def add_data_args(parser: argparse.ArgumentParser):
         default=(0.8, 0.2),
         help="train/val split ratios (default: %(default)s)",
     )
-    data_args.add_argument(
+    group.add_argument(
         "--num_workers",
         metavar="INT",
         type=int,
         default=0,
         help="additional cpu workers to load data (default: %(default)s)",
     )
-    data_args.add_argument(
+    group.add_argument(
         "--no-pin_memory",
         action="store_true",
         help="whether to pin memory onto a CUDA GPU (default: %(default)s)",
@@ -118,57 +118,57 @@ def parse_data_args(args: argparse.Namespace) -> DataArgs:
 
 
 def add_model_args(parser: argparse.ArgumentParser):
-    parser.add_argument_group("MODEL ARGS")
-    parser.add_argument(
+    group = parser.add_argument_group("MODEL ARGS")
+    group.add_argument(
         "--out_dim",
         metavar="INT",
         type=int,
         default=64,
         help="output dimension (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--hidden_dim",
         metavar="INT",
         type=int,
         default=128,
         help="hidden layer dimension (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--num_heads",
         metavar="INT",
         type=int,
         default=4,
         help="number of attention heads (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--n_outputs",
         metavar="INT",
         type=int,
         default=1,
         help="number of model outputs per genome (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--num_indices",
         metavar="INT",
         type=int,
         default=32,
         help="number of projection indices for efficient large-set pairwise attention (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--n_enc_layers",
         metavar="INT",
         type=int,
         default=2,
         help="number of encoder layers (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--n_dec_layers",
         metavar="INT",
         type=int,
         default=2,
         help="number of decoder layers (not including first pooled attention layer and any subsequent fully connected layers) (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--dropout",
         metavar="FLOAT",
         type=float,
@@ -176,21 +176,21 @@ def add_model_args(parser: argparse.ArgumentParser):
         help="dropout proportion during training (default: %(default)s)",
     )
     # ignoring bias and norm -> will be set to always on for now
-    parser.add_argument(
+    group.add_argument(
         "--sample_scale",
         metavar="FLOAT",
         type=float,
         default=7.0,
         help="exponential decay scale factor for weighting negative samples during loss (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--sample_rate",
         metavar="FLOAT",
         type=float,
         default=0.5,
         help="PointSwap sampler swapping rate (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--loss_alpha",
         metavar="FLOAT",
         type=float,
@@ -218,29 +218,29 @@ def parser_model_args(args: argparse.Namespace) -> ModelArgs:
 
 
 def add_trainer_args(parser: argparse.ArgumentParser):
-    parser.add_argument_group("TRAINER ARGS")
-    parser.add_argument(
+    group = parser.add_argument_group("TRAINER ARGS")
+    group.add_argument(
         "--devices",
         metavar="INT",
         type=int,
         default=1,
         help="number of accelerator devices to use. For CPUs, this sets the total thread usage. (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--accelerator",
         metavar="DEVICE",
         choices={"cpu", "gpu", "tpu", "auto"},
         default="gpu",
         help="accelerator to use (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--default_root_dir",
         metavar="DIR",
         type=Path,
         default=Path.cwd().joinpath("lightning_root"),
         help="lightning root dir for model checkpointing (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--max_epochs",
         metavar="INT",
         type=int,
@@ -259,29 +259,29 @@ def parser_trainer_args(args: argparse.Namespace) -> TrainerArgs:
 
 
 def add_optimizer_args(parser: argparse.ArgumentParser):
-    parser.add_argument_group("OPTIMIZER ARGS")
-    parser.add_argument(
+    group = parser.add_argument_group("OPTIMIZER ARGS")
+    group.add_argument(
         "--lr",
         metavar="FLOAT",
         type=float,
         default=1e-3,
         help="learning rate (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--weight_decay",
         metavar="FLOAT",
         type=float,
         default=0.0,
         help="optimizer weight decay (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--patience",
         metavar="int",
         type=int,
         default=5,
         help="number of epochs for plateau learning rate scheduler to wait for a stagnating training session to reduce the learning rate (default: %(default)s)",
     )
-    parser.add_argument(
+    group.add_argument(
         "--betas",
         metavar="[FLOAT FLOAT]",
         type=float,
