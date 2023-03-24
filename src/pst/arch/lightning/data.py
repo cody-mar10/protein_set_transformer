@@ -447,6 +447,10 @@ class GenomeSetDataModule(L.LightningDataModule):
 
         self.save_hyperparameters(ignore=["data_file", "metadata_file"])
 
+    @property
+    def feature_dimension(self) -> int:
+        return self._dataset._data.shape[-1]
+
     def setup(self, stage: str):
         # each process gets this
 
