@@ -3,7 +3,14 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Callable, Literal, Optional
+
+_ADDER_TYPE = Callable[[argparse.ArgumentParser], None]
+_ARGPARSE_HANDLERS: list[_ADDER_TYPE] = list()
+
+
+def register(func: _ADDER_TYPE):
+    _ARGPARSE_HANDLERS.append(func)
 
 
 @dataclass
@@ -51,13 +58,22 @@ class DataArgs:
 
 
 @dataclass
+class LoggerArgs:
+    root_dir: Path
+    name: str
+    flush_logs_every_n_steps: int
+
+
+@dataclass
 class Args:
     model: dict[str, Any]
     data: dict[str, Any]
     trainer: dict[str, Any]
     optimizer: dict[str, Any]
+    logger: dict[str, Any]
 
 
+@register
 def add_data_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("DATA ARGS")
     group.add_argument(
@@ -117,6 +133,7 @@ def parse_data_args(args: argparse.Namespace) -> DataArgs:
     )
 
 
+@register
 def add_model_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("MODEL ARGS")
     group.add_argument(
@@ -199,7 +216,7 @@ def add_model_args(parser: argparse.ArgumentParser):
     )
 
 
-def parser_model_args(args: argparse.Namespace) -> ModelArgs:
+def parse_model_args(args: argparse.Namespace) -> ModelArgs:
     return ModelArgs(
         out_dim=args.out_dim,
         hidden_dim=args.hidden_dim,
@@ -217,6 +234,7 @@ def parser_model_args(args: argparse.Namespace) -> ModelArgs:
     )
 
 
+@register
 def add_trainer_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("TRAINER ARGS")
     group.add_argument(
@@ -233,13 +251,13 @@ def add_trainer_args(parser: argparse.ArgumentParser):
         default="gpu",
         help="accelerator to use (default: %(default)s)",
     )
-    group.add_argument(
-        "--default_root_dir",
-        metavar="DIR",
-        type=Path,
-        default=Path.cwd().joinpath("lightning_root"),
-        help="lightning root dir for model checkpointing (default: %(default)s)",
-    )
+    # group.add_argument(
+    #     "--default_root_dir",
+    #     metavar="DIR",
+    #     type=Path,
+    #     default=Path.cwd().joinpath("lightning_root"),
+    #     help="lightning root dir for model checkpointing (default: %(default)s)",
+    # )
     group.add_argument(
         "--max_epochs",
         metavar="INT",
@@ -249,7 +267,7 @@ def add_trainer_args(parser: argparse.ArgumentParser):
     )
 
 
-def parser_trainer_args(args: argparse.Namespace) -> TrainerArgs:
+def parse_trainer_args(args: argparse.Namespace) -> TrainerArgs:
     return TrainerArgs(
         devices=args.devices,
         accelerator=args.accelerator,
@@ -258,6 +276,7 @@ def parser_trainer_args(args: argparse.Namespace) -> TrainerArgs:
     )
 
 
+@register
 def add_optimizer_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("OPTIMIZER ARGS")
     group.add_argument(
@@ -291,7 +310,7 @@ def add_optimizer_args(parser: argparse.ArgumentParser):
     )
 
 
-def parser_optimizer_args(args: argparse.Namespace) -> OptimizerArgs:
+def parse_optimizer_args(args: argparse.Namespace) -> OptimizerArgs:
     return OptimizerArgs(
         lr=args.lr,
         weight_decay=args.weight_decay,
@@ -300,19 +319,52 @@ def parser_optimizer_args(args: argparse.Namespace) -> OptimizerArgs:
     )
 
 
+@register
+def add_logger_args(parser: argparse.ArgumentParser):
+    group = parser.add_argument_group("LOGGER ARGS")
+    group.add_argument(
+        "--root_dir",
+        metavar="DIR",
+        type=Path,
+        default=Path.cwd().joinpath("lightning_logs"),
+        help="logging directory for model checkpointing (default: %(default)s)",
+    )
+    group.add_argument(
+        "--name",
+        metavar="STR",
+        default="genome-transformer",
+        help="experiment name (default: %(default)s)",
+    )
+    group.add_argument(
+        "--logging-rate",
+        metavar="INT",
+        type=int,
+        default=10,
+        help="number of epochs to flush the in-memory log to disk (default: %(default)s)",
+    )
+
+
+def parse_logging_args(args: argparse.Namespace) -> LoggerArgs:
+    return LoggerArgs(
+        root_dir=args.root_dir,
+        name=args.name,
+        flush_logs_every_n_steps=args.logging_rate,
+    )
+
+
 def parse_args() -> Args:
     parser = argparse.ArgumentParser(
         description="Train or predict genome-level embeddings based on sets of protein-level embeddings"
     )
-    add_data_args(parser)
-    add_trainer_args(parser)
-    add_model_args(parser)
-    add_optimizer_args(parser)
+
+    for handler in _ARGPARSE_HANDLERS:
+        handler(parser)
 
     args = parser.parse_args()
     return Args(
-        model=asdict(parser_model_args(args)),
+        model=asdict(parse_model_args(args)),
         data=asdict(parse_data_args(args)),
-        trainer=asdict(parser_trainer_args(args)),
-        optimizer=asdict(parser_optimizer_args(args)),
+        trainer=asdict(parse_trainer_args(args)),
+        optimizer=asdict(parse_optimizer_args(args)),
+        logger=asdict(parse_logging_args(args)),
     )
