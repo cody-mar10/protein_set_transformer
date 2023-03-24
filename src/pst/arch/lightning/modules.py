@@ -104,7 +104,7 @@ class _ProteinSetTransformer(L.LightningModule):
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, patience=self.hparams["patience"]
         )
-        return {"optimizer": optimizer, "lr_scheduler": scheduler}
+        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
 
     def _shared_eval(
         self,
