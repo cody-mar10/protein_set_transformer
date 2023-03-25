@@ -17,7 +17,7 @@ def register(func: _ADDER_TYPE):
 class TrainerArgs:
     devices: int
     accelerator: Literal["cpu", "gpu", "tpu", "auto"]
-    default_root_dir: Path
+    # default_root_dir: Path
     max_epochs: int
 
 
@@ -271,7 +271,7 @@ def parse_trainer_args(args: argparse.Namespace) -> TrainerArgs:
     return TrainerArgs(
         devices=args.devices,
         accelerator=args.accelerator,
-        default_root_dir=args.default_root_dir,
+        # default_root_dir=args.default_root_dir,
         max_epochs=args.max_epochs,
     )
 
