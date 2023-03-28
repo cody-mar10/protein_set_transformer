@@ -253,6 +253,8 @@ class WeakShuffleBatchSampler(Sampler):
             else:
                 # no need to calc since just used as a signal
                 self._remainder = 1
+        else:
+            self._remainder = 0
 
     def __len__(self) -> int:
         return self.batch_size
