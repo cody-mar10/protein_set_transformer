@@ -50,15 +50,14 @@ class TripletSampler:
         # return indices of most similar set per row
         return self._min[1]
 
-    def _negative_sampling(self, emd: Optional[torch.Tensor] = None) -> torch.Tensor:
-        emd = emd if emd is not None else self._emd
+    def _negative_sampling(self) -> torch.Tensor:
         diag_mask = torch.eye(
-            emd.size(0), dtype=torch.bool, device=self._device
+            self._emd.size(0), dtype=torch.bool, device=self._device
         ).logical_not()
 
         # can't choose min and can't choose self
         negative_sample_space = torch.where(
-            (emd > self._min[0].unsqueeze(1)) & (diag_mask), 1, 0
+            (self._emd > self._min[0].unsqueeze(1)) & (diag_mask), 1, 0
         )
         return torch.multinomial(negative_sample_space.float(), 1).squeeze()
 
@@ -94,7 +93,7 @@ class TripletSampler:
         return TripletSample(samples, weights)
 
 
-class PointSwapSampler(TripletSampler):
+class PointSwapSampler:
     _SENTINEL = -1
     _DISTFUNC2TYPE: dict[DistFuncSignature, DISTANCE_TYPES] = {
         cosine_distance: "cosine",
@@ -112,15 +111,21 @@ class PointSwapSampler(TripletSampler):
         scale: float = 7.0,
         distfunc: DistFuncSignature = euclidean_distance,
     ):
-        super().__init__(emd=emd, disttype=self._DISTFUNC2TYPE[distfunc], scale=scale)
         self._batch = batch
         self._flow = flow
         self._sample_rate = sample_rate
+        self._scale = scale
+        self._distfunc = distfunc
         # indicates which rows are real ptns since batch is row-padded
         self._row_mask = row_mask
         self._anchor_idx = set(range(self._row_mask.size(-1)))
         self._rwmdistance = SetDistance(distfunc)
-        self._triplet_sample = self.triplet_sampling()
+        self._triplet_sampler = TripletSampler(
+            emd=emd,
+            disttype=self._DISTFUNC2TYPE[distfunc],
+            scale=scale,
+        )
+        self._triplet_sample = self._triplet_sampler.triplet_sampling()
         self._positive_sample = self._triplet_sample.idx[0:2]
         # used for indexing flow dict
         self._positive_idx = [(int(i), int(j)) for i, j in self._positive_sample.t()]
@@ -164,8 +169,13 @@ class PointSwapSampler(TripletSampler):
         augmented_samples = [self._point_swap(i, j) for i, j in self._positive_idx]
         X_aug = torch.stack(augmented_samples)
         aug_emd, _ = self._rwmdistance.fit_transform(X_aug)
-        aug_negative_idx = self._negative_sampling(aug_emd)
-        aug_weights = self._negative_weights(
+        aug_triplet_sampler = TripletSampler(
+            emd=aug_emd,
+            disttype=self._DISTFUNC2TYPE[self._distfunc],
+            scale=self._scale,
+        )
+        aug_negative_idx = aug_triplet_sampler._negative_sampling()
+        aug_weights = aug_triplet_sampler._negative_weights(
             self._triplet_sample.idx[0], aug_negative_idx, aug_emd
         )
         return AugmentedSample(
