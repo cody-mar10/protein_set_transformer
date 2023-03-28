@@ -17,7 +17,7 @@ def register(func: _ADDER_TYPE):
 class TrainerArgs:
     devices: int
     accelerator: Literal["cpu", "gpu", "tpu", "auto"]
-    # default_root_dir: Path
+    default_root_dir: Path
     max_epochs: int
 
 
@@ -58,19 +58,12 @@ class DataArgs:
 
 
 @dataclass
-class LoggerArgs:
-    root_dir: Path
-    name: str
-    flush_logs_every_n_steps: int
-
-
-@dataclass
 class Args:
     model: dict[str, Any]
     data: dict[str, Any]
     trainer: dict[str, Any]
     optimizer: dict[str, Any]
-    logger: dict[str, Any]
+    # logger: dict[str, Any]
 
 
 @register
@@ -251,13 +244,13 @@ def add_trainer_args(parser: argparse.ArgumentParser):
         default="gpu",
         help="accelerator to use (default: %(default)s)",
     )
-    # group.add_argument(
-    #     "--default_root_dir",
-    #     metavar="DIR",
-    #     type=Path,
-    #     default=Path.cwd().joinpath("lightning_root"),
-    #     help="lightning root dir for model checkpointing (default: %(default)s)",
-    # )
+    group.add_argument(
+        "--default_root_dir",
+        metavar="DIR",
+        type=Path,
+        default=Path.cwd().joinpath("lightning_root"),
+        help="lightning root dir for model checkpointing (default: %(default)s)",
+    )
     group.add_argument(
         "--max_epochs",
         metavar="INT",
@@ -271,7 +264,7 @@ def parse_trainer_args(args: argparse.Namespace) -> TrainerArgs:
     return TrainerArgs(
         devices=args.devices,
         accelerator=args.accelerator,
-        # default_root_dir=args.default_root_dir,
+        default_root_dir=args.default_root_dir,
         max_epochs=args.max_epochs,
     )
 
@@ -319,37 +312,29 @@ def parse_optimizer_args(args: argparse.Namespace) -> OptimizerArgs:
     )
 
 
-@register
-def add_logger_args(parser: argparse.ArgumentParser):
-    group = parser.add_argument_group("LOGGER ARGS")
-    group.add_argument(
-        "--root_dir",
-        metavar="DIR",
-        type=Path,
-        default=Path.cwd().joinpath("lightning_logs"),
-        help="logging directory for model checkpointing (default: %(default)s)",
-    )
-    group.add_argument(
-        "--name",
-        metavar="STR",
-        default="genome-transformer",
-        help="experiment name (default: %(default)s)",
-    )
-    group.add_argument(
-        "--logging-rate",
-        metavar="INT",
-        type=int,
-        default=10,
-        help="number of epochs to flush the in-memory log to disk (default: %(default)s)",
-    )
-
-
-def parse_logging_args(args: argparse.Namespace) -> LoggerArgs:
-    return LoggerArgs(
-        root_dir=args.root_dir,
-        name=args.name,
-        flush_logs_every_n_steps=args.logging_rate,
-    )
+# @register
+# def add_logger_args(parser: argparse.ArgumentParser):
+#     group = parser.add_argument_group("LOGGER ARGS")
+#     group.add_argument(
+#         "--root_dir",
+#         metavar="DIR",
+#         type=Path,
+#         default=Path.cwd().joinpath("lightning_logs"),
+#         help="logging directory for model checkpointing (default: %(default)s)",
+#     )
+#     group.add_argument(
+#         "--name",
+#         metavar="STR",
+#         default="genome-transformer",
+#         help="experiment name (default: %(default)s)",
+#     )
+#     group.add_argument(
+#         "--logging-rate",
+#         metavar="INT",
+#         type=int,
+#         default=10,
+#         help="number of epochs to flush the in-memory log to disk (default: %(default)s)",
+#     )
 
 
 def parse_args() -> Args:
@@ -366,5 +351,5 @@ def parse_args() -> Args:
         data=asdict(parse_data_args(args)),
         trainer=asdict(parse_trainer_args(args)),
         optimizer=asdict(parse_optimizer_args(args)),
-        logger=asdict(parse_logging_args(args)),
+        # logger=asdict(parse_logging_args(args)),
     )
