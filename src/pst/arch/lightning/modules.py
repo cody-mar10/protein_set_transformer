@@ -104,7 +104,15 @@ class _ProteinSetTransformer(L.LightningModule):
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, patience=self.hparams["patience"]
         )
-        return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
+        config = {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val_loss",
+                "frequency": 1,
+            },
+        }
+        return config
 
     def _shared_eval(
         self,
@@ -147,7 +155,7 @@ class _ProteinSetTransformer(L.LightningModule):
             y_self=y_self,
             y_pos=y_pos,
             y_neg=y_neg,
-            negative_weights=triple_sample.weights,
+            neg_weights=triple_sample.weights,
             y_aug_pos=y_aug_pos,
             y_aug_neg=y_aug_neg,
             aug_neg_weights=aug_sample.weights,
