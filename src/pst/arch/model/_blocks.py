@@ -102,7 +102,10 @@ class MultiheadAttention(nn.Module):
         # replacing them with 0s shouldnt? affect calcs
         # since matmul with a 0 vector is 0
         # idk if this is needed since ISAB won't have 0 rows
-        attn_weight.nan_to_num_(nan=0.0)
+
+        # SWITCHING TO NOT USE INPLACE OPS
+        # attn_weight.nan_to_num_(nan=0.0)
+        attn_weight = attn_weight.nan_to_num(nan=0.0)
         attn_weight = torch.dropout(attn_weight, self.dropout, self.training)
         attn = attn_weight @ V
         return AttentionSchema(
@@ -154,8 +157,9 @@ class MultiheadAttention(nn.Module):
             Q, K, V, attn_mask=attn_mask, return_weights=return_weights
         )
 
+        # SWITCHING TO NOT USE INPLACE OPS
         # residual connection
-        output.repr += Q
+        output.repr = output.repr + Q
 
         # concatenate attn heads
         output.repr = self.from_multiheaded(output.repr)
