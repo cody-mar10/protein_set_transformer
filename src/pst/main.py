@@ -23,10 +23,12 @@ def main():
     elif args.trainer["accelerator"] == "gpu":
         args.trainer["precision"] = "16-mixed"
         args.trainer["num_nodes"] = 1
-
+        if args.trainer["devices"] > 1:
+            args.trainer["strategy"] = "ddp_find_unused_parameters_true"
     trainer = L.Trainer(
         callbacks=[checkpointing],
         logger=True,
+        log_every_n_steps=5,
         **args.trainer,
     )
     trainer.fit(model=model, datamodule=datamodule)
