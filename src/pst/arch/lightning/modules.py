@@ -126,7 +126,7 @@ class _ProteinSetTransformer(L.LightningModule):
         # 2. Compute row mask
         # TODO: this is technically computed twice?
         # oh well I guess? bc I can't precompute the attn_mask here
-        row_mask = compute_row_mask(batch)
+        row_mask = compute_row_mask(batch, unsqueeze=False)
 
         # 3. Point-swap sampling
         sampler = PointSwapSampler(

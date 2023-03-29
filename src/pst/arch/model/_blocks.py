@@ -122,14 +122,14 @@ class MultiheadAttention(nn.Module):
     ) -> AttentionSchema:
         # row masks computed pre linear layers to know which rows were all 0s aka padded
         # only need masks for Q and K due to attention calc
-        Q_row_mask = compute_row_mask(Q)
+        Q_row_mask = compute_row_mask(Q, unsqueeze=True)
 
         # default is self-attention
         if K is None:
             K = Q
             K_row_mask = Q_row_mask
         else:
-            K_row_mask = compute_row_mask(K)
+            K_row_mask = compute_row_mask(K, unsqueeze=True)
 
         if attn_mask is None:
             # compute attn_mask solely based on rows that are/aren't padded rows

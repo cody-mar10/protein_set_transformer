@@ -5,7 +5,7 @@ from typing import Optional
 import torch
 
 
-def compute_row_mask(X: torch.Tensor) -> torch.Tensor:
+def compute_row_mask(X: torch.Tensor, unsqueeze: bool = False) -> torch.Tensor:
     """Compute a row mask for input row-padded tensor.
 
     Args:
@@ -13,12 +13,16 @@ def compute_row_mask(X: torch.Tensor) -> torch.Tensor:
             b: batch size
             m: number of items
             d: feature dimension of item
+        unsqueeze(bool, optional): whether to unsqueeze the last dimension. Defaults to False.
 
     Returns:
         torch.Tensor: boolean tensor of shape [b, m, 1] that indicates which rows are
             real. True = real row. False = padded row of all 0s.
     """
-    return torch.unsqueeze(X.abs().sum(-1) != 0.0, dim=-1)
+    row_mask = X.abs().sum(-1) != 0.0
+    if unsqueeze:
+        return torch.unsqueeze(row_mask, dim=-1)
+    return row_mask
 
 
 def row_mask_to_attn_mask(
