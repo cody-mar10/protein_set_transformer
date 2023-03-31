@@ -135,7 +135,7 @@ class PointSwapSampler:
         max_samples = torch.ceil(self._row_mask[-1].sum() * self._sample_rate)
         samples: list[torch.Tensor] = list()
         for row in self._row_mask:
-            row = row.squeeze(dim=0)
+            # row = row.squeeze(dim=0)
             n_samples = torch.ceil(row.sum() * self._sample_rate)
             padsize = int(max_samples - n_samples)
             sample = torch.multinomial(row.float(), int(n_samples))
