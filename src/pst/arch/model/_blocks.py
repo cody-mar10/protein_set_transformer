@@ -47,7 +47,9 @@ class MultiheadAttention(nn.Module):
         self.Wk = nn.Linear(kdim, vdim, bias=bias)
         self.Wv = nn.Linear(kdim, vdim, bias=bias)
         self.Wo = nn.Linear(vdim, vdim, bias=bias)
-        self.layernorm = nn.LayerNorm(vdim) if norm else None
+        self.norm = norm
+        self.layernorm1 = nn.LayerNorm(vdim) if norm else None
+        self.layernorm2 = nn.LayerNorm(vdim) if norm else None
 
     def to_multiheaded(self, X: torch.Tensor) -> torch.Tensor:
         batch_size, n_seqs, feat_dim = X.size()
@@ -159,13 +161,19 @@ class MultiheadAttention(nn.Module):
 
         # SWITCHING TO NOT USE INPLACE OPS
         # residual connection
-        output.repr = output.repr + Q
+        attn_output = output.repr + Q
 
         # concatenate attn heads
-        output.repr = self.from_multiheaded(output.repr)
+        attn_output = self.from_multiheaded(attn_output)
 
-        if self.layernorm is not None:
-            output.repr = self.layernorm(output.repr)
+        # layer norm before output feed-forward layer
+        if self.layernorm1 is not None:
+            attn_output = self.layernorm1(attn_output)
+
+        # output feed-forward and another layer norm with residual connections
+        output.repr = self.Wo(attn_output) + attn_output
+        if self.layernorm2 is not None:
+            output.repr = self.layernorm2(output.repr)
 
         output.repr = F.relu(output.repr)
         return output
