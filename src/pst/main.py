@@ -31,25 +31,16 @@ def _predict_main(args: pst.utils.cli.Args):
         args.predict["checkpoint"]
     )
 
-    # TODO: idk why I have to do this instead of just call normally
-    _datamodule = pst.data.GenomeSetDataModule(**args.data)
-    _datamodule.setup("predict")
-    dataloader = DataLoader(
-        dataset=_datamodule.predict_dataset,
-        batch_size=args.data["batch_size"],
-        shuffle=False,
-        collate_fn=_datamodule.predict_dataset.collate_batch,
-    )
-
+    datamodule = pst.data.GenomeSetDataModule(**args.data)
     writer = pst.utils.PredictionWriter(
         outdir=args.predict["outdir"],
-        dataset=_datamodule,
+        dataset=datamodule,
     )
     trainer = L.Trainer(
         callbacks=[writer],
         **args.trainer,
     )
-    trainer.predict(model=model, dataloaders=dataloader)
+    trainer.predict(model=model, datamodule=datamodule)
 
 
 def main():
@@ -64,8 +55,8 @@ def main():
     elif args.trainer["accelerator"] == "gpu":
         args.trainer["precision"] = "16-mixed"
         args.trainer["num_nodes"] = 1
-        if args.trainer["devices"] > 1:
-            args.trainer["strategy"] = "ddp_find_unused_parameters_true"
+        # if args.trainer["devices"] > 1:
+        #     args.trainer["strategy"] = "ddp_find_unused_parameters_true"
 
     if args.mode == "train":
         _train_main(args)

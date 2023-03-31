@@ -226,6 +226,8 @@ class WeakShuffleBatchSampler(Sampler):
         # then set batch_size to 1?
         # --> actually, need to accound for difference in position ie split: [10, 220, 2412]
         # get mapped to [0, 1, 2] -> suggests need a new init
+
+        # dataset_size if for the full dataset, even if using train/val split
         self.dataset_size = dataset_size
         self.batch_size = batch_size
 
@@ -270,7 +272,11 @@ class WeakShuffleBatchSampler(Sampler):
             self._remainder = 0
 
     def __len__(self) -> int:
-        return self.batch_size
+        # this is supposed to be the number of data points in total
+        # docs are misleading
+        n_batches = self.n_batches if self._remainder == 0 else self.n_batches + 1
+        data_size = n_batches * self.batch_size
+        return data_size
 
     def __iter__(self) -> Iterator[int]:
         for batch_id in self.batch_ids:
