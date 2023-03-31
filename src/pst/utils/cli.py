@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional
@@ -58,12 +59,19 @@ class DataArgs:
 
 
 @dataclass
+class PredictArgs:
+    checkpoint: Path
+    outdir: Path
+
+
+@dataclass
 class Args:
     model: dict[str, Any]
     data: dict[str, Any]
     trainer: dict[str, Any]
     optimizer: dict[str, Any]
-    # logger: dict[str, Any]
+    predict: dict[str, Any]
+    mode: Literal["train", "test", "predict"]
 
 
 @register
@@ -312,34 +320,48 @@ def parse_optimizer_args(args: argparse.Namespace) -> OptimizerArgs:
     )
 
 
-# @register
-# def add_logger_args(parser: argparse.ArgumentParser):
-#     group = parser.add_argument_group("LOGGER ARGS")
-#     group.add_argument(
-#         "--root_dir",
-#         metavar="DIR",
-#         type=Path,
-#         default=Path.cwd().joinpath("lightning_logs"),
-#         help="logging directory for model checkpointing (default: %(default)s)",
-#     )
-#     group.add_argument(
-#         "--name",
-#         metavar="STR",
-#         default="genome-transformer",
-#         help="experiment name (default: %(default)s)",
-#     )
-#     group.add_argument(
-#         "--logging-rate",
-#         metavar="INT",
-#         type=int,
-#         default=10,
-#         help="number of epochs to flush the in-memory log to disk (default: %(default)s)",
-#     )
+@register
+def add_predict_args(parser: argparse.ArgumentParser):
+    group = parser.add_argument_group("PREDICT ARGS")
+    is_inference_mode = "predict" in sys.argv
+    group.add_argument(
+        "--checkpoint",
+        metavar="FILE",
+        type=Path,
+        required=is_inference_mode,
+        help="required model checkpoint during inference",
+    )
+    group.add_argument(
+        "--outdir",
+        metavar="DIR",
+        type=Path,
+        default=Path.cwd().joinpath("output"),
+        help="inference output directory (default: %(default)s)",
+    )
+
+
+def parse_predict_args(args: argparse.Namespace) -> PredictArgs:
+    if args.mode == "predict" and args.checkpoint is None:
+        raise ValueError(
+            "During inference (predict) mode, a model checkpoint must be supplied."
+        )
+
+    return PredictArgs(
+        checkpoint=args.checkpoint,
+        outdir=args.outdir,
+    )
 
 
 def parse_args() -> Args:
     parser = argparse.ArgumentParser(
         description="Train or predict genome-level embeddings based on sets of protein-level embeddings"
+    )
+    parser.add_argument(
+        "--mode",
+        metavar="",
+        choices={"train", "predict", "test"},
+        default="train",
+        help="model mode (default: %(default)s) [choices: %(choices)s]",
     )
 
     for handler in _ARGPARSE_HANDLERS:
@@ -351,5 +373,6 @@ def parse_args() -> Args:
         data=asdict(parse_data_args(args)),
         trainer=asdict(parse_trainer_args(args)),
         optimizer=asdict(parse_optimizer_args(args)),
-        # logger=asdict(parse_logging_args(args)),
+        predict=asdict(parse_predict_args(args)),
+        mode=args.mode,
     )
