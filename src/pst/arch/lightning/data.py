@@ -171,6 +171,19 @@ class GenomeDataset(Dataset):
 
         return X
 
+    def convert_batch_idx_to_genome_ids(
+        self, batch_idx: int, batch_size: int
+    ) -> list[int]:
+        start_genome_id = batch_idx * batch_size
+        end_genome_id = (batch_idx + 1) * batch_size
+        return list(range(start_genome_id, end_genome_id))
+
+    def convert_batch_idx_to_genome_names(
+        self, batch_idx: int, batch_size: int
+    ) -> list[str]:
+        genome_ids = self.convert_batch_idx_to_genome_ids(batch_idx, batch_size)
+        return self[genome_ids]
+
 
 class SimpleGenomeDataset(GenomeDataset):
     """Use when you can read the entire dataset into memory"""
@@ -478,7 +491,7 @@ class GenomeSetDataModule(L.LightningDataModule):
         if stage == "predict":
             self.predict_dataset = self._dataset
 
-    def _dataloader(self, dataset: GenomeDataset) -> DataLoader:
+    def _dataloader(self, dataset: GenomeDataset, **kwargs) -> DataLoader:
         dataloader = GenomeDataLoader(dataset, self.batch_size).get_dataloader(
             num_workers=self.hparams["num_workers"],
             pin_memory=self.hparams["pin_memory"],
@@ -491,8 +504,9 @@ class GenomeSetDataModule(L.LightningDataModule):
     def val_dataloader(self) -> DataLoader:
         return self._val_loader
 
+    # TODO: these don't want the weak shuffling
     def test_dataloader(self) -> DataLoader:
-        return self._dataloader(self.test_dataset)
+        return self._dataloader(self.test_dataset, shuffle=False)
 
     def predict_dataloader(self) -> DataLoader:
-        return self._dataloader(self.predict_dataset)
+        return self._dataloader(self.predict_dataset, shuffle=False)
