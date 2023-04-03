@@ -162,7 +162,7 @@ class _ProteinSetTransformer(L.LightningModule):
         )
         self.log(
             f"{stage}_loss",
-            value=loss,
+            value=loss.item(),
             on_step=True,
             on_epoch=True,
             prog_bar=True,
