@@ -274,7 +274,7 @@ class WeakShuffleBatchSampler(Sampler):
     def __len__(self) -> int:
         # this is supposed to be the number of data points in total
         # docs are misleading
-        n_batches = self.n_batches if self._remainder == 0 else self.n_batches + 1
+        n_batches = self.n_batches  # if self._remainder == 0 else self.n_batches + 1
         data_size = n_batches * self.batch_size
         return data_size
 
