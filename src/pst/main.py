@@ -63,7 +63,6 @@ def main():
             detect_anomaly=True,
             max_epochs=10,
             overfit_batches=10,
-            fast_dev_run=True,
         )
         args.trainer.update(debug_kwargs)
 
