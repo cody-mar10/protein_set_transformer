@@ -58,10 +58,10 @@ def _debug_main(args: pst.utils.cli.Args):
     model = pst.modules.GenomeTransformer(
         in_dim=data_dim, use_scheduler=False, **args.model, **args.optimizer
     )
+    args.trainer["max_epochs"] = 10
     trainer = L.Trainer(
         logger=True,
         detect_anomaly=True,
-        max_epochs=10,
         overfit_batches=10,
         **args.trainer,
     )
