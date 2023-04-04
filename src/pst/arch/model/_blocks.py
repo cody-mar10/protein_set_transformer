@@ -93,7 +93,7 @@ class MultiheadAttention(nn.Module):
                 device=Q.device
             )
 
-        attn_mask = torch.where(attn_mask, -1e6, 0.0)
+        attn_mask = torch.where(attn_mask, -5e4, 0.0)
 
         attn_weight = torch.softmax(
             (Q @ K.transpose(-2, -1) * scale) + attn_mask, dim=-1
@@ -107,7 +107,7 @@ class MultiheadAttention(nn.Module):
 
         # SWITCHING TO NOT USE INPLACE OPS
         # attn_weight.nan_to_num_(nan=0.0)
-        attn_weight = attn_weight.nan_to_num(nan=0.0)
+        # attn_weight = attn_weight.nan_to_num(nan=0.0)
         attn_weight = torch.dropout(attn_weight, self.dropout, self.training)
         attn = attn_weight @ V
         return AttentionSchema(
