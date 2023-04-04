@@ -43,6 +43,31 @@ def _predict_main(args: pst.utils.cli.Args):
     trainer.predict(model=model, datamodule=datamodule)
 
 
+def _debug_main(args: pst.utils.cli.Args):
+    dataset = pst.data.SimpleGenomeDataset(
+        data_file=args.data["data_file"], genome_metadata=args.data["metadata_file"]
+    )
+    dataloader = DataLoader(
+        dataset=dataset,
+        batch_size=args.data["batch_size"],
+        shuffle=False,
+        collate_fn=dataset.collate_batch,
+    )
+
+    data_dim = dataset._data.shape[-1]
+    model = pst.modules.GenomeTransformer(
+        in_dim=data_dim, use_scheduler=False, **args.model, **args.optimizer
+    )
+    trainer = L.Trainer(
+        logger=True,
+        detect_anomaly=True,
+        max_epochs=10,
+        overfit_batches=10,
+        **args.trainer,
+    )
+    trainer.fit(model=model, train_dataloaders=dataloader)
+
+
 def main():
     L.seed_everything(111)
     print("Lightning version: ", L.__version__)
@@ -55,21 +80,13 @@ def main():
     elif args.trainer["accelerator"] == "gpu":
         args.trainer["precision"] = "16-mixed"
         args.trainer["num_nodes"] = 1
-        # if args.trainer["devices"] > 1:
-        #     args.trainer["strategy"] = "ddp_find_unused_parameters_true"
-
-    if args.debug:
-        debug_kwargs = dict(
-            detect_anomaly=True,
-            max_epochs=10,
-            overfit_batches=10,
-        )
-        args.trainer.update(debug_kwargs)
 
     if args.mode == "train":
         _train_main(args)
     elif args.mode == "predict":
         _predict_main(args)
+    elif args.mode == "debug":
+        _debug_main(args)
     else:
         _test_main(args)
 
