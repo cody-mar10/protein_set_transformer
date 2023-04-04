@@ -34,6 +34,7 @@ class _ProteinSetTransformer(L.LightningModule):
         lr: float = 1e-3,
         betas: tuple[float, float] = (0.9, 0.999),
         weight_decay: float = 0.0,
+        use_scheduler: bool = True,
         # point swap sampling
         sample_scale: float = 7.0,
         sample_rate: float = 0.5,
@@ -101,17 +102,16 @@ class _ProteinSetTransformer(L.LightningModule):
             betas=self.hparams["betas"],
             weight_decay=self.hparams["weight_decay"],
         )
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, patience=self.hparams["patience"]
-        )
-        config = {
-            "optimizer": optimizer,
-            "lr_scheduler": {
+        config: dict[str, Any] = {"optimizer": optimizer}
+        if self.hparams["use_scheduler"]:
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, patience=self.hparams["patience"]
+            )
+            config["lr_scheduler"] = {
                 "scheduler": scheduler,
                 "monitor": "val_loss",
                 "frequency": 1,
-            },
-        }
+            }
         return config
 
     def _shared_eval(
