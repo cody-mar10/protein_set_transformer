@@ -93,7 +93,7 @@ class MultiheadAttention(nn.Module):
                 device=Q.device
             )
 
-        attn_mask = torch.where(attn_mask, float("-inf"), 0.0)
+        attn_mask = torch.where(attn_mask, -1e6, 0.0)
 
         attn_weight = torch.softmax(
             (Q @ K.transpose(-2, -1) * scale) + attn_mask, dim=-1
