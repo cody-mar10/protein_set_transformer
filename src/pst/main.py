@@ -58,6 +58,15 @@ def main():
         # if args.trainer["devices"] > 1:
         #     args.trainer["strategy"] = "ddp_find_unused_parameters_true"
 
+    if args.debug:
+        debug_kwargs = dict(
+            detect_anomaly=True,
+            max_epochs=10,
+            overfit_batches=10,
+            fast_dev_run=True,
+        )
+        args.trainer.update(debug_kwargs)
+
     if args.mode == "train":
         _train_main(args)
     elif args.mode == "predict":

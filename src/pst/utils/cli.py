@@ -72,6 +72,7 @@ class Args:
     optimizer: dict[str, Any]
     predict: dict[str, Any]
     mode: Literal["train", "test", "predict"]
+    debug: bool
 
 
 @register
@@ -363,6 +364,12 @@ def parse_args() -> Args:
         default="train",
         help="model mode (default: %(default)s) [choices: %(choices)s]",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default="train",
+        help="use to enable debug mode for testing",
+    )
 
     for handler in _ARGPARSE_HANDLERS:
         handler(parser)
@@ -375,4 +382,5 @@ def parse_args() -> Args:
         optimizer=asdict(parse_optimizer_args(args)),
         predict=asdict(parse_predict_args(args)),
         mode=args.mode,
+        debug=args.debug,
     )
