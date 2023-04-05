@@ -78,9 +78,6 @@ class DeepSet(nn.Module):
         return self.decode(self.encode(X, row_mask=row_mask))
 
 
-LayerType = Type[ISAB] | Type[SAB]
-
-
 class SetTransformer(nn.Module):
     def __init__(
         self,

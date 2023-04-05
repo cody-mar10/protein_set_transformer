@@ -5,8 +5,9 @@ from typing import Optional
 
 import torch
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import DataLoader
 
+from pst.arch.lightning.data import GenomeSetDataModule
 from pst.arch.lightning.distance import (
     SetDistance,
     euclidean_distance,
@@ -15,6 +16,7 @@ from pst.arch.lightning.distance import (
     DISTANCE_TYPES,
 )
 from pst.utils import DistFuncSignature, FlowDict
+from pst.utils.mask import compute_row_mask
 
 
 @dataclass
@@ -22,12 +24,23 @@ class TripletSample:
     idx: torch.Tensor
     weights: torch.Tensor
 
+    def to(self, device: torch.device) -> TripletSample:
+        self.idx = self.idx.to(device=device)
+        self.weights = self.weights.to(device=device)
+        return self
+
 
 @dataclass
 class AugmentedSample:
     data: torch.Tensor
     weights: torch.Tensor
     negative_idx: torch.Tensor
+
+    def to(self, device: torch.device) -> AugmentedSample:
+        self.data = self.data.to(device=device)
+        self.weights = self.weights.to(device=device)
+        self.negative_idx = self.negative_idx.to(device=device)
+        return self
 
 
 class TripletSampler:
@@ -187,3 +200,72 @@ class PointSwapSampler:
 
     def sample(self) -> tuple[TripletSample, AugmentedSample]:
         return self._triplet_sample, self.point_swap_sampling()
+
+
+def precompute_point_swap_sampling(
+    dataloader: Optional[DataLoader] = None,
+    datamodule: Optional[GenomeSetDataModule] = None,
+    sample_rate: float = 0.5,
+    scale: float = 7.0,
+    distfunc: DistFuncSignature = euclidean_distance,
+):
+    def _precompute(dataloader: DataLoader) -> dict[str, torch.Tensor]:
+        RWMDDistance = SetDistance(distfunc=distfunc)
+        triplet_sample_indices: list[torch.Tensor] = list()
+        triplet_sample_weights: list[torch.Tensor] = list()
+        aug_sample_data: dict[int, torch.Tensor] = dict()
+        aug_sample_neg_indices: list[torch.Tensor] = list()
+        aug_sample_weights: list[torch.Tensor] = list()
+        for batch_idx, batch in enumerate(dataloader):
+            row_mask = compute_row_mask(batch)
+            rwmd, flow = RWMDDistance.fit_transform(batch)
+            sampler = PointSwapSampler(
+                emd=rwmd,
+                batch=batch,
+                flow=flow,
+                row_mask=row_mask,
+                sample_rate=sample_rate,
+                scale=scale,
+                distfunc=distfunc,
+            )
+            triplet_sample, aug_sample = sampler.sample()
+            # TODO: move to cpu and then to device?
+            triplet_sample = triplet_sample.to(torch.device("cpu"))
+            aug_sample = aug_sample.to(torch.device("cpu"))
+
+            triplet_sample_indices.append(triplet_sample.idx)
+            triplet_sample_weights.append(triplet_sample.weights)
+            aug_sample_data[batch_idx] = aug_sample.data
+            aug_sample_neg_indices.append(aug_sample.negative_idx)
+            aug_sample_weights.append(aug_sample.weights)
+
+        samples = {
+            "triplet": {
+                "indices": torch.stack(triplet_sample_indices),
+                "weights": torch.stack(triplet_sample_weights),
+            },
+            "aug": {
+                "data": aug_sample_data,
+                "weights": torch.stack(aug_sample_weights),
+                "negative_indices": torch.stack(aug_sample_neg_indices),
+            },
+        }
+        return samples
+
+    if datamodule is not None:
+        datamodule.setup("predict")
+        dataloader = datamodule.predict_dataloader()
+        precomputed_results = _precompute(dataloader)
+    elif dataloader is not None:
+        precomputed_results = _precompute(dataloader)
+    else:
+        if dataloader is None and datamodule is None:
+            raise ValueError(
+                "Either a dataloader or a lightning data module is required"
+            )
+        else:
+            raise ValueError(
+                "Dataloader and datamodule are mutually exclusive. Only provide one."
+            )
+
+    return precomputed_results

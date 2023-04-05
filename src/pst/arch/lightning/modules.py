@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 
 import lightning as L
 import torch
@@ -29,6 +29,8 @@ class _ProteinSetTransformer(L.LightningModule):
         bias: bool = True,
         norm: bool = True,
         *,
+        # precomputed sampling
+        precomputed_sampling: Optional[dict[str, Any]] = None,
         # optimizer
         patience: int = 5,
         lr: float = 1e-3,
@@ -71,7 +73,7 @@ class _ProteinSetTransformer(L.LightningModule):
                 loss_alpha (float, optional): Constant additive term in loss calculation. Defaults to 0.1.
         """
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore="precomputed_sampling")
 
         self.RWMDistance = SetDistance()
         self.criterion = AugmentedWeightedTripletLoss(loss_alpha)
@@ -88,6 +90,7 @@ class _ProteinSetTransformer(L.LightningModule):
             bias=bias,
             norm=norm,
         )
+        self.precomputed_sampling = precomputed_sampling
 
     def forward(self, X: torch.Tensor, **kwargs) -> torch.Tensor:
         # return self.model(X, **kwargs)
@@ -120,24 +123,55 @@ class _ProteinSetTransformer(L.LightningModule):
         batch_idx: int,
         stage: Literal["train", "val", "test"],
     ) -> torch.Tensor:
-        # 1. Compute relaxed word mover's distance
-        rwmd, flow = self.RWMDistance.fit_transform(batch)
+        if self.precomputed_sampling is None:
+            # 1. Compute relaxed word mover's distance
+            rwmd, flow = self.RWMDistance.fit_transform(batch)
 
-        # 2. Compute row mask
-        # TODO: this is technically computed twice?
-        # oh well I guess? bc I can't precompute the attn_mask here
-        row_mask = compute_row_mask(batch, unsqueeze=False)
+            # 2. Compute row mask
+            # TODO: this is technically computed twice?
+            # oh well I guess? bc I can't precompute the attn_mask here
+            row_mask = compute_row_mask(batch, unsqueeze=False)
 
-        # 3. Point-swap sampling
-        sampler = PointSwapSampler(
-            emd=rwmd,
-            batch=batch,
-            flow=flow,
-            row_mask=row_mask,
-            sample_rate=self.hparams["sample_rate"],
-            scale=self.hparams["sample_scale"],
-        )
-        triple_sample, aug_sample = sampler.sample()
+            # 3. Point-swap sampling
+            # TODO: this is technically always the same each time since it doesn't consider model inputs...
+            # meaning that this can be precomputed or cached
+            # actually to be flexible with batch sizes, prob just compute upfront each time?
+            sampler = PointSwapSampler(
+                emd=rwmd,
+                batch=batch,
+                flow=flow,
+                row_mask=row_mask,
+                sample_rate=self.hparams["sample_rate"],
+                scale=self.hparams["sample_scale"],
+            )
+            triplet_sample, aug_sample = sampler.sample()
+            pos_idx = triplet_sample.idx[1]
+            neg_idx = triplet_sample.idx[2]
+            triplet_weights = triplet_sample.weights
+            aug_data = aug_sample.data
+            aug_neg_weights = aug_sample.weights
+            aug_neg_idx = aug_sample.negative_idx
+        else:
+            device = batch.device
+            triplet_sample = self.precomputed_sampling["triplet"]
+            aug_sample = self.precomputed_sampling["aug"]
+
+            pos_idx: torch.Tensor = triplet_sample["indices"][batch_idx][1].to(
+                device=device
+            )
+            neg_idx: torch.Tensor = triplet_sample["indices"][batch_idx][2].to(
+                device=device
+            )
+            triplet_weights: torch.Tensor = triplet_sample["weights"][batch_idx].to(
+                device=device
+            )
+            aug_data: torch.Tensor = aug_sample["data"][batch_idx].to(device=device)
+            aug_neg_weights: torch.Tensor = aug_sample["weights"][batch_idx].to(
+                device=device
+            )
+            aug_neg_idx: torch.Tensor = aug_sample["negative_indices"][batch_idx].to(
+                device=device
+            )
 
         forward_kwargs = dict(return_weights=False, attn_mask=None)
 
@@ -145,20 +179,20 @@ class _ProteinSetTransformer(L.LightningModule):
         # to do triplet loss.
         # TODO: break this into functions
         y_self = self(batch, **forward_kwargs)
-        y_pos = self(batch[triple_sample.idx[1]], **forward_kwargs)
-        y_neg = self(batch[triple_sample.idx[2]], **forward_kwargs)
-        y_aug_pos = self(aug_sample.data, **forward_kwargs)
-        y_aug_neg = self(aug_sample.data[aug_sample.negative_idx], **forward_kwargs)
+        y_pos = self(batch[pos_idx], **forward_kwargs)
+        y_neg = self(batch[neg_idx], **forward_kwargs)
+        y_aug_pos = self(aug_data, **forward_kwargs)
+        y_aug_neg = self(aug_data[aug_neg_idx], **forward_kwargs)
 
         # 5. Compute loss and log
         loss: torch.Tensor = self.criterion(
             y_self=y_self,
             y_pos=y_pos,
             y_neg=y_neg,
-            neg_weights=triple_sample.weights,
+            neg_weights=triplet_weights,
             y_aug_pos=y_aug_pos,
             y_aug_neg=y_aug_neg,
-            aug_neg_weights=aug_sample.weights,
+            aug_neg_weights=aug_neg_weights,
         )
         self.log(
             f"{stage}_loss",
