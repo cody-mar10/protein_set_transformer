@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import torch
 import torch.nn.functional as F
@@ -215,7 +215,7 @@ class PrecomputeSampler:
         sample_rate: float = 0.5,
         scale: float = 7.0,
         distfunc: DistFuncSignature = euclidean_distance,
-        device: torch.device = torch.device("cpu"),
+        device: Literal["cpu", "gpu", "auto"] = "cpu",
     ):
         self.file = self.get_precomputed_sampling_filename(
             data_file=data_file,
@@ -227,7 +227,7 @@ class PrecomputeSampler:
         self.sample_rate = sample_rate
         self.sample_scale = scale
         self.distfunc = distfunc
-        self.device = device
+        self.device = torch.device(device if device != "auto" else "cpu")
         self.precomputed_sampling = self._precompute_point_swap_sampling()
 
     def _precompute(self) -> PrecomputedSampling:
