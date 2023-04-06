@@ -8,7 +8,7 @@ from torch import optim
 
 from .distance import SetDistance
 from .loss import AugmentedWeightedTripletLoss
-from .sampling import PointSwapSampler
+from .sampling import PointSwapSampler, PrecomputedSampling, PrecomputeSampler
 from pst.arch.model import SetTransformer
 from pst.utils.mask import compute_row_mask
 
@@ -29,8 +29,6 @@ class _ProteinSetTransformer(L.LightningModule):
         bias: bool = True,
         norm: bool = True,
         *,
-        # precomputed sampling
-        precomputed_sampling: Optional[dict[str, Any]] = None,
         # optimizer
         patience: int = 5,
         lr: float = 1e-3,
@@ -90,7 +88,14 @@ class _ProteinSetTransformer(L.LightningModule):
             bias=bias,
             norm=norm,
         )
-        self.precomputed_sampling = precomputed_sampling
+        self.precomputed_sampling: Optional[PrecomputedSampling] = None
+
+    def on_train_start(self) -> None:
+        super().on_train_start()
+        # attach precomputed results for model to access during training_step
+        # datamodule.prepare_data() called before this, so it should be available
+        file = self.trainer.datamodule.precomputed_sampling_file  # type: ignore
+        self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(file)
 
     def forward(self, X: torch.Tensor, **kwargs) -> torch.Tensor:
         # return self.model(X, **kwargs)

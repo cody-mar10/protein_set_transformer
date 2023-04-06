@@ -71,7 +71,7 @@ class Args:
     trainer: dict[str, Any]
     optimizer: dict[str, Any]
     predict: dict[str, Any]
-    mode: Literal["train", "test", "predict", "debug"]
+    mode: Literal["train", "test", "predict", "debug", "precompute"]
 
 
 @register
@@ -359,7 +359,7 @@ def parse_args() -> Args:
     parser.add_argument(
         "--mode",
         metavar="",
-        choices={"train", "predict", "test", "debug"},
+        choices={"train", "predict", "test", "debug", "precompute"},
         default="train",
         help="model mode (default: %(default)s) [choices: %(choices)s]",
     )

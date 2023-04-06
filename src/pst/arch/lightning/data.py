@@ -17,6 +17,12 @@ from numpy.typing import NDArray
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset, Sampler, BatchSampler
 
+from .sampling import (
+    PrecomputeSampler,
+    get_precomputed_sampling_filename_from_args,
+)
+from pst.utils.cli import Args
+
 BATCH_SIZE = 128
 
 
@@ -455,6 +461,8 @@ class GenomeSetDataModule(L.LightningDataModule):
         self,
         data_file: Path,
         metadata_file: Path,
+        args: Args,
+        stage: str = "fit",
         batch_size: int = BATCH_SIZE,
         split_ratio: Optional[tuple[float, ...]] = None,
         num_workers: int = 0,
@@ -465,12 +473,36 @@ class GenomeSetDataModule(L.LightningDataModule):
         self._metadata_file = metadata_file
         self.batch_size = batch_size
         self._dataset = SimpleGenomeDataset(self._data_file, self._metadata_file)
+        self._cli_args = args
+        self.precomputed_sampling_file = get_precomputed_sampling_filename_from_args(
+            self._cli_args
+        )
+        self.stage = stage
 
-        self.save_hyperparameters(ignore=["data_file", "metadata_file"])
+        self.save_hyperparameters(ignore="args")
 
     @property
     def feature_dimension(self) -> int:
         return self._dataset._data.shape[-1]
+
+    def prepare_data(self):
+        if self.stage == "fit":
+            dataloader = DataLoader(
+                dataset=self._dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                collate_fn=self._dataset.collate_batch,
+            )
+            precompute_sampler = PrecomputeSampler(
+                data_file=self._data_file,
+                batch_size=self.batch_size,
+                dataloader=dataloader,
+                sample_rate=self._cli_args.model["sample_rate"],
+                scale=self._cli_args.model["sample_scale"],
+                device=self._cli_args.trainer["accelerator"],
+            )
+            precompute_sampler.save()
+            del precompute_sampler
 
     def setup(self, stage: str):
         # each process gets this
@@ -490,11 +522,14 @@ class GenomeSetDataModule(L.LightningDataModule):
                 num_workers=self.hparams["num_workers"],
                 pin_memory=self.hparams["pin_memory"],
             )
+            # Just let the model load this
+            # self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(
+            #     self.precomputed_sampling_file
+            # )
 
-        if stage == "test":
+        elif stage == "test":
             self.test_dataset = self._dataset
-
-        if stage == "predict":
+        elif stage == "predict":
             self.predict_dataset = self._dataset
 
     def _dataloader(self, dataset: GenomeDataset, **kwargs) -> DataLoader:

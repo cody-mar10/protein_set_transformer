@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from pathlib import Path
+
 import lightning as L
 import torch
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -8,7 +12,7 @@ import pst
 
 def _train_main(args: pst.utils.cli.Args):
     checkpointing = ModelCheckpoint(monitor="val_loss", save_top_k=3, every_n_epochs=1)
-    datamodule = pst.data.GenomeSetDataModule(**args.data)
+    datamodule = pst.data.GenomeSetDataModule(**args.data, args=args)
     data_dim = datamodule.feature_dimension
     model = pst.modules.GenomeTransformer(
         in_dim=data_dim, **args.model, **args.optimizer
@@ -31,7 +35,7 @@ def _predict_main(args: pst.utils.cli.Args):
         args.predict["checkpoint"]
     )
 
-    datamodule = pst.data.GenomeSetDataModule(**args.data)
+    datamodule = pst.data.GenomeSetDataModule(**args.data, args=args, stage="predict")
     writer = pst.utils.PredictionWriter(
         outdir=args.predict["outdir"],
         dataset=datamodule,
@@ -43,7 +47,9 @@ def _predict_main(args: pst.utils.cli.Args):
     trainer.predict(model=model, datamodule=datamodule)
 
 
-def _debug_main(args: pst.utils.cli.Args):
+def _simple_data(
+    args: pst.utils.cli.Args,
+) -> tuple[pst.data.SimpleGenomeDataset, DataLoader]:
     dataset = pst.data.SimpleGenomeDataset(
         data_file=args.data["data_file"], genome_metadata=args.data["metadata_file"]
     )
@@ -53,6 +59,11 @@ def _debug_main(args: pst.utils.cli.Args):
         shuffle=False,
         collate_fn=dataset.collate_batch,
     )
+    return dataset, dataloader
+
+
+def _debug_main(args: pst.utils.cli.Args):
+    dataset, dataloader = _simple_data(args)
 
     data_dim = dataset._data.shape[-1]
     model = pst.modules.GenomeTransformer(
@@ -66,6 +77,19 @@ def _debug_main(args: pst.utils.cli.Args):
         **args.trainer,
     )
     trainer.fit(model=model, train_dataloaders=dataloader)
+
+
+def _precompute_main(args: pst.utils.cli.Args):
+    dataset, dataloader = _simple_data(args)
+    precompute_sampler = pst.sampling.PrecomputeSampler(
+        data_file=args.data["data_file"],
+        batch_size=args.data["batch_size"],
+        dataloader=dataloader,
+        sample_rate=args.model["sample_rate"],
+        scale=args.model["sample_scale"],
+        device=args.trainer["accelerator"],
+    )
+    precompute_sampler.save()
 
 
 def main():
@@ -87,6 +111,8 @@ def main():
         _predict_main(args)
     elif args.mode == "debug":
         _debug_main(args)
+    elif args.mode == "precompute":
+        _precompute_main(args)
     else:
         _test_main(args)
 

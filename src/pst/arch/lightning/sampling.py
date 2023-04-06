@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from pst.arch.lightning.data import GenomeSetDataModule
 from pst.arch.lightning.distance import (
     SetDistance,
     euclidean_distance,
@@ -16,6 +16,7 @@ from pst.arch.lightning.distance import (
     DISTANCE_TYPES,
 )
 from pst.utils import DistFuncSignature, FlowDict
+from pst.utils.cli import Args
 from pst.utils.mask import compute_row_mask
 
 
@@ -202,21 +203,41 @@ class PointSwapSampler:
         return self._triplet_sample, self.point_swap_sampling()
 
 
-def precompute_point_swap_sampling(
-    dataloader: Optional[DataLoader] = None,
-    datamodule: Optional[GenomeSetDataModule] = None,
-    sample_rate: float = 0.5,
-    scale: float = 7.0,
-    distfunc: DistFuncSignature = euclidean_distance,
-):
-    def _precompute(dataloader: DataLoader):
-        RWMDDistance = SetDistance(distfunc=distfunc)
+PrecomputedSampling = dict[str, dict[str, dict[int, torch.Tensor]]]
+
+
+class PrecomputeSampler:
+    def __init__(
+        self,
+        data_file: Path,
+        batch_size: int,
+        dataloader: DataLoader,
+        sample_rate: float = 0.5,
+        scale: float = 7.0,
+        distfunc: DistFuncSignature = euclidean_distance,
+        device: torch.device = torch.device("cpu"),
+    ):
+        self.file = self.get_precomputed_sampling_filename(
+            data_file=data_file,
+            batch_size=batch_size,
+            sample_rate=sample_rate,
+            sample_scale=scale,
+        )
+        self.dataloader = dataloader
+        self.sample_rate = sample_rate
+        self.sample_scale = scale
+        self.distfunc = distfunc
+        self.device = device
+        self.precomputed_sampling = self._precompute_point_swap_sampling()
+
+    def _precompute(self) -> PrecomputedSampling:
+        RWMDDistance = SetDistance(distfunc=self.distfunc)
         triplet_sample_indices: dict[int, torch.Tensor] = dict()
         triplet_sample_weights: dict[int, torch.Tensor] = dict()
         aug_sample_data: dict[int, torch.Tensor] = dict()
         aug_sample_neg_indices: dict[int, torch.Tensor] = dict()
         aug_sample_weights: dict[int, torch.Tensor] = dict()
-        for batch_idx, batch in enumerate(dataloader):
+        for batch_idx, batch in enumerate(self.dataloader):
             row_mask = compute_row_mask(batch)
             rwmd, flow = RWMDDistance.fit_transform(batch)
             sampler = PointSwapSampler(
@@ -224,14 +245,13 @@ def precompute_point_swap_sampling(
                 batch=batch,
                 flow=flow,
                 row_mask=row_mask,
-                sample_rate=sample_rate,
-                scale=scale,
-                distfunc=distfunc,
+                sample_rate=self.sample_rate,
+                scale=self.sample_scale,
+                distfunc=self.distfunc,
             )
             triplet_sample, aug_sample = sampler.sample()
-            # TODO: move to cpu and then to device?
-            triplet_sample = triplet_sample.to(torch.device("cpu"))
-            aug_sample = aug_sample.to(torch.device("cpu"))
+            triplet_sample = triplet_sample.to(device=self.device)
+            aug_sample = aug_sample.to(device=self.device)
 
             triplet_sample_indices[batch_idx] = triplet_sample.idx
             triplet_sample_weights[batch_idx] = triplet_sample.weights
@@ -242,27 +262,57 @@ def precompute_point_swap_sampling(
         samples = {
             "triplet": {
                 "indices": triplet_sample_indices,
-                "weights": (triplet_sample_weights),
+                "weights": triplet_sample_weights,
             },
             "aug": {
                 "data": aug_sample_data,
-                "weights": (aug_sample_weights),
-                "negative_indices": (aug_sample_neg_indices),
+                "weights": aug_sample_weights,
+                "negative_indices": aug_sample_neg_indices,
             },
         }
         return samples
 
-    if dataloader is not None and datamodule is not None:
-        raise ValueError(
-            "Dataloader and datamodule are mutually exclusive. Only provide one."
-        )
-    elif datamodule is not None:
-        datamodule.setup("predict")
-        dataloader = datamodule.predict_dataloader()
-        precomputed_results = _precompute(dataloader)
-    elif dataloader is not None:
-        precomputed_results = _precompute(dataloader)
-    else:
-        raise ValueError("Either a dataloader or a lightning data module is required")
+    def _precompute_point_swap_sampling(self) -> PrecomputedSampling:
+        if not self.file.exists():
+            print(f"Calculating precomputed point swap sampling to: {self.file}")
+            return self._precompute()
+        else:
+            print(f"Loading {self.file}")
+            return self.load()
 
-    return precomputed_results
+    def precompute_point_swap_sampling(self) -> PrecomputedSampling:
+        return self._precompute_point_swap_sampling()
+
+    def save(self):
+        with self.file.open("wb") as fp:
+            torch.save(self.precomputed_sampling, fp)
+
+    def load(self) -> PrecomputedSampling:
+        return torch.load(self.file)
+
+    @staticmethod
+    def load_precomputed_sampling(file: Path) -> PrecomputedSampling:
+        return torch.load(file)
+
+    @staticmethod
+    def get_precomputed_sampling_filename(
+        data_file: Path, batch_size: int, sample_rate: float, sample_scale: float
+    ) -> Path:
+        _output = [
+            data_file.stem,
+            "precomputed-sampling",
+            f"batchsize-{batch_size}",
+            f"sample-rate-{sample_rate}",
+            f"sample-scale-{sample_scale}",
+        ]
+        output = Path(f"{'_'.join(_output)}.pt")
+        return output
+
+
+def get_precomputed_sampling_filename_from_args(args: Args) -> Path:
+    return PrecomputeSampler.get_precomputed_sampling_filename(
+        data_file=args.data["data_file"],
+        batch_size=args.data["batch_size"],
+        sample_rate=args.model["sample_rate"],
+        sample_scale=args.model["sample_scale"],
+    )
