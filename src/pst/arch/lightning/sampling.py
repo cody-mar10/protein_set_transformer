@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
@@ -227,7 +228,9 @@ class PrecomputeSampler:
         self.sample_rate = sample_rate
         self.sample_scale = scale
         self.distfunc = distfunc
-        self.device = torch.device(device if device != "auto" else "cpu")
+        self.device = torch.device(
+            "cuda" if device == "gpu" else "cpu" if device == "auto" else device
+        )
         self.precomputed_sampling = self._precompute_point_swap_sampling()
 
     def _precompute(self) -> PrecomputedSampling:
@@ -273,12 +276,25 @@ class PrecomputeSampler:
         return samples
 
     def _precompute_point_swap_sampling(self) -> PrecomputedSampling:
-        if not self.file.exists():
+        # check in cwd
+        try:
+            # specifically for CHTC to check if file exists there
+            datadir = Path(os.environ["STAGING"]).joinpath(os.environ["USER"])
+        except KeyError:
+            datadir = Path.cwd()
+
+        ext_file = datadir.joinpath(self.file)
+        if not ext_file.exists() and not self.file.exists():
+            # check both STAGING and cwd
             print(f"Calculating precomputed point swap sampling to: {self.file}")
             return self._precompute()
-        else:
-            print(f"Loading {self.file}")
+        elif ext_file.exists():
+            self.file = ext_file
             return self.load()
+
+        # else: load from self.file without using STAGING
+        print(f"Loading {self.file}")
+        return self.load()
 
     def precompute_point_swap_sampling(self) -> PrecomputedSampling:
         return self._precompute_point_swap_sampling()
