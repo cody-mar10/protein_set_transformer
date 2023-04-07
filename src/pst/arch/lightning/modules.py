@@ -11,6 +11,7 @@ from .loss import AugmentedWeightedTripletLoss
 from .sampling import PointSwapSampler, PrecomputedSampling, PrecomputeSampler
 from pst.arch.model import SetTransformer
 from pst.utils.mask import compute_row_mask
+from pst.utils._types import BatchType
 
 
 class _ProteinSetTransformer(L.LightningModule):
@@ -124,18 +125,19 @@ class _ProteinSetTransformer(L.LightningModule):
 
     def _shared_eval(
         self,
-        batch: torch.Tensor,
+        batch: BatchType,
         batch_idx: int,
         stage: Literal["train", "val", "test"],
     ) -> torch.Tensor:
+        batch_idx, batch_data = batch
         if self.precomputed_sampling is None:
             # 1. Compute relaxed word mover's distance
-            rwmd, flow = self.RWMDistance.fit_transform(batch)
+            rwmd, flow = self.RWMDistance.fit_transform(batch_data)
 
             # 2. Compute row mask
             # TODO: this is technically computed twice?
             # oh well I guess? bc I can't precompute the attn_mask here
-            row_mask = compute_row_mask(batch, unsqueeze=False)
+            row_mask = compute_row_mask(batch_data, unsqueeze=False)
 
             # 3. Point-swap sampling
             # TODO: this is technically always the same each time since it doesn't consider model inputs...
@@ -143,7 +145,7 @@ class _ProteinSetTransformer(L.LightningModule):
             # actually to be flexible with batch sizes, prob just compute upfront each time?
             sampler = PointSwapSampler(
                 emd=rwmd,
-                batch=batch,
+                batch=batch_data,
                 flow=flow,
                 row_mask=row_mask,
                 sample_rate=self.hparams["sample_rate"],
@@ -157,10 +159,11 @@ class _ProteinSetTransformer(L.LightningModule):
             aug_neg_weights = aug_sample.weights
             aug_neg_idx = aug_sample.negative_idx
         else:
-            device = batch.device
+            device = batch_data.device
             triplet_sample = self.precomputed_sampling["triplet"]
             aug_sample = self.precomputed_sampling["aug"]
 
+            # TODO: val batch idx restart from 0, I think sampler can return this
             pos_idx: torch.Tensor = triplet_sample["indices"][batch_idx][1].to(
                 device=device
             )
@@ -183,9 +186,9 @@ class _ProteinSetTransformer(L.LightningModule):
         # 4. Forward pass with batch, pos/neg samples, and augmented data
         # to do triplet loss.
         # TODO: break this into functions
-        y_self = self(batch, **forward_kwargs)
-        y_pos = self(batch[pos_idx], **forward_kwargs)
-        y_neg = self(batch[neg_idx], **forward_kwargs)
+        y_self = self(batch_data, **forward_kwargs)
+        y_pos = self(batch_data[pos_idx], **forward_kwargs)
+        y_neg = self(batch_data[neg_idx], **forward_kwargs)
         y_aug_pos = self(aug_data, **forward_kwargs)
         y_aug_neg = self(aug_data[aug_neg_idx], **forward_kwargs)
 
@@ -210,20 +213,20 @@ class _ProteinSetTransformer(L.LightningModule):
         )
         return loss
 
-    def training_step(self, train_batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
+    def training_step(self, train_batch: BatchType, batch_idx: int) -> torch.Tensor:
         return self._shared_eval(train_batch, batch_idx, "train")
 
-    def validation_step(self, val_batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
+    def validation_step(self, val_batch: BatchType, batch_idx: int) -> torch.Tensor:
         return self._shared_eval(val_batch, batch_idx, "val")
 
-    def test_step(self, test_batch: torch.Tensor, batch_idx: int) -> torch.Tensor:
+    def test_step(self, test_batch: BatchType, batch_idx: int) -> torch.Tensor:
         return self._shared_eval(test_batch, batch_idx, "test")
 
     # TODO: idk if more is needed
     def predict_step(
-        self, batch: torch.Tensor, batch_idx: int, dataloader_idx: int = 0
+        self, batch: BatchType, batch_idx: int, dataloader_idx: int = 0
     ) -> torch.Tensor:
-        return self(batch)
+        return self(batch[1])
 
 
 # TODO: these aren't working well with lightning CLI
