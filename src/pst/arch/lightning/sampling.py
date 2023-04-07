@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
@@ -295,7 +296,10 @@ class PrecomputeSampler:
             print(f"Calculating precomputed point swap sampling to: {self.file}")
             return self._precompute()
         elif self._ext_file.exists():
+            # file located in CHTC /staging
             self.file = self._ext_file
+            # copy file over from staging to cwd
+            shutil.copyfile(self.file, Path.cwd())
 
         # else: load from self.file without using STAGING
         print(f"Loading {self.file}")
