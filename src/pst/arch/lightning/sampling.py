@@ -231,6 +231,7 @@ class PrecomputeSampler:
         self.device = torch.device(
             "cuda" if device == "gpu" else "cpu" if device == "auto" else device
         )
+        self._get_external_file()
         self.precomputed_sampling = self._precompute_point_swap_sampling()
 
     def _precompute(self) -> PrecomputedSampling:
@@ -240,7 +241,7 @@ class PrecomputeSampler:
         aug_sample_data: dict[int, torch.Tensor] = dict()
         aug_sample_neg_indices: dict[int, torch.Tensor] = dict()
         aug_sample_weights: dict[int, torch.Tensor] = dict()
-        for batch_idx, batch in enumerate(self.dataloader):
+        for batch_idx, batch in self.dataloader:
             row_mask = compute_row_mask(batch)
             rwmd, flow = RWMDDistance.fit_transform(batch)
             sampler = PointSwapSampler(
@@ -275,7 +276,7 @@ class PrecomputeSampler:
         }
         return samples
 
-    def _precompute_point_swap_sampling(self) -> PrecomputedSampling:
+    def _get_external_file(self):
         # check in cwd
         try:
             # specifically for CHTC to check if file exists there
@@ -283,14 +284,18 @@ class PrecomputeSampler:
         except KeyError:
             datadir = Path.cwd()
 
-        ext_file = datadir.joinpath(self.file)
-        if not ext_file.exists() and not self.file.exists():
+        self._ext_file = datadir.joinpath(self.file)
+
+    def exists(self) -> bool:
+        return self._ext_file.exists() or self.file.exists()
+
+    def _precompute_point_swap_sampling(self) -> PrecomputedSampling:
+        if not self.exists():
             # check both STAGING and cwd
             print(f"Calculating precomputed point swap sampling to: {self.file}")
             return self._precompute()
-        elif ext_file.exists():
-            self.file = ext_file
-            return self.load()
+        elif self._ext_file.exists():
+            self.file = self._ext_file
 
         # else: load from self.file without using STAGING
         print(f"Loading {self.file}")
@@ -321,7 +326,7 @@ class PrecomputeSampler:
             f"sample-rate-{sample_rate}",
             f"sample-scale-{sample_scale}",
         ]
-        output = Path(f"{'_'.join(_output)}.pt")
+        output = Path.cwd().joinpath(f"{'_'.join(_output)}.pt")
         return output
 
 
