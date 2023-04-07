@@ -22,6 +22,7 @@ from .sampling import (
     get_precomputed_sampling_filename_from_args,
 )
 from pst.utils.cli import Args
+from pst.utils._types import BatchType
 
 BATCH_SIZE = 128
 
@@ -69,6 +70,8 @@ class GenomeDataset(Dataset):
         )
         self._data = self._filehandle.root.data
         self._genome_metadata = self.read_metadata(genome_metadata)
+        # this is used for simple dataloading not using the Lightning datamodule
+        self._batch_idx = 0
 
     def __len__(self) -> int:
         # how many genomes
@@ -79,22 +82,28 @@ class GenomeDataset(Dataset):
         ...
 
     @overload
-    def __getitem__(self, idx: list[int]) -> list[str]:
+    def __getitem__(self, idx: list[tuple[int, int]]) -> tuple[int, list[str]]:
         ...
 
-    def __getitem__(self, idx: int | list[int]) -> str | list[str]:
+    def __getitem__(
+        self, idx: int | list[tuple[int, int]]
+    ) -> str | tuple[int, list[str]]:
         # returns a genome name rather than actual data
         # this allows the collate_fn to get all data from .h5 disk file
         # referenced by self._data to read data once per batch, rather
         # than many times for each genome
 
         if isinstance(idx, int):
-            idx = [idx]
+            indices = [idx]
+            batch_id = 0  # NOT NEEDED
+        else:
+            batch_ids, indices = list(zip(*idx))
+            batch_id = batch_ids[0]
 
-        genomes = [self._genome_metadata.id2genome[index] for index in idx]
+        genomes = [self._genome_metadata.id2genome[index] for index in indices]
         if len(genomes) == 1:
             return genomes[0]
-        return genomes
+        return batch_id, genomes
 
     def read_metadata(self, file: Path) -> GenomeMetadata:
         with file.open() as fp:
@@ -127,7 +136,7 @@ class GenomeDataset(Dataset):
         stop = indices[-1][1]
         return slice(start, stop)
 
-    def collate_batch(self, batch: list[str]) -> torch.Tensor:
+    def collate_batch(self, batch: tuple[int, list[str]] | list[str]) -> BatchType:
         """Receives as input from a DataLoader a list of the outputs from
         the `self.__getitem__` method, which returns genome names.
         This function converts all genome names in a batch to indices
@@ -145,14 +154,20 @@ class GenomeDataset(Dataset):
             batch (list[str]): list of genome names
 
         Returns:
-            torch.Tensor: 3d tensor [b, m, n]
+            tuple[int, torch.Tensor]: batch index and 3d tensor [b, m, n]
                 b: batch size
                 m: max number of proteins
                 n: protein embedding dimension
         """
+        if isinstance(batch, list):
+            batch_data = batch
+            batch_idx = self._batch_idx
+            self._batch_idx += 1
+        else:
+            batch_idx, batch_data = batch
         indices = list()
         genome_sizes = list()
-        for genome in batch:
+        for genome in batch_data:
             indices.append(self._genome_metadata.genome2idx[genome])
             genome_sizes.append(self._genome_metadata.genome2nptns[genome])
         data_slice = self._convert_indices_to_slice(indices)
@@ -170,23 +185,25 @@ class GenomeDataset(Dataset):
         else:
             # no padding needed since all genomes are same size
             # just need to reshape the tensor
-            n_genomes = len(batch)
+            n_genomes = len(batch_data)
             n_ptns = genome_sizes[0]
             feature_dim = X.size(-1)
             X = X.reshape(n_genomes, n_ptns, feature_dim)
 
-        return X
+        return batch_idx, X
 
     def convert_batch_idx_to_genome_ids(
         self, batch_idx: int, batch_size: int
-    ) -> list[int]:
+    ) -> list[tuple[int, int]]:
         start_genome_id = batch_idx * batch_size
         end_genome_id = (batch_idx + 1) * batch_size
-        return list(range(start_genome_id, end_genome_id))
+        genome_ids = list(range(start_genome_id, end_genome_id))
+        batch_ids = [batch_idx] * len(genome_ids)
+        return list(zip(batch_ids, genome_ids))
 
     def convert_batch_idx_to_genome_names(
         self, batch_idx: int, batch_size: int
-    ) -> list[str]:
+    ) -> tuple[int, list[str]]:
         genome_ids = self.convert_batch_idx_to_genome_ids(batch_idx, batch_size)
         return self[genome_ids]
 
@@ -197,6 +214,8 @@ class SimpleGenomeDataset(GenomeDataset):
     def __init__(self, data_file: Path, genome_metadata: Path) -> None:
         self._data: NDArray[float32] = tb.File(data_file, libver="latest").root.data[:]
         self._genome_metadata = self.read_metadata(genome_metadata)
+        # this is used for simple dataloading not using the Lightning datamodule
+        self._batch_idx = 0
 
 
 @dataclass
@@ -284,23 +303,25 @@ class WeakShuffleBatchSampler(Sampler):
         data_size = n_batches * self.batch_size
         return data_size
 
-    def __iter__(self) -> Iterator[int]:
+    def __iter__(self) -> Iterator[tuple[int, int]]:
         for batch_id in self.batch_ids:
             start = int(batch_id * self.batch_size)
             end = int((batch_id + 1) * self.batch_size)
-            yield from self._yield_data_idx(start, end)
+            yield from self._yield_data_idx(batch_id, start, end)
 
         if self._remainder > 0:
             last_batch_id = self.dataset_size // self.batch_size
             start = last_batch_id * self.batch_size
             end = self.dataset_size
-            yield from self._yield_data_idx(start, end)
+            yield from self._yield_data_idx(last_batch_id, start, end)
 
-    def _yield_data_idx(self, start: int, end: int) -> Iterator[int]:
+    def _yield_data_idx(
+        self, batch_id: torch.Tensor | int, start: int, end: int
+    ) -> Iterator[tuple[int, int]]:
         # Yield genome ids from batch ids
         indices = torch.arange(start, end)
         for idx in indices:
-            yield int(idx)
+            yield int(batch_id), int(idx)
 
     @classmethod
     def from_split(cls, dataset_size: int, split: torch.Tensor, batch_size: int):
@@ -385,7 +406,7 @@ class GenomeDataLoader:
         return DataLoader(
             dataset=dataset,
             batch_size=None,
-            collate_fn=dataset.collate_batch,
+            collate_fn=dataset.collate_batch,  # type: ignore
             sampler=BatchSampler(sampler, batch_size=batch_size, drop_last=False),
             **kwargs,
         )
@@ -491,7 +512,7 @@ class GenomeSetDataModule(L.LightningDataModule):
                 dataset=self._dataset,
                 batch_size=self.batch_size,
                 shuffle=False,
-                collate_fn=self._dataset.collate_batch,
+                collate_fn=self._dataset.collate_batch,  # type: ignore
             )
             precompute_sampler = PrecomputeSampler(
                 data_file=self._data_file,
@@ -501,7 +522,9 @@ class GenomeSetDataModule(L.LightningDataModule):
                 scale=self._cli_args.model["sample_scale"],
                 device=self._cli_args.trainer["accelerator"],
             )
-            precompute_sampler.save()
+            if not precompute_sampler.exists():
+                # don't re-save since this will prob be slow in chtc
+                precompute_sampler.save()
             del precompute_sampler
 
     def setup(self, stage: str):
