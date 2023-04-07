@@ -297,7 +297,6 @@ class PrecomputeSampler:
             return self._precompute()
         elif self._ext_file.exists():
             # file located in CHTC /staging
-            self.file = self._ext_file
             # copy file over from staging to cwd
             shutil.copyfile(self.file, Path.cwd())
 
