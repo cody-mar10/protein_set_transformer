@@ -298,9 +298,9 @@ class PrecomputeSampler:
         elif self._ext_file.exists():
             # file located in CHTC /staging
             # copy file over from staging to cwd
-            shutil.copyfile(self.file, Path.cwd())
+            shutil.copyfile(self._ext_file, Path.cwd())
 
-        # else: load from self.file without using STAGING
+        # STAGING file copied over already, so this works in either case
         print(f"Loading {self.file}")
         return self.load()
 
