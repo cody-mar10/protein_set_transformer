@@ -285,7 +285,7 @@ class PrecomputeSampler:
         except KeyError:
             datadir = Path.cwd()
 
-        self._ext_file = datadir.joinpath(self.file)
+        self._ext_file = datadir.joinpath(self.file.name)
 
     def exists(self) -> bool:
         return self._ext_file.exists() or self.file.exists()
@@ -293,12 +293,13 @@ class PrecomputeSampler:
     def _precompute_point_swap_sampling(self) -> PrecomputedSampling:
         if not self.exists():
             # check both STAGING and cwd
+            print("Neither")
             print(f"Calculating precomputed point swap sampling to: {self.file}")
             return self._precompute()
         elif self._ext_file.exists():
             # file located in CHTC /staging
             # copy file over from staging to cwd
-            shutil.copyfile(self._ext_file, Path.cwd())
+            shutil.copyfile(self._ext_file, Path.cwd().joinpath(self.file))
 
         # STAGING file copied over already, so this works in either case
         print(f"Loading {self.file}")
