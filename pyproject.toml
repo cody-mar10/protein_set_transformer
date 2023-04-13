@@ -14,7 +14,13 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
 ]
-dependencies = ["torch>=2", "jsonargparse[signatures]", "lightning", "tables"]
+dependencies = [
+    "torch>=2",
+    "transformers",
+    "jsonargparse[signatures]",
+    "lightning",
+    "tables",
+]
 
 [project.scripts]
 pst = "pst:main.main"
