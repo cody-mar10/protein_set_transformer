@@ -93,10 +93,12 @@ class MultiheadAttention(nn.Module):
                 device=Q.device
             )
 
-        attn_mask = torch.where(attn_mask, -5e4, 0.0)
-
+        attn_mask = torch.where(attn_mask, float("-inf"), 0.0)
+        # this technically weights the features of each ptn relatively
+        # rather than weighting ptns relatively, is this desired?
+        # TODO: yunha's paper does dim=-2 to avg over ptns instead
         attn_weight = torch.softmax(
-            (Q @ K.transpose(-2, -1) * scale) + attn_mask, dim=-1
+            (Q @ K.transpose(-2, -1) * scale) + attn_mask, dim=-2
         )
         # since each row for a genome is a ptn and entire rows are padded with 0s
         # the padded rows will all be nan after softmax since
