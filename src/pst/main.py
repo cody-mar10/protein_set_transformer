@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import lightning as L
 import torch
 from lightning.pytorch.callbacks import ModelCheckpoint
@@ -11,7 +9,7 @@ import pst
 
 
 def _train_main(args: pst.utils.cli.Args):
-    checkpointing = ModelCheckpoint(monitor="val_loss", save_top_k=3, every_n_epochs=1)
+    checkpointing = ModelCheckpoint(monitor="val_loss", save_top_k=10, every_n_epochs=1)
     datamodule = pst.data.GenomeSetDataModule(**args.data, args=args)
     data_dim = datamodule.feature_dimension
     model = pst.modules.GenomeTransformer(
@@ -57,7 +55,7 @@ def _simple_data(
         dataset=dataset,
         batch_size=args.data["batch_size"],
         shuffle=False,
-        collate_fn=dataset.collate_batch,
+        collate_fn=dataset.collate_batch,  # type: ignore
     )
     return dataset, dataloader
 
