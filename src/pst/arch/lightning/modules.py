@@ -5,11 +5,12 @@ from typing import Any, Literal, Optional
 import lightning as L
 import torch
 from torch import optim
+from transformers import get_linear_schedule_with_warmup
 
 from .distance import SetDistance
 from .loss import AugmentedWeightedTripletLoss
 from .sampling import PointSwapSampler, PrecomputedSampling, PrecomputeSampler
-from pst.arch.model import SetTransformer
+from pst.arch.model import SetTransformer, AttentionSchema
 from pst.utils.mask import compute_row_mask
 from pst.utils._types import BatchType
 
@@ -31,7 +32,7 @@ class _ProteinSetTransformer(L.LightningModule):
         norm: bool = True,
         *,
         # optimizer
-        patience: int = 5,
+        warmup_steps: int = 5000,
         lr: float = 1e-3,
         betas: tuple[float, float] = (0.9, 0.999),
         weight_decay: float = 0.0,
@@ -58,8 +59,8 @@ class _ProteinSetTransformer(L.LightningModule):
                 norm (bool, optional): Include a LayerNorm operation after each attention block. Defaults to True.
 
             Optimizer:
-                optimizer (OptimizerCallable, optional): type of optimizer. Defaults to torch.optim.Adam.
-                scheduler (LRSchedulerCallable, optional): type of learning rate scheduler. Defaults to torch.optim.lr_scheduler.ConstantLR.
+                warmup_steps (int, optional): number of steps to warm up learning rate
+                    to max learning rate. Defaults to 5000.
                 lr (float, optional): optimizer learning rate. Defaults to 1e-3.
                 betas (tuple[float, float], optional): optimizer beta values. Defaults to (0.9, 0.999).
                 weight_decay (float, optional): optimizer weight decay. Defaults to 0.0.
@@ -89,6 +90,7 @@ class _ProteinSetTransformer(L.LightningModule):
             bias=bias,
             norm=norm,
         )
+        # self.model = torch.compile(self.model)
         self.precomputed_sampling: Optional[PrecomputedSampling] = None
 
     def on_train_start(self) -> None:
@@ -105,7 +107,7 @@ class _ProteinSetTransformer(L.LightningModule):
         )
 
     def configure_optimizers(self) -> dict[str, Any]:
-        optimizer = optim.Adam(
+        optimizer = optim.AdamW(
             self.model.parameters(),
             lr=self.hparams["lr"],
             betas=self.hparams["betas"],
@@ -113,14 +115,12 @@ class _ProteinSetTransformer(L.LightningModule):
         )
         config: dict[str, Any] = {"optimizer": optimizer}
         if self.hparams["use_scheduler"]:
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, patience=self.hparams["patience"]
+            scheduler = get_linear_schedule_with_warmup(
+                optimizer=optimizer,
+                num_warmup_steps=self.hparams["warmup_steps"],
+                num_training_steps=self.trainer.estimated_stepping_batches,
             )
-            config["lr_scheduler"] = {
-                "scheduler": scheduler,
-                "monitor": "val_loss",
-                "frequency": 1,
-            }
+            config["lr_scheduler"] = scheduler
         return config
 
     def _shared_eval(
@@ -243,3 +243,8 @@ class GeneTransformer(_ProteinSetTransformer):
         out = self.model.encode(X, **kwargs)
         idx = self.model.final_encoder_layer_idx
         return out[idx].repr
+
+    def protein_weights(self, X: torch.Tensor) -> AttentionSchema:
+        # the first module in the decoder is the pooling multihead attention block
+        # that will? weight the proteins in each genome?
+        return self.model._decoder[0](X, return_weights=True)
