@@ -27,7 +27,7 @@ class OptimizerArgs:
     lr: float
     weight_decay: float
     betas: tuple[float, float]
-    patience: int
+    warmup_steps: int
 
 
 @dataclass
@@ -295,11 +295,11 @@ def add_optimizer_args(parser: argparse.ArgumentParser):
         help="optimizer weight decay (default: %(default)s)",
     )
     group.add_argument(
-        "--patience",
+        "--warmup_steps",
         metavar="int",
         type=int,
-        default=5,
-        help="number of epochs for plateau learning rate scheduler to wait for a stagnating training session to reduce the learning rate (default: %(default)s)",
+        default=5000,
+        help="number of training steps to warm-up the learning rate to the max (default: %(default)s)",
     )
     group.add_argument(
         "--betas",
@@ -316,7 +316,7 @@ def parse_optimizer_args(args: argparse.Namespace) -> OptimizerArgs:
         lr=args.lr,
         weight_decay=args.weight_decay,
         betas=tuple(args.betas),
-        patience=args.patience,
+        warmup_steps=args.warmup_steps,
     )
 
 
