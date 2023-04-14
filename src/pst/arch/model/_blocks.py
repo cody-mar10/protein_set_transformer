@@ -93,27 +93,17 @@ class MultiheadAttention(nn.Module):
                 device=Q.device
             )
 
-        attn_mask = torch.where(attn_mask, float("-inf"), 0.0)
-        # this technically weights the features of each ptn relatively
-        # rather than weighting ptns relatively, is this desired?
-        # TODO: yunha's paper does dim=-2 to avg over ptns instead
+        attn_mask = torch.where(attn_mask, -5e4, 0.0)
+        # this weights proteins accordingly
         attn_weight = torch.softmax(
-            (Q @ K.transpose(-2, -1) * scale) + attn_mask, dim=-2
+            (Q @ K.transpose(-2, -1) * scale) + attn_mask, dim=-1
         )
-        # since each row for a genome is a ptn and entire rows are padded with 0s
-        # the padded rows will all be nan after softmax since
-        # they sum to nan still
-        # replacing them with 0s shouldnt? affect calcs
-        # since matmul with a 0 vector is 0
-        # idk if this is needed since ISAB won't have 0 rows
 
-        # SWITCHING TO NOT USE INPLACE OPS
-        # attn_weight.nan_to_num_(nan=0.0)
-        # attn_weight = attn_weight.nan_to_num(nan=0.0)
         attn_weight = torch.dropout(attn_weight, self.dropout, self.training)
         attn = attn_weight @ V
         return AttentionSchema(
-            repr=attn, weights=attn_weight if return_weights else None
+            repr=attn,
+            weights=self.from_multiheaded(attn_weight) if return_weights else None,
         )
 
     def forward(
