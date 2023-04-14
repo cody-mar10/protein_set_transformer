@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import lightning as L
 import torch
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from torch.utils.data import DataLoader
 
 import pst
@@ -10,13 +10,14 @@ import pst
 
 def _train_main(args: pst.utils.cli.Args):
     checkpointing = ModelCheckpoint(monitor="val_loss", save_top_k=10, every_n_epochs=1)
+    lr_monitor = LearningRateMonitor(logging_interval="step")
     datamodule = pst.data.GenomeSetDataModule(**args.data, args=args)
     data_dim = datamodule.feature_dimension
     model = pst.modules.GenomeTransformer(
         in_dim=data_dim, **args.model, **args.optimizer
     )
     trainer = L.Trainer(
-        callbacks=[checkpointing],
+        callbacks=[checkpointing, lr_monitor],
         logger=True,
         log_every_n_steps=5,
         **args.trainer,
