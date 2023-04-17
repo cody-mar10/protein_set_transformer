@@ -98,7 +98,9 @@ class _ProteinSetTransformer(L.LightningModule):
         # attach precomputed results for model to access during training_step
         # datamodule.prepare_data() called before this, so it should be available
         file = self.trainer.datamodule.precomputed_sampling_file  # type: ignore
-        self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(file)
+        self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(
+            file, device=torch.device("cpu")
+        )
 
     def forward(self, X: torch.Tensor, **kwargs) -> torch.Tensor:
         # return self.model(X, **kwargs)
