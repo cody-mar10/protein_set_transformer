@@ -92,6 +92,7 @@ class _ProteinSetTransformer(L.LightningModule):
         )
         # self.model = torch.compile(self.model)
         self.precomputed_sampling: Optional[PrecomputedSampling] = None
+        self.cpu_device = torch.device("cpu")
 
     def on_train_start(self) -> None:
         super().on_train_start()
@@ -99,7 +100,8 @@ class _ProteinSetTransformer(L.LightningModule):
         # datamodule.prepare_data() called before this, so it should be available
         file = self.trainer.datamodule.precomputed_sampling_file  # type: ignore
         self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(
-            file, device=torch.device("cpu")
+            file,
+            device=self.cpu_device,
         )
 
     def forward(self, X: torch.Tensor, **kwargs) -> torch.Tensor:
@@ -137,6 +139,7 @@ class _ProteinSetTransformer(L.LightningModule):
         stage: Literal["train", "val", "test"],
     ) -> torch.Tensor:
         batch_idx, batch_data = batch
+        device = batch_data.device
         if self.precomputed_sampling is None:
             # 1. Compute relaxed word mover's distance
             rwmd, flow = self.RWMDistance.fit_transform(batch_data)
@@ -166,11 +169,9 @@ class _ProteinSetTransformer(L.LightningModule):
             aug_neg_weights = aug_sample.weights
             aug_neg_idx = aug_sample.negative_idx
         else:
-            device = batch_data.device
             triplet_sample = self.precomputed_sampling["triplet"]
             aug_sample = self.precomputed_sampling["aug"]
 
-            # TODO: val batch idx restart from 0, I think sampler can return this
             pos_idx: torch.Tensor = triplet_sample["indices"][batch_idx][1].to(
                 device=device
             )
@@ -187,6 +188,14 @@ class _ProteinSetTransformer(L.LightningModule):
             aug_neg_idx: torch.Tensor = aug_sample["negative_indices"][batch_idx].to(
                 device=device
             )
+
+        # move to training device
+        pos_idx = pos_idx.to(device=device)
+        neg_idx = neg_idx.to(device=device)
+        triplet_weights = triplet_weights.to(device=device)
+        aug_data = aug_data.to(device=device)
+        aug_neg_weights = aug_neg_weights.to(device=device)
+        aug_neg_idx = aug_neg_idx.to(device=device)
 
         forward_kwargs = dict(return_weights=False, attn_mask=None)
 
@@ -218,6 +227,14 @@ class _ProteinSetTransformer(L.LightningModule):
             logger=True,
             sync_dist=True,
         )
+
+        # move back to cpu
+        pos_idx = pos_idx.to(device=self.cpu_device)
+        neg_idx = neg_idx.to(device=self.cpu_device)
+        triplet_weights = triplet_weights.to(device=self.cpu_device)
+        aug_data = aug_data.to(device=self.cpu_device)
+        aug_neg_weights = aug_neg_weights.to(device=self.cpu_device)
+        aug_neg_idx = aug_neg_idx.to(device=self.cpu_device)
         return loss
 
     def training_step(self, train_batch: BatchType, batch_idx: int) -> torch.Tensor:
