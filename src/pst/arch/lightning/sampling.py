@@ -312,12 +312,19 @@ class PrecomputeSampler:
         with self.file.open("wb") as fp:
             torch.save(self.precomputed_sampling, fp)
 
-    def load(self) -> PrecomputedSampling:
-        return torch.load(self.file)
+    def load(self, device: Optional[torch.device] = None) -> PrecomputedSampling:
+        return self.load_precomputed_sampling(self.file, device)
+
+    def to(self, device: Optional[torch.device] = None):
+        _move_precomputed_sampling_to_device(self.precomputed_sampling, device)
 
     @staticmethod
-    def load_precomputed_sampling(file: Path) -> PrecomputedSampling:
-        return torch.load(file)
+    def load_precomputed_sampling(
+        file: Path, device: Optional[torch.device] = None
+    ) -> PrecomputedSampling:
+        precomputed_sampling = torch.load(file)
+        _move_precomputed_sampling_to_device(precomputed_sampling, device)
+        return precomputed_sampling
 
     @staticmethod
     def get_precomputed_sampling_filename(
@@ -332,6 +339,19 @@ class PrecomputeSampler:
         ]
         output = Path.cwd().joinpath(f"{'_'.join(_output)}.pt")
         return output
+
+
+def _move_precomputed_sampling_to_device(
+    precomputed_sampling: PrecomputedSampling,
+    device: Optional[torch.device] = torch.device("cpu"),
+):
+    if device is not None:
+        for sampletype, sampledata in precomputed_sampling.items():
+            for valuename, data in sampledata.items():
+                for batch_id, batch_data in data.items():
+                    precomputed_sampling[sampletype][valuename][
+                        batch_id
+                    ] = batch_data.to(device=device)
 
 
 def get_precomputed_sampling_filename_from_args(args: Args) -> Path:
