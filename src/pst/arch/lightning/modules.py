@@ -120,7 +120,12 @@ class _ProteinSetTransformer(L.LightningModule):
                 num_warmup_steps=self.hparams["warmup_steps"],
                 num_training_steps=self.trainer.estimated_stepping_batches,
             )
-            config["lr_scheduler"] = scheduler
+            # TODO: may need to update frequency of stepping to be steps and not epochs
+            config["lr_scheduler"] = {
+                "scheduler": scheduler,
+                "interval": "step",
+                "frequency": 1,
+            }
         return config
 
     def _shared_eval(
