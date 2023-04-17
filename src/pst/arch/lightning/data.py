@@ -10,8 +10,6 @@ from typing import Iterable, Iterator, Optional, overload
 import lightning as L
 import tables as tb
 import torch
-from numpy import float32
-from numpy.typing import NDArray
 
 # from torch.nn import functional as F
 from torch.nn.utils.rnn import pad_sequence
@@ -171,7 +169,7 @@ class GenomeDataset(Dataset):
             indices.append(self._genome_metadata.genome2idx[genome])
             genome_sizes.append(self._genome_metadata.genome2nptns[genome])
         data_slice = self._convert_indices_to_slice(indices)
-        X = torch.from_numpy(self._data[data_slice])
+        X: torch.Tensor = self._data[data_slice]
 
         if not all_equal(genome_sizes):
             # need to row-pad with 0s for a single contiguous 3d tensor
@@ -212,7 +210,7 @@ class SimpleGenomeDataset(GenomeDataset):
     """Use when you can read the entire dataset into memory"""
 
     def __init__(self, data_file: Path, genome_metadata: Path) -> None:
-        self._data: NDArray[float32] = tb.File(data_file, libver="latest").root.data[:]
+        self._data = torch.from_numpy(tb.File(data_file, libver="latest").root.data[:]).cpu()
         self._genome_metadata = self.read_metadata(genome_metadata)
         # this is used for simple dataloading not using the Lightning datamodule
         self._batch_idx = 0
@@ -504,7 +502,7 @@ class GenomeSetDataModule(L.LightningDataModule):
 
     @property
     def feature_dimension(self) -> int:
-        return self._dataset._data.shape[-1]
+        return int(self._dataset._data.shape[-1])
 
     def prepare_data(self):
         if self.stage == "fit":
