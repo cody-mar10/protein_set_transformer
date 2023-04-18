@@ -20,6 +20,8 @@ def _train_main(args: pst.utils.cli.Args):
         callbacks=[checkpointing, lr_monitor],
         logger=True,
         log_every_n_steps=5,
+        gradient_clip_val=10,
+        gradient_clip_algorithm="value",
         **args.trainer,
     )
     trainer.fit(model=model, datamodule=datamodule)
