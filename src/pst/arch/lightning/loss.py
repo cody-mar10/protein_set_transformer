@@ -22,12 +22,11 @@ class WeightedTripletLoss(nn.Module):
         # TODO: think this is computed wrong?
 
         # positive_dist = torch.cdist(y_self, y_pos)
-        positive_dist = torch.pow(y_self - y_pos, 2).sum(dim=-1).sqrt()
         # negative_dist = torch.cdist(y_self, y_neg).mul(weights)
+
+        # This calcs the distance between vectors in same position, which is what is wanted
+        positive_dist = torch.pow(y_self - y_pos, 2).sum(dim=-1).sqrt()
         negative_dist = torch.pow(y_self - y_neg, 2).sum(dim=-1).sqrt().mul(weights)
-        # cosine dist technically does not satisfy triangle inequality
-        # but neither do the distances above, which are the original implementations
-        # from PointSet paper
         dist = positive_dist - negative_dist + self.alpha
         if reduce:
             return torch.mean(dist, dim=0)
