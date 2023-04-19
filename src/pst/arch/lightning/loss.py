@@ -19,8 +19,12 @@ class WeightedTripletLoss(nn.Module):
         weights: torch.Tensor,
         reduce: bool = False,
     ) -> torch.Tensor:
-        positive_dist = torch.pow(y_self - y_pos, 2).sum(dim=-1)
-        negative_dist = torch.pow(y_self - y_neg, 2).sum(dim=-1).mul(weights)
+        # TODO: think this is computed wrong?
+
+        # positive_dist = torch.cdist(y_self, y_pos)
+        positive_dist = torch.pow(y_self - y_pos, 2).sum(dim=-1).sqrt()
+        # negative_dist = torch.cdist(y_self, y_neg).mul(weights)
+        negative_dist = torch.pow(y_self - y_neg, 2).sum(dim=-1).sqrt().mul(weights)
         # cosine dist technically does not satisfy triangle inequality
         # but neither do the distances above, which are the original implementations
         # from PointSet paper
