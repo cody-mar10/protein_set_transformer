@@ -172,22 +172,12 @@ class _ProteinSetTransformer(L.LightningModule):
             triplet_sample = self.precomputed_sampling["triplet"]
             aug_sample = self.precomputed_sampling["aug"]
 
-            pos_idx: torch.Tensor = triplet_sample["indices"][batch_idx][1].to(
-                device=device
-            )
-            neg_idx: torch.Tensor = triplet_sample["indices"][batch_idx][2].to(
-                device=device
-            )
-            triplet_weights: torch.Tensor = triplet_sample["weights"][batch_idx].to(
-                device=device
-            )
-            aug_data: torch.Tensor = aug_sample["data"][batch_idx].to(device=device)
-            aug_neg_weights: torch.Tensor = aug_sample["weights"][batch_idx].to(
-                device=device
-            )
-            aug_neg_idx: torch.Tensor = aug_sample["negative_indices"][batch_idx].to(
-                device=device
-            )
+            pos_idx: torch.Tensor = triplet_sample["indices"][batch_idx][1]
+            neg_idx: torch.Tensor = triplet_sample["indices"][batch_idx][2]
+            triplet_weights: torch.Tensor = triplet_sample["weights"][batch_idx]
+            aug_data: torch.Tensor = aug_sample["data"][batch_idx]
+            aug_neg_weights: torch.Tensor = aug_sample["weights"][batch_idx]
+            aug_neg_idx: torch.Tensor = aug_sample["negative_indices"][batch_idx]
 
         # move to training device
         pos_idx = pos_idx.to(device=device)
