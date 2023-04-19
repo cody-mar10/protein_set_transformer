@@ -30,7 +30,8 @@ def _train_main(args: pst.utils.cli.Args):
         logger=True,
         log_every_n_steps=5,
         gradient_clip_val=0.5,
-        gradient_clip_algorithm="value",
+        gradient_clip_algorithm="norm",
+        num_sanity_val_steps=0,
         **args.trainer,
     )
     trainer.fit(model=model, datamodule=datamodule)
