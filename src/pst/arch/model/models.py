@@ -215,4 +215,5 @@ class SetTransformer(nn.Module):
         )
         # encoded_output should have the row-padded 0 rows as 0s still?
         Z = encoded_output[self.final_encoder_layer_idx].repr
-        return self.decode(Z).squeeze()
+        # avg over indiv genome reps
+        return self.decode(Z).mean(-2)
