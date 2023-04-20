@@ -293,9 +293,13 @@ class PrecomputeSampler:
     def _precompute_point_swap_sampling(self) -> PrecomputedSampling:
         if not self.exists():
             # check both STAGING and cwd
-            print("Neither")
             print(f"Calculating precomputed point swap sampling to: {self.file}")
             return self._precompute()
+        elif self.file.exists():
+            # for subsequent runs, if file copied from CHTC /staging
+            # don't try to recopy, just use the local file
+            # it will be loaded later
+            pass
         elif self._ext_file.exists():
             # file located in CHTC /staging
             # copy file over from staging to cwd
