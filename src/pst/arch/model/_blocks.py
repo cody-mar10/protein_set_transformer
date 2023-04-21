@@ -108,7 +108,8 @@ class MultiheadAttention(nn.Module):
         # below calc ignores padded-padded item attn
         attn_weight = torch.softmax(attn_inner, dim=-1).transpose(-2, -1) * ~attn_mask
 
-        attn_weight = torch.dropout(attn_weight, self.dropout, self.training)
+        # TODO: SetTransformer and ESM papers don't use dropout here since this reduces capacity?
+        # attn_weight = torch.dropout(attn_weight, self.dropout, self.training)
         attn = attn_weight @ V
         return AttentionSchema(
             repr=attn,
