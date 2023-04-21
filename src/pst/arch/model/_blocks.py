@@ -95,13 +95,12 @@ class MultiheadAttention(nn.Module):
 
         # cant use float("-inf") as normal since padded all 0 rows
         # will turn into nan rows, which causes gradient and backprop problems
-        attn_mask = torch.where(attn_mask, -5e4, 0.0)
+        attn_fill = torch.where(attn_mask, -5e4, 0.0)
 
         # transposing computes softmax over ptn/set item dimension
         # ie compute importance of each item in set
         attn_inner = torch.transpose(
-            (Q @ K.transpose(-2, -1) * scale) + attn_mask,
-            -2, -1
+            (Q @ K.transpose(-2, -1) * scale) + attn_fill, -2, -1
         )
         # then just transpose back
         # also use attn_mask to zero out padded rows/ptns/items
