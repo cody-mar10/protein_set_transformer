@@ -93,11 +93,21 @@ class MultiheadAttention(nn.Module):
                 device=Q.device
             )
 
+        # cant use float("-inf") as normal since padded all 0 rows
+        # will turn into nan rows, which causes gradient and backprop problems
         attn_mask = torch.where(attn_mask, -5e4, 0.0)
-        # this weights proteins accordingly
-        attn_weight = torch.softmax(
-            (Q @ K.transpose(-2, -1) * scale) + attn_mask, dim=-1
+
+        # transposing computes softmax over ptn/set item dimension
+        # ie compute importance of each item in set
+        attn_inner = torch.transpose(
+            (Q @ K.transpose(-2, -1) * scale) + attn_mask,
+            -2, -1
         )
+        # then just transpose back
+        # also use attn_mask to zero out padded rows/ptns/items
+        # above calc in softmax ignores real-padded item attn
+        # below calc ignores padded-padded item attn
+        attn_weight = torch.softmax(attn_inner, dim=-1).transpose(-2, -1) * ~attn_mask
 
         attn_weight = torch.dropout(attn_weight, self.dropout, self.training)
         attn = attn_weight @ V
