@@ -144,16 +144,20 @@ class SetTransformer(nn.Module):
             )
         )
 
-        for _ in range(n_dec_layers):
-            layer = SAB(
-                in_dim=hidden_dim,
-                out_dim=hidden_dim,
-                num_heads=num_heads,
-                dropout=dropout,
-                bias=bias,
-                norm=norm,
-            )
-            self._decoder.append(layer)
+        # according to SetTransformer paper -> only need SAB blocks when k seeds > 1
+        # since this will be computing attn among k outputs for a single genome, NOT
+        # across genomes
+        if n_outputs > 1:
+            for _ in range(n_dec_layers):
+                layer = SAB(
+                    in_dim=hidden_dim,
+                    out_dim=hidden_dim,
+                    num_heads=num_heads,
+                    dropout=dropout,
+                    bias=bias,
+                    norm=norm,
+                )
+                self._decoder.append(layer)
 
         self._decoder.append(nn.Linear(hidden_dim, hidden_dim, bias=bias))
         self._decoder.append(nn.Linear(hidden_dim, out_dim, bias=bias))
@@ -216,4 +220,5 @@ class SetTransformer(nn.Module):
         # encoded_output should have the row-padded 0 rows as 0s still?
         Z = encoded_output[self.final_encoder_layer_idx].repr
         # avg over indiv genome reps
+        # TODO: the avging could also be done be a linear layer
         return self.decode(Z).mean(-2)
