@@ -88,7 +88,7 @@ class _ProteinSetTransformer(L.LightningModule):
             n_dec_layers=n_dec_layers,
             dropout=dropout,
             bias=bias,
-            norm=norm,
+            normalize_Q=norm,
         )
         # self.model = torch.compile(self.model)
         self.precomputed_sampling: Optional[PrecomputedSampling] = None
@@ -192,11 +192,14 @@ class _ProteinSetTransformer(L.LightningModule):
         # 4. Forward pass with batch, pos/neg samples, and augmented data
         # to do triplet loss.
         # TODO: break this into functions
+
+        # TODO: since model does not actually consider genome-genome comparisons,
+        # that means that y_pos, y_neg and y_aug_neg are just permutations of the original data
         y_self = self(batch_data, **forward_kwargs)
-        y_pos = self(batch_data[pos_idx], **forward_kwargs)
-        y_neg = self(batch_data[neg_idx], **forward_kwargs)
+        y_pos = y_self[pos_idx]
+        y_neg = y_self[neg_idx]
         y_aug_pos = self(aug_data, **forward_kwargs)
-        y_aug_neg = self(aug_data[aug_neg_idx], **forward_kwargs)
+        y_aug_neg = y_aug_pos[aug_neg_idx]
 
         # 5. Compute loss and log
         loss: torch.Tensor = self.criterion(
