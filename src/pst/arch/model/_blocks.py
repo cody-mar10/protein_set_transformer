@@ -8,6 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from ._norm import SetNorm
 from pst.utils.mask import compute_row_mask, row_mask_to_attn_mask
 
 
@@ -28,7 +29,10 @@ class MultiheadAttention(nn.Module):
         vdim: Optional[int] = None,
         dropout: float = 0.0,
         bias: bool = True,
-        norm: bool = True,
+        normalize_Q: bool = True,
+        # from setnorm impl, unclear what they are for
+        sample_size: int = 1000,
+        v_norm_samples: int = 32,
     ) -> None:
         super(MultiheadAttention, self).__init__()
         self.num_heads = num_heads
@@ -47,9 +51,22 @@ class MultiheadAttention(nn.Module):
         self.Wk = nn.Linear(kdim, vdim, bias=bias)
         self.Wv = nn.Linear(kdim, vdim, bias=bias)
         self.Wo = nn.Linear(vdim, vdim, bias=bias)
-        self.norm = norm
-        self.layernorm1 = nn.LayerNorm(vdim) if norm else None
-        self.layernorm2 = nn.LayerNorm(vdim) if norm else None
+        self.normalize_Q = normalize_Q
+        self.normQ = SetNorm(
+            feature_dim=qdim,
+            normalized_shape=(sample_size, qdim),
+            elementwise_affine=False,
+        )
+        self.normK = SetNorm(
+            feature_dim=kdim,
+            normalized_shape=(v_norm_samples, kdim),
+            elementwise_affine=False,
+        )
+        self.normVO = SetNorm(
+            feature_dim=vdim,
+            normalized_shape=(sample_size, vdim),
+            elementwise_affine=False,
+        )
 
     def to_multiheaded(self, X: torch.Tensor) -> torch.Tensor:
         batch_size, n_seqs, feat_dim = X.size()
@@ -73,6 +90,11 @@ class MultiheadAttention(nn.Module):
             .reshape(batch_size, n_seqs, out_dim)
         )
         return concatenated_view
+
+    def from_multiheaded_weights(self, X: torch.Tensor) -> torch.Tensor:
+        eff_batch_size, m_seqs, n_seqs = X.size()
+        batch_size = eff_batch_size // self.num_heads
+        return X.reshape(batch_size, self.num_heads, m_seqs, n_seqs)
 
     def scaled_dot_product_attention(
         self,
@@ -100,14 +122,22 @@ class MultiheadAttention(nn.Module):
         # also use attn_mask to zero out padded rows/ptns/items
         # above calc in softmax ignores real-padded item attn
         # below calc ignores padded-padded item attn
-        attn_weight = torch.softmax((Q @ K.transpose(-2, -1) * scale) + attn_fill, dim=-1) * ~attn_mask
+        attn_weight = (
+            torch.softmax((Q @ K.transpose(-2, -1) * scale) + attn_fill, dim=-1)
+            * ~attn_mask
+        )
 
         # TODO: SetTransformer and ESM papers don't use dropout here since this reduces capacity?
         # attn_weight = torch.dropout(attn_weight, self.dropout, self.training)
-        attn = attn_weight @ V
+        attn = attn_weight @ V  # m x n
         return AttentionSchema(
             repr=attn,
-            weights=self.from_multiheaded(attn_weight) if return_weights else None,
+            # weights shape: [b, h, m, n]
+            # where b = batch size, h = attn heads, m = Q set size, n = K set size
+            # NOTE: to combine weights across attn heads, need to do this across dim=1
+            weights=self.from_multiheaded_weights(attn_weight)
+            if return_weights
+            else None,
         )
 
     def forward(
@@ -118,6 +148,10 @@ class MultiheadAttention(nn.Module):
         return_weights: bool = True,
         attn_mask: Optional[torch.Tensor] = None,
     ) -> AttentionSchema:
+        # keep this for "clean path" residual connection
+        # see SetNorm paper
+        Q_input = Q
+
         # row masks computed pre linear layers to know which rows were all 0s aka padded
         # only need masks for Q and K due to attention calc
         Q_row_mask = compute_row_mask(Q, unsqueeze=True)
@@ -129,6 +163,18 @@ class MultiheadAttention(nn.Module):
         else:
             K_row_mask = compute_row_mask(K, unsqueeze=True)
 
+        if V is None:
+            V = K
+            V_row_mask = K_row_mask
+        else:
+            V_row_mask = compute_row_mask(V, unsqueeze=False)
+
+        # pre-attention normalization
+        if self.normalize_Q:
+            Q = self.normQ(Q, row_mask=Q_row_mask)
+
+        K = self.normK(K, row_mask=K_row_mask)
+
         if attn_mask is None:
             # compute attn_mask solely based on rows that are/aren't padded rows
             # also repeat to match multiheaded attn dimensions
@@ -137,41 +183,35 @@ class MultiheadAttention(nn.Module):
                 K_row_mask=K_row_mask,
             ).repeat_interleave(repeats=self.num_heads, dim=0)
 
-        if V is None:
-            V = K
+        # apply learnable weights and mask padded rows
+        Q = self.Wq(Q) * Q_row_mask
+        K = self.Wk(K) * K_row_mask
+        V = self.Wv(V) * K_row_mask
 
-        # apply learnable weights
-        Q = F.relu(self.Wq(Q))
-        K = F.relu(self.Wk(K))
-        V = F.relu(self.Wv(V))
-
-        # reshape for multiheaded attn
-        Q = self.to_multiheaded(Q)
-        K = self.to_multiheaded(K)
-        V = self.to_multiheaded(V)
-
-        # attn calculation
+        # attn calculation with inputs reshaped for multiheaded attn
         output = self.scaled_dot_product_attention(
-            Q, K, V, attn_mask=attn_mask, return_weights=return_weights
+            Q=self.to_multiheaded(Q),
+            K=self.to_multiheaded(K),
+            V=self.to_multiheaded(V),
+            attn_mask=attn_mask,
+            return_weights=return_weights,
         )
 
-        # SWITCHING TO NOT USE INPLACE OPS
-        # residual connection
-        attn_output = output.repr + Q
-
         # concatenate attn heads
-        attn_output = self.from_multiheaded(attn_output)
+        attn_output = self.from_multiheaded(output.repr)
 
-        # layer norm before output feed-forward layer
-        if self.layernorm1 is not None:
-            attn_output = self.layernorm1(attn_output)
+        # residual connection
+        # original transformer applies dropout to output.repr here
+        # unclear is the dimensions will add up...
+        attn_output = output.repr + Q_input
+        normed_attn_output = self.normVO(attn_output, V_row_mask)
 
-        # output feed-forward and another layer norm with residual connections
-        output.repr = self.Wo(attn_output) + attn_output
-        if self.layernorm2 is not None:
-            output.repr = self.layernorm2(output.repr)
-
-        output.repr = F.relu(output.repr)
+        # output feed-forward and another set norm with residual connections
+        # using pre-transformation normalization
+        normed_attn_output = self.Wo(normed_attn_output)
+        output.repr = attn_output + torch.dropout(
+            F.relu(normed_attn_output), self.dropout, self.training
+        )
         return output
 
 

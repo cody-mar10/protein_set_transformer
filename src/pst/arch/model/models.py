@@ -91,7 +91,7 @@ class SetTransformer(nn.Module):
         n_dec_layers: int = 2,
         dropout: float = 0.0,
         bias: bool = True,
-        norm: bool = True,
+        normalize_Q: bool = True,
     ) -> None:
         """A SetTransformer implementation that uses an encoder-decoder framework.
 
@@ -124,11 +124,13 @@ class SetTransformer(nn.Module):
                 num_heads=num_heads,
                 dropout=dropout,
                 bias=bias,
-                norm=norm,
+                normalize_Q=normalize_Q,
                 num_indices=num_indices,
             )
             self._encoder.append(layer)
             start_dim = hidden_dim
+
+        # SetTransformer++ adds another norm step after the encoder
 
         self.final_encoder_layer_idx = len(self._encoder) - 1
 
@@ -140,7 +142,7 @@ class SetTransformer(nn.Module):
                 num_seeds=n_outputs,
                 dropout=dropout,
                 bias=bias,
-                norm=norm,
+                normalize_Q=normalize_Q,
             )
         )
 
@@ -155,7 +157,7 @@ class SetTransformer(nn.Module):
                     num_heads=num_heads,
                     dropout=dropout,
                     bias=bias,
-                    norm=norm,
+                    normalize_Q=normalize_Q,
                 )
                 self._decoder.append(layer)
 
