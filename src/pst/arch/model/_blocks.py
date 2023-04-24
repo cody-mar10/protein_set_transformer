@@ -52,11 +52,13 @@ class MultiheadAttention(nn.Module):
         self.Wv = nn.Linear(kdim, vdim, bias=bias)
         self.Wo = nn.Linear(vdim, vdim, bias=bias)
         self.normalize_Q = normalize_Q
-        self.normQ = SetNorm(
-            feature_dim=qdim,
-            normalized_shape=(sample_size, qdim),
-            elementwise_affine=False,
-        )
+        if normalize_Q:
+            # only initialize if normalizing Q
+            self.normQ = SetNorm(
+                feature_dim=qdim,
+                normalized_shape=(sample_size, qdim),
+                elementwise_affine=False,
+            )
         self.normK = SetNorm(
             feature_dim=kdim,
             normalized_shape=(v_norm_samples, kdim),
@@ -199,6 +201,7 @@ class MultiheadAttention(nn.Module):
 
         # residual connection
         # original transformer applies dropout to attn_output here
+        # TODO: dimension problem if the hidden dim is not the same as the original dimension
         attn_output = attn_output + Q_input
         normed_attn_output = self.normO(attn_output, Q_row_mask)
 
