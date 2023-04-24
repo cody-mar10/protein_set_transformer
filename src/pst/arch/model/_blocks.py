@@ -223,7 +223,8 @@ class SetAttentionBlock(nn.Module):
         num_heads: int,
         dropout: float = 0.0,
         bias: bool = True,
-        norm: bool = True,
+        normalize_Q: bool = True,
+        sample_size: int = 1,
     ) -> None:
         super(SetAttentionBlock, self).__init__()
         self.mab = MultiheadAttention(
@@ -232,7 +233,8 @@ class SetAttentionBlock(nn.Module):
             num_heads=num_heads,
             dropout=dropout,
             bias=bias,
-            norm=norm,
+            normalize_Q=normalize_Q,
+            sample_size=sample_size,
         )
 
     def forward(
@@ -253,7 +255,8 @@ class InducedSetAttentionBlock(nn.Module):
         num_indices: int,
         dropout: float = 0.0,
         bias: bool = True,
-        norm: bool = True,
+        normalize_Q: bool = True,
+        sample_size: int = 100,
     ) -> None:
         super(InducedSetAttentionBlock, self).__init__()
         self.I = nn.Parameter(torch.empty((1, num_indices, out_dim)))
@@ -267,7 +270,9 @@ class InducedSetAttentionBlock(nn.Module):
             num_heads=num_heads,
             dropout=dropout,
             bias=bias,
-            norm=norm,
+            normalize_Q=False,
+            sample_size=num_indices,
+            v_norm_samples=sample_size,
         )
         self.mab = MultiheadAttention(
             qdim=in_dim,
@@ -276,7 +281,9 @@ class InducedSetAttentionBlock(nn.Module):
             num_heads=num_heads,
             dropout=dropout,
             bias=bias,
-            norm=norm,
+            normalize_Q=normalize_Q,
+            sample_size=sample_size,
+            v_norm_samples=num_indices,
         )
 
     def forward(
@@ -303,7 +310,7 @@ class PooledMultiheadAttention(nn.Module):
         num_seeds: int,
         dropout: float = 0.0,
         bias: bool = True,
-        norm: bool = True,
+        normalize_Q: bool = True,
     ):
         super(PooledMultiheadAttention, self).__init__()
         self.S = nn.Parameter(torch.empty((1, num_seeds, embed_dim)))
@@ -314,7 +321,8 @@ class PooledMultiheadAttention(nn.Module):
             num_heads=num_heads,
             dropout=dropout,
             bias=bias,
-            norm=norm,
+            normalize_Q=normalize_Q,
+            sample_size=1,
         )
 
     def forward(
