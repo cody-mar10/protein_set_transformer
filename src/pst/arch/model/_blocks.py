@@ -201,9 +201,8 @@ class MultiheadAttention(nn.Module):
         attn_output = self.from_multiheaded(output.repr)
 
         # residual connection
-        # original transformer applies dropout to output.repr here
-        # unclear is the dimensions will add up...
-        attn_output = output.repr + Q_input
+        # original transformer applies dropout to attn_output here
+        attn_output = attn_output + Q_input
         normed_attn_output = self.normVO(attn_output, V_row_mask)
 
         # output feed-forward and another set norm with residual connections
