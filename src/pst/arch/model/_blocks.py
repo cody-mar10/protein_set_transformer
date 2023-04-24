@@ -62,7 +62,7 @@ class MultiheadAttention(nn.Module):
             normalized_shape=(v_norm_samples, kdim),
             elementwise_affine=False,
         )
-        self.normVO = SetNorm(
+        self.normO = SetNorm(
             feature_dim=vdim,
             normalized_shape=(sample_size, vdim),
             elementwise_affine=False,
@@ -163,17 +163,14 @@ class MultiheadAttention(nn.Module):
         else:
             K_row_mask = compute_row_mask(K, unsqueeze=True)
 
-        if V is None:
-            V = K
-            V_row_mask = K_row_mask
-        else:
-            V_row_mask = compute_row_mask(V, unsqueeze=False)
-
         # pre-attention normalization
         if self.normalize_Q:
             Q = self.normQ(Q, row_mask=Q_row_mask)
 
         K = self.normK(K, row_mask=K_row_mask)
+
+        if V is None:
+            V = K
 
         if attn_mask is None:
             # compute attn_mask solely based on rows that are/aren't padded rows
@@ -203,13 +200,12 @@ class MultiheadAttention(nn.Module):
         # residual connection
         # original transformer applies dropout to attn_output here
         attn_output = attn_output + Q_input
-        normed_attn_output = self.normVO(attn_output, V_row_mask)
+        normed_attn_output = self.normO(attn_output, Q_row_mask)
 
         # output feed-forward and another set norm with residual connections
         # using pre-transformation normalization
-        normed_attn_output = self.Wo(normed_attn_output)
         output.repr = attn_output + torch.dropout(
-            F.relu(normed_attn_output), self.dropout, self.training
+            F.relu(self.Wo(normed_attn_output)), self.dropout, self.training
         )
         return output
 
