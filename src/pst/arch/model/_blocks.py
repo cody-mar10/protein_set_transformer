@@ -173,6 +173,10 @@ class MultiheadAttention(nn.Module):
 
         if V is None:
             V = K
+            V_row_mask = K_row_mask
+        else:
+            V_row_mask = compute_row_mask(V)
+            V = self.normO(V)
 
         if attn_mask is None:
             # compute attn_mask solely based on rows that are/aren't padded rows
@@ -207,9 +211,12 @@ class MultiheadAttention(nn.Module):
 
         # output feed-forward and another set norm with residual connections
         # using pre-transformation normalization
+        # output shape: [b, qset, vdim]
         output.repr = attn_output + torch.dropout(
             F.relu(self.Wo(normed_attn_output)), self.dropout, self.training
         )
+        # zero out padded rows
+        output.repr = output.repr * V_row_mask
         return output
 
 
