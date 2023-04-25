@@ -283,7 +283,7 @@ def add_trainer_args(parser: argparse.ArgumentParser):
         metavar="",
         choices={"16-mixed", 32, "bf16-mixed"},
         default="16-mixed",
-        type=lambda x: int(x) if x.isdigit() else x
+        type=lambda x: int(x) if x.isdigit() else x,
         help="floating point precision (default: %(default)s) [choices: %(choices)s]",
     )
 
