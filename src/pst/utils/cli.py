@@ -20,6 +20,8 @@ class TrainerArgs:
     accelerator: Literal["cpu", "gpu", "tpu", "auto"]
     default_root_dir: Path
     max_epochs: int
+    precision: Literal["16-mixed", "bf16-mixed", 32, "32"]
+    strategy: Literal["ddp", "ddp_spawn"]
 
 
 @dataclass
@@ -46,6 +48,7 @@ class ModelArgs:
     sample_scale: float
     sample_rate: float
     loss_alpha: float
+    compile: bool
 
 
 @dataclass
@@ -237,6 +240,7 @@ def parse_model_args(args: argparse.Namespace) -> ModelArgs:
         sample_scale=args.sample_scale,
         sample_rate=args.sample_rate,
         loss_alpha=args.loss_alpha,
+        compile=args.compile,
     )
 
 
@@ -294,6 +298,8 @@ def parse_trainer_args(args: argparse.Namespace) -> TrainerArgs:
         accelerator=args.accelerator,
         default_root_dir=args.default_root_dir,
         max_epochs=args.max_epochs,
+        precision=args.precision,
+        strategy=args.strategy,
     )
 
 
