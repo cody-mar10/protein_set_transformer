@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader, Dataset, Sampler, BatchSampler
 
 from .sampling import (
     PrecomputeSampler,
+    PrecomputedSampling,
     get_precomputed_sampling_filename_from_args,
 )
 from pst.utils.cli import Args
@@ -210,7 +211,9 @@ class SimpleGenomeDataset(GenomeDataset):
     """Use when you can read the entire dataset into memory"""
 
     def __init__(self, data_file: Path, genome_metadata: Path) -> None:
-        self._data = torch.from_numpy(tb.File(data_file, libver="latest").root.data[:]).cpu()
+        self._data = torch.from_numpy(
+            tb.File(data_file, libver="latest").root.data[:]
+        ).cpu()
         self._genome_metadata = self.read_metadata(genome_metadata)
         # this is used for simple dataloading not using the Lightning datamodule
         self._batch_idx = 0
@@ -500,11 +503,17 @@ class GenomeSetDataModule(L.LightningDataModule):
 
         self.save_hyperparameters(ignore="args")
 
+        # if using ddp_spawn, this will share data across processes supposedly?
+        self._prepare_data()
+        self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(
+            self.precomputed_sampling_file
+        )
+
     @property
     def feature_dimension(self) -> int:
         return int(self._dataset._data.shape[-1])
 
-    def prepare_data(self):
+    def _prepare_data(self):
         if self.stage == "fit":
             dataloader = DataLoader(
                 dataset=self._dataset,
@@ -524,6 +533,27 @@ class GenomeSetDataModule(L.LightningDataModule):
                 # don't re-save since this will prob be slow in chtc
                 precompute_sampler.save()
             del precompute_sampler
+
+    # def prepare_data(self):
+    #     if self.stage == "fit":
+    #         dataloader = DataLoader(
+    #             dataset=self._dataset,
+    #             batch_size=self.batch_size,
+    #             shuffle=False,
+    #             collate_fn=self._dataset.collate_batch,  # type: ignore
+    #         )
+    #         precompute_sampler = PrecomputeSampler(
+    #             data_file=self._data_file,
+    #             batch_size=self.batch_size,
+    #             dataloader=dataloader,
+    #             sample_rate=self._cli_args.model["sample_rate"],
+    #             scale=self._cli_args.model["sample_scale"],
+    #             device=self._cli_args.trainer["accelerator"],
+    #         )
+    #         if not precompute_sampler.exists():
+    #             # don't re-save since this will prob be slow in chtc
+    #             precompute_sampler.save()
+    #         del precompute_sampler
 
     def setup(self, stage: str):
         # each process gets this
