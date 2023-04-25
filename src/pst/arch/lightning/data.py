@@ -504,10 +504,10 @@ class GenomeSetDataModule(L.LightningDataModule):
         self.save_hyperparameters(ignore="args")
 
         # if using ddp_spawn, this will share data across processes supposedly?
-        self._prepare_data()
-        self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(
-            self.precomputed_sampling_file
-        )
+        # self._prepare_data()
+        # self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(
+        #     self.precomputed_sampling_file
+        # )
 
     @property
     def feature_dimension(self) -> int:
@@ -526,7 +526,6 @@ class GenomeSetDataModule(L.LightningDataModule):
                 batch_size=self.batch_size,
                 dataloader=dataloader,
                 sample_rate=self._cli_args.model["sample_rate"],
-                scale=self._cli_args.model["sample_scale"],
                 device=self._cli_args.trainer["accelerator"],
             )
             if not precompute_sampler.exists():
@@ -534,26 +533,8 @@ class GenomeSetDataModule(L.LightningDataModule):
                 precompute_sampler.save()
             del precompute_sampler
 
-    # def prepare_data(self):
-    #     if self.stage == "fit":
-    #         dataloader = DataLoader(
-    #             dataset=self._dataset,
-    #             batch_size=self.batch_size,
-    #             shuffle=False,
-    #             collate_fn=self._dataset.collate_batch,  # type: ignore
-    #         )
-    #         precompute_sampler = PrecomputeSampler(
-    #             data_file=self._data_file,
-    #             batch_size=self.batch_size,
-    #             dataloader=dataloader,
-    #             sample_rate=self._cli_args.model["sample_rate"],
-    #             scale=self._cli_args.model["sample_scale"],
-    #             device=self._cli_args.trainer["accelerator"],
-    #         )
-    #         if not precompute_sampler.exists():
-    #             # don't re-save since this will prob be slow in chtc
-    #             precompute_sampler.save()
-    #         del precompute_sampler
+    def prepare_data(self):
+        self._prepare_data()
 
     def setup(self, stage: str):
         # each process gets this
@@ -574,9 +555,9 @@ class GenomeSetDataModule(L.LightningDataModule):
                 pin_memory=self.hparams["pin_memory"],
             )
             # Just let the model load this
-            # self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(
-            #     self.precomputed_sampling_file
-            # )
+            self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(
+                self.precomputed_sampling_file
+            )
 
         elif stage == "test":
             self.test_dataset = self._dataset

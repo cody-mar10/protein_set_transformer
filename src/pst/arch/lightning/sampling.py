@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import random
 import shutil
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
@@ -46,7 +48,37 @@ class AugmentedSample:
         return self
 
 
-class TripletSampler:
+class PositiveSampler:
+    def __init__(
+        self,
+        emd: torch.Tensor,
+    ):
+        self._emd = emd
+        # rowwise min, ie most similar set per row
+        self._min: tuple[torch.Tensor, torch.Tensor] = self._emd.min(dim=0)
+        self._device = self._emd.device
+
+    def _positive_sampling(self) -> torch.Tensor:
+        # return indices of most similar set per row
+        return self._min[1]
+
+    def sample(self) -> torch.Tensor:
+        """Returns an index Tensor where the where the first row corresponds to
+        the anchor set indices and the second row corresponds to the indices of
+        the positive set.
+        """
+        pos_sample_idx = self._positive_sampling()
+        anchor_idx = torch.arange(self._emd.size(0), device=self._device)
+
+        # [2, b] => (anchor_idx, positive _idx)
+        samples = torch.vstack((anchor_idx, pos_sample_idx))
+        return samples
+
+
+# samples positive and negative samples from the same space
+# wsset pointswap sampling samples positive samples from EMD space (ie these are constant)
+# but samples negative samples from embedding space (ie changes as model updates)
+class TripletSampler(PositiveSampler):
     _SMALL_RANGE_DISTANCES = {"cosine", "angular"}
 
     def __init__(
@@ -55,16 +87,9 @@ class TripletSampler:
         disttype: DISTANCE_TYPES = "euclidean",
         scale: float = 7.0,
     ):
-        self._emd = emd
-        # rowwise min, ie most similar set per row
-        self._min: tuple[torch.Tensor, torch.Tensor] = self._emd.min(dim=0)
-        self._device = self._emd.device
+        super().__init__(emd)
         self._scale = scale
         self._disttype = disttype
-
-    def _positive_sampling(self) -> torch.Tensor:
-        # return indices of most similar set per row
-        return self._min[1]
 
     def _negative_sampling(self) -> torch.Tensor:
         diag_mask = torch.eye(
@@ -108,9 +133,132 @@ class TripletSampler:
         weights = self._negative_weights(anchor_idx, negative_sample_idx)
         return TripletSample(samples, weights)
 
+    def sample(self) -> TripletSample:
+        return self.triplet_sampling()
+
+
+def negative_sampling(
+    X: torch.Tensor,
+    Y: Optional[torch.Tensor] = None,
+    *,
+    pos_idx: Optional[torch.Tensor] = None,
+    scale: float = 7.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+
+    _SENTINEL = float("inf")
+    if Y is None:
+        # this chooses the neg sample from the real dataset
+        # otherwise, Y is the augmented data, and this will choose from Y
+        Y = X
+        if pos_idx is None:
+            raise ValueError("pos_idx must be supplied if a second tensor Y is not")
+    else:
+        # pos_idx is just aligned already in the case of sampling from point swapped augmented data
+        pos_idx = torch.arange(Y.size(0))
+
+    # in case of sampling from real dataset, diag should be 0 due to self-comparison
+    # so don't allow self to be chosen as neg sample
+    # for pnt swap, generally diagonal should be the smallest, so chose another
+    dist = torch.cdist(X, Y)
+    std = dist.std()
+    # this is not required since self-comp will always be less than or equal to pos_dist
+    # dist[dist <= torch.diag(dist).unsqueeze(1)] = _SENTINEL
+    idx = torch.arange(dist.size(0))
+
+    # don't allow points closer than the pos sample be chosen
+    # this also has the effect of removing self-comparisons
+    pos_dists = dist[idx, pos_idx].unsqueeze(1)
+    dist[dist <= pos_dists] = _SENTINEL
+
+    # randomly sample from remaining choices
+    choice_idx, choice_opt = torch.where(dist != _SENTINEL)
+    choices = defaultdict(list)
+    for i, j in zip(choice_idx, choice_opt):
+        i = int(i)
+        j = int(j)
+        choices[i].append(j)
+
+    # TODO: could get out of order?
+    neg_idx = torch.tensor([random.choice(opts) for opts in choices.values()])
+    # calc negative sample weight
+    neg_dists = dist[idx, neg_idx]
+    denom = 2 * (scale * std) ** 2
+    neg_weight = torch.exp(-neg_dists / denom)
+
+    return neg_idx, neg_weight
+
 
 class PointSwapSampler:
     _SENTINEL = -1
+
+    def __init__(
+        self,
+        emd: torch.Tensor,
+        batch: torch.Tensor,
+        flow: FlowDict,
+        row_mask: torch.Tensor,
+        sample_rate: float,
+        distfunc: DistFuncSignature = euclidean_distance,
+    ):
+        self._batch = batch
+        self._flow = flow
+        self._sample_rate = sample_rate
+        self._distfunc = distfunc
+        # indicates which rows are real ptns since batch is row-padded
+        self._row_mask = row_mask
+        self._anchor_idx = set(range(self._row_mask.size(-1)))
+        self._rwmdistance = SetDistance(distfunc)
+        self._positive_sampler = PositiveSampler(emd=emd)
+        self._positive_sample = self._positive_sampler.sample()
+        # used for indexing flow dict
+        self._positive_idx = [(int(i), int(j)) for i, j in self._positive_sample.t()]
+        self._point_swap_idx = self._build_point_swap_idx()
+
+    def _build_point_swap_idx(self) -> torch.Tensor:
+        max_samples = torch.ceil(self._row_mask[-1].sum() * self._sample_rate)
+        samples: list[torch.Tensor] = list()
+        for row in self._row_mask:
+            # row = row.squeeze(dim=0)
+            n_samples = torch.ceil(row.sum() * self._sample_rate)
+            padsize = int(max_samples - n_samples)
+            sample = torch.multinomial(row.float(), int(n_samples))
+            # TODO: may be able to replace with pad_sequence
+            samples.append(F.pad(sample, (0, padsize), value=self._SENTINEL))
+        return torch.stack(samples)
+
+    def _point_swap(self, i: int, j: int) -> torch.Tensor:
+        mask = self._point_swap_idx[i] != self._SENTINEL
+        point_swap_idx = self._point_swap_idx[i, mask]
+
+        # 0 col is for Xi, 1 col is for Xj
+        # select rows corresponding to ptns to be swapped
+        chosen_ptns = self._flow[i, j][point_swap_idx]
+        chosen_self = set(map(int, chosen_ptns[:, 0]))
+        not_chosen_self_set = self._anchor_idx - chosen_self
+        swapped = self._batch[j][chosen_ptns[:, 1]]
+
+        if not_chosen_self_set:
+            # this is strictly for viruses with 1 gene
+            not_chosen_self = torch.tensor(list(not_chosen_self_set))
+            not_swapped = self._batch[i][not_chosen_self]
+
+            # TODO: this will be ok with set permutation invariance
+            # but if wanting to encode position, need to be careful
+            # FIX: make this and then reorder it based on a particular idx
+            # positional encodings get added during forward method of model
+            return torch.vstack((not_swapped, swapped))
+        return swapped
+
+    def point_swap_sampling(self) -> torch.Tensor:
+        augmented_samples = [self._point_swap(i, j) for i, j in self._positive_idx]
+        X_aug = torch.stack(augmented_samples)
+        return X_aug
+
+    def sample(self) -> tuple[torch.Tensor, torch.Tensor]:
+        return self._positive_sample, self.point_swap_sampling()
+
+
+class PointSwapTripletSampler(PointSwapSampler):
     _DISTFUNC2TYPE: dict[DistFuncSignature, DISTANCE_TYPES] = {
         cosine_distance: "cosine",
         angular_distance: "angular",
@@ -205,7 +353,7 @@ class PointSwapSampler:
         return self._triplet_sample, self.point_swap_sampling()
 
 
-PrecomputedSampling = dict[str, dict[str, dict[int, torch.Tensor]]]
+PrecomputedSampling = dict[str, dict[int, torch.Tensor]]
 
 
 class PrecomputeSampler:
@@ -215,7 +363,6 @@ class PrecomputeSampler:
         batch_size: int,
         dataloader: DataLoader,
         sample_rate: float = 0.5,
-        scale: float = 7.0,
         distfunc: DistFuncSignature = euclidean_distance,
         device: Literal["cpu", "gpu", "auto"] = "cpu",
     ):
@@ -223,11 +370,9 @@ class PrecomputeSampler:
             data_file=data_file,
             batch_size=batch_size,
             sample_rate=sample_rate,
-            sample_scale=scale,
         )
         self.dataloader = dataloader
         self.sample_rate = sample_rate
-        self.sample_scale = scale
         self.distfunc = distfunc
         self.device = torch.device(
             "cuda" if device == "gpu" else "cpu" if device == "auto" else device
@@ -237,11 +382,8 @@ class PrecomputeSampler:
 
     def _precompute(self) -> PrecomputedSampling:
         RWMDDistance = SetDistance(distfunc=self.distfunc)
-        triplet_sample_indices: dict[int, torch.Tensor] = dict()
-        triplet_sample_weights: dict[int, torch.Tensor] = dict()
+        positive_sample_indices: dict[int, torch.Tensor] = dict()
         aug_sample_data: dict[int, torch.Tensor] = dict()
-        aug_sample_neg_indices: dict[int, torch.Tensor] = dict()
-        aug_sample_weights: dict[int, torch.Tensor] = dict()
         for batch_idx, batch in self.dataloader:
             row_mask = compute_row_mask(batch)
             rwmd, flow = RWMDDistance.fit_transform(batch)
@@ -251,30 +393,16 @@ class PrecomputeSampler:
                 flow=flow,
                 row_mask=row_mask,
                 sample_rate=self.sample_rate,
-                scale=self.sample_scale,
-                distfunc=self.distfunc,
             )
-            triplet_sample, aug_sample = sampler.sample()
-            triplet_sample = triplet_sample.to(device=self.device)
+
+            pos_sample, aug_sample = sampler.sample()
+            pos_sample = pos_sample.to(device=self.device)
             aug_sample = aug_sample.to(device=self.device)
 
-            triplet_sample_indices[batch_idx] = triplet_sample.idx
-            triplet_sample_weights[batch_idx] = triplet_sample.weights
-            aug_sample_data[batch_idx] = aug_sample.data
-            aug_sample_neg_indices[batch_idx] = aug_sample.negative_idx
-            aug_sample_weights[batch_idx] = aug_sample.weights
+            positive_sample_indices[batch_idx] = pos_sample
+            aug_sample_data[batch_idx] = aug_sample
 
-        samples = {
-            "triplet": {
-                "indices": triplet_sample_indices,
-                "weights": triplet_sample_weights,
-            },
-            "aug": {
-                "data": aug_sample_data,
-                "weights": aug_sample_weights,
-                "negative_indices": aug_sample_neg_indices,
-            },
-        }
+        samples = {"positive": positive_sample_indices, "aug": aug_sample_data}
         return samples
 
     def _get_external_file(self):
@@ -332,14 +460,13 @@ class PrecomputeSampler:
 
     @staticmethod
     def get_precomputed_sampling_filename(
-        data_file: Path, batch_size: int, sample_rate: float, sample_scale: float
+        data_file: Path, batch_size: int, sample_rate: float
     ) -> Path:
         _output = [
             data_file.stem,
             "precomputed-sampling",
             f"batchsize-{batch_size}",
             f"sample-rate-{sample_rate}",
-            f"sample-scale-{sample_scale}",
         ]
         output = Path.cwd().joinpath(f"{'_'.join(_output)}.pt")
         return output
@@ -351,11 +478,10 @@ def _move_precomputed_sampling_to_device(
 ):
     if device is not None:
         for sampletype, sampledata in precomputed_sampling.items():
-            for valuename, data in sampledata.items():
-                for batch_id, batch_data in data.items():
-                    precomputed_sampling[sampletype][valuename][
-                        batch_id
-                    ] = batch_data.to(device=device)
+            for batch_id, batch_data in sampledata.items():
+                precomputed_sampling[sampletype][batch_id] = batch_data.to(
+                    device=device
+                )
 
 
 def get_precomputed_sampling_filename_from_args(args: Args) -> Path:
@@ -363,5 +489,4 @@ def get_precomputed_sampling_filename_from_args(args: Args) -> Path:
         data_file=args.data["data_file"],
         batch_size=args.data["batch_size"],
         sample_rate=args.model["sample_rate"],
-        sample_scale=args.model["sample_scale"],
     )

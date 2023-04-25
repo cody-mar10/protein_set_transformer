@@ -9,7 +9,7 @@ from transformers import get_linear_schedule_with_warmup
 
 from .distance import SetDistance
 from .loss import AugmentedWeightedTripletLoss
-from .sampling import PointSwapSampler, PrecomputedSampling, PrecomputeSampler
+from .sampling import negative_sampling, PointSwapSampler, PrecomputedSampling
 from pst.arch.model import SetTransformer, AttentionSchema
 from pst.utils.mask import compute_row_mask
 from pst.utils._types import BatchType
@@ -121,7 +121,7 @@ class _ProteinSetTransformer(L.LightningModule):
             lr=self.hparams["lr"],
             betas=self.hparams["betas"],
             weight_decay=self.hparams["weight_decay"],
-            eps=1e-7 if self.trainer.precision == "16-mixed" else 1e-8,
+            eps=1e-4 if self.trainer.precision == "16-mixed" else 1e-8,
         )
         config: dict[str, Any] = {"optimizer": optimizer}
         if self.hparams["use_scheduler"]:
@@ -130,7 +130,6 @@ class _ProteinSetTransformer(L.LightningModule):
                 num_warmup_steps=self.hparams["warmup_steps"],
                 num_training_steps=self.trainer.estimated_stepping_batches,
             )
-            # TODO: may need to update frequency of stepping to be steps and not epochs
             config["lr_scheduler"] = {
                 "scheduler": scheduler,
                 "interval": "step",
@@ -165,33 +164,19 @@ class _ProteinSetTransformer(L.LightningModule):
                 flow=flow,
                 row_mask=row_mask,
                 sample_rate=self.hparams["sample_rate"],
-                scale=self.hparams["sample_scale"],
             )
-            triplet_sample, aug_sample = sampler.sample()
-            pos_idx = triplet_sample.idx[1]
-            neg_idx = triplet_sample.idx[2]
-            triplet_weights = triplet_sample.weights
-            aug_data = aug_sample.data
-            aug_neg_weights = aug_sample.weights
-            aug_neg_idx = aug_sample.negative_idx
+            pos_sample, aug_data = sampler.sample()
+            pos_idx = pos_sample[1]
         else:
-            triplet_sample = self.precomputed_sampling["triplet"]
+            pos_sample = self.precomputed_sampling["positive"]
             aug_sample = self.precomputed_sampling["aug"]
 
-            pos_idx: torch.Tensor = triplet_sample["indices"][batch_idx][1]
-            neg_idx: torch.Tensor = triplet_sample["indices"][batch_idx][2]
-            triplet_weights: torch.Tensor = triplet_sample["weights"][batch_idx]
-            aug_data: torch.Tensor = aug_sample["data"][batch_idx]
-            aug_neg_weights: torch.Tensor = aug_sample["weights"][batch_idx]
-            aug_neg_idx: torch.Tensor = aug_sample["negative_indices"][batch_idx]
+            pos_idx: torch.Tensor = pos_sample[batch_idx][1]
+            aug_data: torch.Tensor = aug_sample[batch_idx]
 
         # move to training device
         pos_idx = pos_idx.to(device=device)
-        neg_idx = neg_idx.to(device=device)
-        triplet_weights = triplet_weights.to(device=device)
         aug_data = aug_data.to(device=device)
-        aug_neg_weights = aug_neg_weights.to(device=device)
-        aug_neg_idx = aug_neg_idx.to(device=device)
 
         forward_kwargs = dict(return_weights=False, attn_mask=None)
 
@@ -202,9 +187,15 @@ class _ProteinSetTransformer(L.LightningModule):
         # TODO: since model does not actually consider genome-genome comparisons,
         # that means that y_pos, y_neg and y_aug_neg are just permutations of the original data
         y_self = self(batch_data, **forward_kwargs)
-        y_pos = y_self[pos_idx]
-        y_neg = y_self[neg_idx]
         y_aug_pos = self(aug_data, **forward_kwargs)
+        y_pos = y_self[pos_idx]
+
+        # negative sampling
+        scale = self.hparams["sample_scale"]
+        neg_idx, neg_weights = negative_sampling(y_self, pos_idx=pos_idx, scale=scale)
+        aug_neg_idx, aug_neg_weights = negative_sampling(y_self, y_aug_pos, scale=scale)
+
+        y_neg = y_self[neg_idx]
         y_aug_neg = y_aug_pos[aug_neg_idx]
 
         # 5. Compute loss and log
@@ -212,7 +203,7 @@ class _ProteinSetTransformer(L.LightningModule):
             y_self=y_self,
             y_pos=y_pos,
             y_neg=y_neg,
-            neg_weights=triplet_weights,
+            neg_weights=neg_weights,
             y_aug_pos=y_aug_pos,
             y_aug_neg=y_aug_neg,
             aug_neg_weights=aug_neg_weights,
@@ -226,14 +217,6 @@ class _ProteinSetTransformer(L.LightningModule):
             logger=True,
             sync_dist=True,
         )
-
-        # move back to cpu
-        pos_idx = pos_idx.to(device=self.cpu_device)
-        neg_idx = neg_idx.to(device=self.cpu_device)
-        triplet_weights = triplet_weights.to(device=self.cpu_device)
-        aug_data = aug_data.to(device=self.cpu_device)
-        aug_neg_weights = aug_neg_weights.to(device=self.cpu_device)
-        aug_neg_idx = aug_neg_idx.to(device=self.cpu_device)
         return loss
 
     def training_step(self, train_batch: BatchType, batch_idx: int) -> torch.Tensor:
