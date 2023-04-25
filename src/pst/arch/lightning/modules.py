@@ -42,6 +42,7 @@ class _ProteinSetTransformer(L.LightningModule):
         sample_rate: float = 0.5,
         # loss
         loss_alpha: float = 0.1,
+        compile: bool = False,
     ) -> None:
         """ProteinSetTransformer LightningModule. See SetTransformer for implementation details.
 
@@ -90,7 +91,8 @@ class _ProteinSetTransformer(L.LightningModule):
             bias=bias,
             normalize_Q=norm,
         )
-        # self.model = torch.compile(self.model)
+        if compile:
+            self.model = torch.compile(self.model)
         self.precomputed_sampling: Optional[PrecomputedSampling] = None
         self.cpu_device = torch.device("cpu")
 
@@ -98,11 +100,14 @@ class _ProteinSetTransformer(L.LightningModule):
         super().on_train_start()
         # attach precomputed results for model to access during training_step
         # datamodule.prepare_data() called before this, so it should be available
-        file = self.trainer.datamodule.precomputed_sampling_file  # type: ignore
-        self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(
-            file,
-            device=self.cpu_device,
-        )
+
+        # TODO: just have datamodule load this once
+        # file = self.trainer.datamodule.precomputed_sampling_file  # type: ignore
+        # self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(
+        #     file,
+        #     device=self.cpu_device,
+        # )
+        self.precomputed_sampling = self.trainer.datamodule.precomputed_sampling  # type: ignore
 
     def forward(self, X: torch.Tensor, **kwargs) -> torch.Tensor:
         # return self.model(X, **kwargs)

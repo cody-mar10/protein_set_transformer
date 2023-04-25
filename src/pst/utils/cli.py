@@ -215,6 +215,11 @@ def add_model_args(parser: argparse.ArgumentParser):
         default=0.1,
         help="constant term in loss function (default: %(default)s)",
     )
+    group.add_argument(
+        "--compile",
+        action="store_true",
+        help="compile model using torch.compile (default: %(default)s)",
+    )
 
 
 def parse_model_args(args: argparse.Namespace) -> ModelArgs:
