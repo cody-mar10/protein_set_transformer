@@ -121,6 +121,7 @@ class _ProteinSetTransformer(L.LightningModule):
             lr=self.hparams["lr"],
             betas=self.hparams["betas"],
             weight_decay=self.hparams["weight_decay"],
+            eps=1e-7 if self.trainer.precision == "16-mixed" else 1e-8,
         )
         config: dict[str, Any] = {"optimizer": optimizer}
         if self.hparams["use_scheduler"]:
