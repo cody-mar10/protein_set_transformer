@@ -110,10 +110,10 @@ def main():
 
     if args.trainer["accelerator"] == "cpu":
         threads = args.trainer["devices"]
+        args.trainer["precision"] = 32
         torch.set_num_threads(threads)
         args.trainer["devices"] = 1
     elif args.trainer["accelerator"] == "gpu":
-        args.trainer["precision"] = "16-mixed"
         args.trainer["num_nodes"] = 1
 
     if args.mode == "train":

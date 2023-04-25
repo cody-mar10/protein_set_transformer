@@ -266,6 +266,20 @@ def add_trainer_args(parser: argparse.ArgumentParser):
         default=1000,
         help="max number of training epochs (default: %(default)s)",
     )
+    group.add_argument(
+        "--strategy",
+        metavar="",
+        choices={"ddp", "ddp_spawn"},
+        default="ddp_spawn",
+        help="parallelized training strategy (default: %(default)s) [choices: %(choices)s]",
+    )
+    group.add_argument(
+        "--precision",
+        metavar="",
+        choices={"16-mixed", 32, "bf16-mixed"},
+        default="16-mixed",
+        help="floating point precision (default: %(default)s) [choices: %(choices)s]",
+    )
 
 
 def parse_trainer_args(args: argparse.Namespace) -> TrainerArgs:
