@@ -1,132 +1,91 @@
 from __future__ import annotations
 
-from itertools import combinations
-from typing import Literal, Optional
+from typing import Optional
 
 import torch
-from pst.utils import DistFuncSignature, FlowDict
-
-DISTANCE_TYPES = Literal["cosine", "angular", "euclidean"]
+from pst.utils.mask import compute_row_mask, pairwise_row_mask
 
 
-def _cosine_similarity(
-    X: torch.Tensor, Y: torch.Tensor, eps: float = 1e-8
+def _reshape_flat_pairwise_comparison_tensor(
+    flat_pairwise_comp: torch.Tensor, batch_size: int, n_items: int
 ) -> torch.Tensor:
-    # compute norm along rows ie per protein
-    # add small constant to prevent nans
-    norm_X: torch.Tensor = torch.linalg.norm(X, dim=1) + eps
-    norm_Y: torch.Tensor = torch.linalg.norm(Y, dim=1) + eps
-    X = X / norm_X.unsqueeze(1)
-    Y = Y / norm_Y.unsqueeze(1)
-    return torch.matmul(X, Y.t())
+    reshaped = flat_pairwise_comp.reshape(
+        batch_size, n_items, batch_size, n_items
+    ).permute(2, 0, 3, 1)
+    return reshaped
 
 
-def cosine_distance(
-    X: torch.Tensor, Y: torch.Tensor, eps: float = 1e-8
-) -> torch.Tensor:
-    return 1 - _cosine_similarity(X, Y, eps)
+# TODO: may need to add a custom CUDA/triton kernel to prevent high mem usage
+# all dist mats are [n, n], so we could technically just have a [(b^2-b/2), n, n]
+# total dist mat, and then just convert (i, j) genome indices to a specific idx
+# in this distance matrix
+def batch_chamfer_distance(
+    X: torch.Tensor,
+    row_mask: Optional[torch.Tensor] = None,
+    average: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Calculate Chamfer distance between all pairs of sets within a batch. The Chamfer
+    distance is symmetric such that `d(X1, X2) == d(X2, X1)`.
 
+    Note: The original implementation uses squared Euclidean distance, but this uses
+    Euclidean distance, which should have the same overall interpretation.
 
-def angular_distance(
-    X: torch.Tensor, Y: torch.Tensor, eps: float = 1e-8
-) -> torch.Tensor:
-    similarity = _cosine_similarity(X, Y, eps)
-    distance = torch.arccos(similarity) / torch.pi
-    return distance
+    Args:
+        X (torch.Tensor): a batched point-set tensor, shape [b, n, d]
+        row_mask (Optional[torch.Tensor], optional): The row mask for X that denotes
+            which rows correspond to real rows vs padded rows. Defaults to None.
+        average (bool, optional): Choose to normalize the distances by the number of items
+            in each individual set. Defaults to True.
 
+    Returns:
+        tuple[torch.Tensor, torch.Tensor]:
 
-def euclidean_distance(X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
-    # X and Y are both 2d matrices
-    # this will calculate the distance between each vector (row) from X and Y
-    distance = torch.cdist(X, Y, p=2)
-    return distance
+            - [b, b] Chamfer distance tensor between all sets in the batched tensor
+            - [b, b, n] minimum distance index tensor. For an index (i, j, k), this
+                corresponds to the closest item in set j to item k in set i.
+    """
+    # flatten X to [b*n, d] matrix, so all ptns are along the 1st dim
+    X_flat = X.flatten(start_dim=0, end_dim=-2)
 
+    # [b*n, b*n]
+    # this matrix has all ptn comparisons, and blocks of size [n, n] correspond to specific
+    # genome-genome comparisons
+    all_distances: torch.Tensor = torch.cdist(X_flat, X_flat, p=2).fill_diagonal_(0.0)
+    batch_size, n_items, _ = X.size()
 
-class SetDistance:
-    def __init__(self, distfunc: DistFuncSignature = euclidean_distance) -> None:
-        self.distfunc = distfunc
+    # which means if we just reshape and permute this matrix, we can convert it to a 4d tensor
+    # where the index (i, j, m, n) corresponds to the distance between
+    # ptn m from genome i and ptn n from genome j
+    # [b, b, n, n] <- index which genome idx to get the dist mat for each genome comparison
+    # NOTE: potentially could be faster to call .contiguous() but tests on colab indicated otherwise
+    # plus that would require a full copy, which is inefficient since we're just calling .min
+    all_distances = _reshape_flat_pairwise_comparison_tensor(
+        all_distances, batch_size, n_items
+    )
 
-    def clear(self):
-        # map (Xi, Xj) to flow from Xim -> Xjn
-        # for all pairs of X in minibatch
-        self._flow: FlowDict = dict()
-        # pairwise relaxed word movers distance between all sets
-        # in minibatch
-        self._emd = torch.tensor(0.0)
+    if row_mask is None:
+        row_mask = compute_row_mask(X)
 
-    @property
-    def flow(self) -> FlowDict:
-        return self._flow
+    flat_row_mask = row_mask.flatten()
+    # mask same shape as all_distances but masks out pairwise distance between any padded row
+    full_mask = _reshape_flat_pairwise_comparison_tensor(
+        pairwise_row_mask(flat_row_mask, flat_row_mask), batch_size, n_items
+    )
+    filled_mask = torch.where(full_mask, 0.0, float("inf"))
 
-    @property
-    def emd(self) -> torch.Tensor:
-        return self._emd
+    min_dists: torch.Tensor
+    item_flow_indices: torch.Tensor
+    # for all genome-genome comparisons find the min dist for all ptns but cannot be between padded rows
+    min_dists, item_flow_indices = torch.min(all_distances + filled_mask, dim=-1)
 
-    def fit_transform(
-        self, X: torch.Tensor, Y: Optional[torch.Tensor] = None
-    ) -> tuple[torch.Tensor, FlowDict]:
-        self.fit(X, Y)
-        return self._emd, self._flow
+    # convert inf dist with padded rows to 0.0 so they don't count towards distance
+    min_dists[torch.where(min_dists == float("inf"))] = 0.0
 
-    def fit(self, X: torch.Tensor, Y: Optional[torch.Tensor] = None):
-        # initialize self._flow and self._emd
-        self.clear()
-        if Y is not None:
-            dist, flow_ij, flow_ji = self._fit_return(X, Y)
-            self._emd = dist
-            self._flow[0, 1] = flow_ij
-            self._flow[1, 0] = flow_ji
-        elif X.dim() > 2:
-            # calc distance between all datasets in a batch
-            batch_size = X.size(0)
-            self._emd = (
-                torch.empty((batch_size, batch_size), device=X.device)
-                # prevent self-comparison from being chosen for positive sampling
-                .fill_diagonal_(float("inf"))
-            )
-            indices = combinations(range(batch_size), r=2)
+    item_distance = min_dists.sum(dim=-1)
+    if average:
+        item_distance /= row_mask.sum(-1).unsqueeze(-1)
 
-            for i, j in indices:
-                dist, flow_ij, flow_ji = self._fit_return(X[i], X[j])
-                self._flow[i, j] = flow_ij
-                self._flow[j, i] = flow_ji
-                self._emd[i, j] = dist
-                self._emd[j, i] = dist
-        else:
-            # only passed X and X is just a 1D or 2D tensor
-            dist, flow_ij, _ = self._fit_return(X, X)
-            self._emd = dist
-            self._flow[0, 0] = flow_ij
-
-    def _fit_return(
-        self, X: torch.Tensor, Y: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # pairwise cost for all elements in Xi and Xj
-        cost = self._cost_matrix(X, Y)
-
-        # flow is not symmetric
-        flow_ij = self._relaxed_flow(cost)
-        flow_ji = self._relaxed_flow(cost.t())
-
-        # dist between sets Xi and Xj
-        # flow_ij.sum() == X.size(-2) ie n_elements
-        dist = torch.sum(cost * flow_ij / flow_ij.sum())
-        return dist, flow_ij.nonzero(), flow_ji.nonzero()
-
-    def _cost_matrix(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
-        return self.distfunc(X, Y).to(device=X.device)
-
-    def _relaxed_flow(self, cost: torch.Tensor) -> torch.Tensor:
-        # put all flow on most similar vector across all pairs of
-        # vectors in (Xi, Xj)
-        # flow from Xim -> Xjn
-        # to get Xjn -> Xim just transpose cost
-        flow = torch.zeros_like(cost, device=cost.device)
-        x_idx = torch.arange(cost.size(0), device=cost.device)
-        # min cost
-        # ex: X = [[0, 1, 2], [3, 4, 5]]
-        # X.min(0)[0] == [0, 1, 2]
-        # X.min(1)[0] == [0, 3]
-        y_idx = cost.min(dim=1)[1]
-        flow[x_idx, y_idx] = 1.0
-        return flow
+    # consider distance in both directions for each genome-genome interaction
+    # this is symmetric
+    chamfer_dist = item_distance + item_distance.transpose(-2, -1)
+    return chamfer_dist, item_flow_indices
