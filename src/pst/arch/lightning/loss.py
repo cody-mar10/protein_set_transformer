@@ -7,9 +7,9 @@ import torch.nn as nn
 
 
 class WeightedTripletLoss(nn.Module):
-    def __init__(self, alpha: float) -> None:
+    def __init__(self, margin: float) -> None:
         super(WeightedTripletLoss, self).__init__()
-        self.alpha = alpha
+        self.alpha = margin
         self.loss_minimum = torch.tensor(0.0)
 
     def forward(
