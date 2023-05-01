@@ -21,10 +21,7 @@ class SetNorm(nn.LayerNorm):
         self, X: torch.Tensor, row_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         if row_mask is None:
-            row_mask = compute_row_mask(X, unsqueeze=False)
-        else:
-            # squeeze just in case
-            row_mask = row_mask.squeeze()
+            row_mask = compute_row_mask(X)
 
         # add all items from set and then divide by number of true elements
         # true elements come from real rows, ie not row padded rows
