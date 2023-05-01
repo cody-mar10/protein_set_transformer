@@ -74,4 +74,5 @@ class AugmentedWeightedTripletLoss(nn.Module):
                 class_weights,
             )
             loss += augmented_loss
-        return loss.mean(dim=0) / 2
+            return loss.mean(dim=0) / 2
+        return loss.mean(dim=0)
