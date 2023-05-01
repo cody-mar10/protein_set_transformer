@@ -9,7 +9,7 @@ import torch.nn as nn
 class WeightedTripletLoss(nn.Module):
     def __init__(self, margin: float) -> None:
         super(WeightedTripletLoss, self).__init__()
-        self.alpha = margin
+        self.margin = margin
         self.loss_minimum = torch.tensor(0.0)
 
     def forward(
@@ -33,7 +33,9 @@ class WeightedTripletLoss(nn.Module):
         # weights are 1.0 for most common class, and all rarer classes are > 1.0
         # this has the effect of amplifying bad performance for rare classes
         dist = (
-            torch.minimum(positive_dist - negative_dist + self.alpha, self.loss_minimum)
+            torch.minimum(
+                positive_dist - negative_dist + self.margin, self.loss_minimum
+            )
             * class_weights
         )
         if reduce:
@@ -42,10 +44,9 @@ class WeightedTripletLoss(nn.Module):
 
 
 class AugmentedWeightedTripletLoss(nn.Module):
-    def __init__(self, alpha: float) -> None:
+    def __init__(self, margin: float) -> None:
         super(AugmentedWeightedTripletLoss, self).__init__()
-        self.alpha = alpha
-        self.loss_fn = WeightedTripletLoss(alpha)
+        self.loss_fn = WeightedTripletLoss(margin)
 
     def forward(
         self,
