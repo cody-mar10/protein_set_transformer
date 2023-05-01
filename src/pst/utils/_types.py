@@ -5,4 +5,4 @@ import torch
 
 FlowDict = dict[tuple[int, int], torch.Tensor]
 DistFuncSignature = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
-BatchType = tuple[int, torch.Tensor]
+BatchType = tuple[torch.Tensor, torch.Tensor]
