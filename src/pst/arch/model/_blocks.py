@@ -129,8 +129,6 @@ class MultiheadAttention(nn.Module):
             * ~attn_mask
         )
 
-        # TODO: SetTransformer and ESM papers don't use dropout here since this reduces capacity?
-        # attn_weight = torch.dropout(attn_weight, self.dropout, self.training)
         attn = attn_weight @ V  # m x n
         return AttentionSchema(
             repr=attn,
@@ -156,14 +154,14 @@ class MultiheadAttention(nn.Module):
 
         # row masks computed pre linear layers to know which rows were all 0s aka padded
         # only need masks for Q and K due to attention calc
-        Q_row_mask = compute_row_mask(Q, unsqueeze=True)
+        Q_row_mask = compute_row_mask(Q)
 
         # default is self-attention
         if K is None:
             K = Q
             K_row_mask = Q_row_mask
         else:
-            K_row_mask = compute_row_mask(K, unsqueeze=True)
+            K_row_mask = compute_row_mask(K)
 
         # pre-attention normalization
         if self.normalize_Q:
