@@ -11,6 +11,7 @@ from ._blocks import (
     PooledMultiheadAttention as PMA,
     AttentionSchema,
 )
+from ._norm import SetNorm
 
 MultilayerAttentionSchema = dict[int, AttentionSchema]
 
@@ -129,8 +130,9 @@ class SetTransformer(nn.Module):
             )
             self._encoder.append(layer)
             start_dim = hidden_dim
-
-        # SetTransformer++ adds another norm step after the encoder
+        self._encoder.append(
+            SetNorm(feature_dim=hidden_dim, normalized_shape=(1000, hidden_dim))
+        )
 
         self.final_encoder_layer_idx = len(self._encoder) - 1
 
