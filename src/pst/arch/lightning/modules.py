@@ -7,11 +7,11 @@ import torch
 from torch import optim
 from transformers import get_linear_schedule_with_warmup
 
-from .distance import SetDistance
+from .distance import batch_chamfer_distance
 from .loss import AugmentedWeightedTripletLoss
-from .sampling import negative_sampling, PointSwapSampler, PrecomputedSampling
+from .sampling import negative_sampling, PointSwapSampler, TripletSetSampler
 from pst.arch.model import SetTransformer, AttentionSchema
-from pst.utils.mask import compute_row_mask
+from pst.utils.mask import compute_row_mask, row_mask_to_attn_mask
 from pst.utils._types import BatchType
 
 
@@ -41,7 +41,7 @@ class _ProteinSetTransformer(L.LightningModule):
         sample_scale: float = 7.0,
         sample_rate: float = 0.5,
         # loss
-        loss_alpha: float = 0.1,
+        loss_margin: float = 0.1,
         compile: bool = False,
     ) -> None:
         """ProteinSetTransformer LightningModule. See SetTransformer for implementation details.
@@ -76,8 +76,7 @@ class _ProteinSetTransformer(L.LightningModule):
         super().__init__()
         self.save_hyperparameters(ignore="precomputed_sampling")
 
-        self.RWMDistance = SetDistance()
-        self.criterion = AugmentedWeightedTripletLoss(loss_alpha)
+        self.criterion = AugmentedWeightedTripletLoss(loss_margin)
         self.model = SetTransformer(
             in_dim=in_dim,
             n_outputs=n_outputs,
@@ -93,21 +92,6 @@ class _ProteinSetTransformer(L.LightningModule):
         )
         if compile:
             self.model = torch.compile(self.model)
-        self.precomputed_sampling: Optional[PrecomputedSampling] = None
-        self.cpu_device = torch.device("cpu")
-
-    def on_train_start(self) -> None:
-        super().on_train_start()
-        # attach precomputed results for model to access during training_step
-        # datamodule.prepare_data() called before this, so it should be available
-
-        # TODO: just have datamodule load this once
-        # file = self.trainer.datamodule.precomputed_sampling_file  # type: ignore
-        # self.precomputed_sampling = PrecomputeSampler.load_precomputed_sampling(
-        #     file,
-        #     device=self.cpu_device,
-        # )
-        self.precomputed_sampling = self.trainer.datamodule.precomputed_sampling  # type: ignore
 
     def forward(self, X: torch.Tensor, **kwargs) -> torch.Tensor:
         # return self.model(X, **kwargs)
@@ -121,7 +105,7 @@ class _ProteinSetTransformer(L.LightningModule):
             lr=self.hparams["lr"],
             betas=self.hparams["betas"],
             weight_decay=self.hparams["weight_decay"],
-            eps=1e-4 if self.trainer.precision == "16-mixed" else 1e-8,
+            eps=1e-7 if self.trainer.precision == "16-mixed" else 1e-8,
         )
         config: dict[str, Any] = {"optimizer": optimizer}
         if self.hparams["use_scheduler"]:
@@ -137,77 +121,7 @@ class _ProteinSetTransformer(L.LightningModule):
             }
         return config
 
-    def _shared_eval(
-        self,
-        batch: BatchType,
-        batch_idx: int,
-        stage: Literal["train", "val", "test"],
-    ) -> torch.Tensor:
-        batch_idx, batch_data = batch
-        device = batch_data.device
-        if self.precomputed_sampling is None:
-            # 1. Compute relaxed word mover's distance
-            rwmd, flow = self.RWMDistance.fit_transform(batch_data)
-
-            # 2. Compute row mask
-            # TODO: this is technically computed twice?
-            # oh well I guess? bc I can't precompute the attn_mask here
-            row_mask = compute_row_mask(batch_data, unsqueeze=False)
-
-            # 3. Point-swap sampling
-            # TODO: this is technically always the same each time since it doesn't consider model inputs...
-            # meaning that this can be precomputed or cached
-            # actually to be flexible with batch sizes, prob just compute upfront each time?
-            sampler = PointSwapSampler(
-                emd=rwmd,
-                batch=batch_data,
-                flow=flow,
-                row_mask=row_mask,
-                sample_rate=self.hparams["sample_rate"],
-            )
-            pos_sample, aug_data = sampler.sample()
-            pos_idx = pos_sample[1]
-        else:
-            pos_sample = self.precomputed_sampling["positive"]
-            aug_sample = self.precomputed_sampling["aug"]
-
-            pos_idx: torch.Tensor = pos_sample[batch_idx][1]
-            aug_data: torch.Tensor = aug_sample[batch_idx]
-
-        # move to training device
-        pos_idx = pos_idx.to(device=device)
-        aug_data = aug_data.to(device=device)
-
-        forward_kwargs = dict(return_weights=False, attn_mask=None)
-
-        # 4. Forward pass with batch, pos/neg samples, and augmented data
-        # to do triplet loss.
-        # TODO: break this into functions
-
-        # TODO: since model does not actually consider genome-genome comparisons,
-        # that means that y_pos, y_neg and y_aug_neg are just permutations of the original data
-        y_self = self(batch_data, **forward_kwargs)
-        y_aug_pos = self(aug_data, **forward_kwargs)
-        y_pos = y_self[pos_idx]
-
-        # negative sampling
-        scale = self.hparams["sample_scale"]
-        neg_idx, neg_weights = negative_sampling(y_self, pos_idx=pos_idx, scale=scale)
-        aug_neg_idx, aug_neg_weights = negative_sampling(y_self, y_aug_pos, scale=scale)
-
-        y_neg = y_self[neg_idx]
-        y_aug_neg = y_aug_pos[aug_neg_idx]
-
-        # 5. Compute loss and log
-        loss: torch.Tensor = self.criterion(
-            y_self=y_self,
-            y_pos=y_pos,
-            y_neg=y_neg,
-            neg_weights=neg_weights,
-            y_aug_pos=y_aug_pos,
-            y_aug_neg=y_aug_neg,
-            aug_neg_weights=aug_neg_weights,
-        )
+    def _log_loss(self, loss: torch.Tensor, stage: Literal["train", "val", "test"]):
         self.log(
             f"{stage}_loss",
             value=loss.item(),
@@ -217,22 +131,120 @@ class _ProteinSetTransformer(L.LightningModule):
             logger=True,
             sync_dist=True,
         )
+
+    def _forward(self, batch: torch.Tensor) -> torch.Tensor:
+        forward_kwargs = dict(return_weights=False, attn_mask=None)
+        return self(batch, **forward_kwargs)
+
+    def _augmented_forward_step(
+        self,
+        batch: torch.Tensor,
+        y_anchor: torch.Tensor,
+        pos_idx: torch.Tensor,
+        item_flow: torch.Tensor,
+        row_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        augmented_batch = PointSwapSampler(
+            batch=batch,
+            pos_idx=pos_idx,
+            item_flow=item_flow,
+            sample_rate=self.hparams["sample_rate"],
+            row_mask=row_mask,
+        ).point_swap()
+
+        y_aug_pos = self._forward(augmented_batch)
+        # TODO: i think row_mask should be the same for regular batch and augmented batch
+        aug_row_mask = compute_row_mask(augmented_batch)
+        # TODO: the distances need to be between each anchor set and each augmented set, so not in between...
+        # pros: don't need to consider item flow at all since I just need the distances
+        # cons: think this may be harder to implement?
+        aug_setwise_dist, _ = batch_chamfer_distance(
+            X=augmented_batch, row_mask=aug_row_mask
+        )
+        scale = self.hparams["sample_scale"]
+        aug_neg_idx, aug_neg_weights = negative_sampling(
+            setwise_dist=aug_setwise_dist, X=y_anchor, Y=y_aug_pos, scale=scale
+        )
+
+        return y_aug_pos, y_aug_pos[aug_neg_idx], aug_neg_weights
+
+    def _shared_forward_step(
+        self,
+        batch: BatchType,
+        batch_idx: int,
+        stage: Literal["train", "val", "test"],
+        augment_data: bool = True,
+    ) -> torch.Tensor:
+        batch_data, batch_class_weights = batch
+        row_mask = compute_row_mask(batch_data)
+        setwise_dist, item_flow = batch_chamfer_distance(
+            X=batch_data, row_mask=row_mask
+        )
+
+        #### REAL DATA ####
+        # positive mining
+        triplet_sampler = TripletSetSampler(setwise_dist)
+        pos_idx = triplet_sampler.positive_sampling()
+
+        # forward pass
+        y_anchor = self._forward(batch_data)
+
+        # negative sampling
+        scale = self.hparams["sample_scale"]
+        neg_idx, neg_weights = triplet_sampler.negative_sampling(
+            X=y_anchor, pos_idx=pos_idx, scale=scale
+        )
+
+        y_pos = y_anchor[pos_idx]
+        y_neg = y_anchor[neg_idx]
+
+        if augment_data:
+            y_aug_pos, y_aug_neg, aug_neg_weights = self._augmented_forward_step(
+                batch=batch_data,
+                y_anchor=y_anchor,
+                pos_idx=pos_idx,
+                item_flow=item_flow,
+                row_mask=row_mask,
+            )
+        else:
+            y_aug_pos = None
+            y_aug_neg = None
+            aug_neg_weights = None
+
+        # 5. Compute loss and log
+        loss: torch.Tensor = self.criterion(
+            y_self=y_anchor,
+            y_pos=y_pos,
+            y_neg=y_neg,
+            neg_weights=neg_weights,
+            class_weights=batch_class_weights,
+            y_aug_pos=y_aug_pos,
+            y_aug_neg=y_aug_neg,
+            aug_neg_weights=aug_neg_weights,
+        )
+
+        self._log_loss(loss, stage)
+
         return loss
 
     def training_step(self, train_batch: BatchType, batch_idx: int) -> torch.Tensor:
-        return self._shared_eval(train_batch, batch_idx, "train")
+        return self._shared_forward_step(train_batch, batch_idx, "train")
 
     def validation_step(self, val_batch: BatchType, batch_idx: int) -> torch.Tensor:
-        return self._shared_eval(val_batch, batch_idx, "val")
+        return self._shared_forward_step(
+            val_batch, batch_idx, "val", augment_data=False
+        )
 
     def test_step(self, test_batch: BatchType, batch_idx: int) -> torch.Tensor:
-        return self._shared_eval(test_batch, batch_idx, "test")
+        return self._shared_forward_step(
+            test_batch, batch_idx, "test", augment_data=False
+        )
 
     # TODO: idk if more is needed
     def predict_step(
         self, batch: BatchType, batch_idx: int, dataloader_idx: int = 0
     ) -> torch.Tensor:
-        return self(batch[1])
+        return self(batch[0])
 
 
 # TODO: these aren't working well with lightning CLI
