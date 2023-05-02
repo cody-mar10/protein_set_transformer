@@ -20,7 +20,7 @@ def _train_main(args: pst.utils.cli.Args):
         swa_epoch_start=0.75,
         annealing_strategy="linear",
     )
-    datamodule = pst.data.GenomeSetDataModule(**args.data, args=args)
+    datamodule = pst.data.GenomeSetDataModule(**args.data)
     data_dim = datamodule.feature_dimension
     model = pst.modules.GenomeTransformer(
         in_dim=data_dim, **args.model, **args.optimizer
@@ -47,7 +47,7 @@ def _predict_main(args: pst.utils.cli.Args):
         args.predict["checkpoint"]
     )
 
-    datamodule = pst.data.GenomeSetDataModule(**args.data, args=args, stage="predict")
+    datamodule = pst.data.GenomeSetDataModule(**args.data)
     writer = pst.utils.PredictionWriter(
         outdir=args.predict["outdir"],
         dataset=datamodule,
@@ -61,8 +61,8 @@ def _predict_main(args: pst.utils.cli.Args):
 
 def _simple_data(
     args: pst.utils.cli.Args,
-) -> tuple[pst.data.SimpleGenomeDataset, DataLoader]:
-    dataset = pst.data.SimpleGenomeDataset(
+) -> tuple[pst.data.GenomeDataset, DataLoader]:
+    dataset = pst.data.GenomeDataset(
         data_file=args.data["data_file"], genome_metadata=args.data["metadata_file"]
     )
     dataloader = DataLoader(
