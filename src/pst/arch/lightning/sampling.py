@@ -7,7 +7,7 @@ from typing import Optional
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-from pst.utils.mask import compute_row_mask
+from pst.utils.mask import compute_row_mask, pairwise_row_mask
 
 
 def negative_sampling(
@@ -189,3 +189,47 @@ class PointSwapSampler:
             augmented_batch[set_i, set_i_item_idx] = self._batch[set_j, set_j_item_idx]
 
         return augmented_batch
+
+
+def heuristic_augmented_negative_sampling(
+    X_anchor: torch.Tensor,
+    X_aug: torch.Tensor,
+    y_aug: torch.Tensor,
+    neg_idx: torch.Tensor,
+    scale: float = 7.0,
+    anchor_row_mask: Optional[torch.Tensor] = None,
+    average: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    X_aug_neg = X_aug[neg_idx]
+
+    ### CALC SETWISE DIST ###
+    # X: [b, n, d] -> neg_dist: [b, n, n]
+    neg_pairwise_dist = torch.cdist(X_anchor, X_aug_neg, p=2)
+    if anchor_row_mask is None:
+        anchor_row_mask = compute_row_mask(X_anchor)
+
+    augmented_row_mask = compute_row_mask(X_aug_neg)
+
+    full_mask = pairwise_row_mask(anchor_row_mask, augmented_row_mask)
+    filled_mask = torch.where(full_mask, 0.0, torch.inf)
+    neg_pairwise_dist += filled_mask
+
+    aug_neg_chamfer_dist = torch.zeros(X_anchor.size(0))
+    for mask, dim in zip([anchor_row_mask, augmented_row_mask], [-1, -2]):
+        # find closest item
+        min_dist: torch.Tensor = torch.min(neg_pairwise_dist, dim=dim)[0]
+        # don't let padded rows/items count
+        min_dist[torch.where(min_dist == torch.inf)] = 0.0
+        item_dist = min_dist.sum(dim=-1)
+        if average:
+            item_dist /= mask.sum(dim=-1)
+
+        aug_neg_chamfer_dist += item_dist
+
+    ### AUG NEG WEIGHTS ###
+    # TODO: using std here may make the weights really small since there are fewer distances
+    # gonna use mean for now
+    denom = 2 * (scale * aug_neg_chamfer_dist.mean())
+    aug_neg_weights = torch.exp(-aug_neg_chamfer_dist / denom)
+
+    return y_aug[neg_idx], aug_neg_weights
