@@ -47,7 +47,7 @@ class ModelArgs:
     norm: bool
     sample_scale: float
     sample_rate: float
-    loss_alpha: float
+    loss_margin: float
     compile: bool
 
 
@@ -212,11 +212,11 @@ def add_model_args(parser: argparse.ArgumentParser):
         help="PointSwap sampler swapping rate (default: %(default)s)",
     )
     group.add_argument(
-        "--loss_alpha",
+        "--loss_margin",
         metavar="FLOAT",
         type=float,
         default=0.1,
-        help="constant term in loss function (default: %(default)s)",
+        help="triplet loss margin (default: %(default)s)",
     )
     group.add_argument(
         "--compile",
@@ -239,7 +239,7 @@ def parse_model_args(args: argparse.Namespace) -> ModelArgs:
         norm=True,
         sample_scale=args.sample_scale,
         sample_rate=args.sample_rate,
-        loss_alpha=args.loss_alpha,
+        loss_margin=args.loss_margin,
         compile=args.compile,
     )
 
