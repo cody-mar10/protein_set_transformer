@@ -33,7 +33,7 @@ class _ProteinSetTransformer(L.LightningModule):
         n_dec_layers: int = 2,
         dropout: float = 0.0,
         bias: bool = True,
-        normalize_Q: bool = True,
+        norm: bool = True,
         *,
         # optimizer
         warmup_steps: int = 5000,
@@ -92,7 +92,7 @@ class _ProteinSetTransformer(L.LightningModule):
             n_dec_layers=n_dec_layers,
             dropout=dropout,
             bias=bias,
-            normalize_Q=normalize_Q,
+            normalize_Q=norm,
         )
         if compile:
             self.model = torch.compile(self.model)
