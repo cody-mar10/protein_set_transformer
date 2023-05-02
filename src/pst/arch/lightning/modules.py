@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 import lightning as L
 import torch
@@ -9,9 +9,13 @@ from transformers import get_linear_schedule_with_warmup
 
 from .distance import batch_chamfer_distance
 from .loss import AugmentedWeightedTripletLoss
-from .sampling import negative_sampling, PointSwapSampler, TripletSetSampler
+from .sampling import (
+    PointSwapSampler,
+    TripletSetSampler,
+    heuristic_augmented_negative_sampling,
+)
 from pst.arch.model import SetTransformer, AttentionSchema
-from pst.utils.mask import compute_row_mask, row_mask_to_attn_mask
+from pst.utils.mask import compute_row_mask
 from pst.utils._types import BatchType
 
 
@@ -29,7 +33,7 @@ class _ProteinSetTransformer(L.LightningModule):
         n_dec_layers: int = 2,
         dropout: float = 0.0,
         bias: bool = True,
-        norm: bool = True,
+        normalize_Q: bool = True,
         *,
         # optimizer
         warmup_steps: int = 5000,
@@ -88,7 +92,7 @@ class _ProteinSetTransformer(L.LightningModule):
             n_dec_layers=n_dec_layers,
             dropout=dropout,
             bias=bias,
-            normalize_Q=norm,
+            normalize_Q=normalize_Q,
         )
         if compile:
             self.model = torch.compile(self.model)
@@ -139,34 +143,37 @@ class _ProteinSetTransformer(L.LightningModule):
     def _augmented_forward_step(
         self,
         batch: torch.Tensor,
-        y_anchor: torch.Tensor,
         pos_idx: torch.Tensor,
+        neg_idx: torch.Tensor,
         item_flow: torch.Tensor,
         row_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        augmented_batch = PointSwapSampler(
+        point_swap_sampler = PointSwapSampler(
             batch=batch,
             pos_idx=pos_idx,
             item_flow=item_flow,
             sample_rate=self.hparams["sample_rate"],
             row_mask=row_mask,
-        ).point_swap()
+        )
+        augmented_batch = point_swap_sampler.point_swap()
 
         y_aug_pos = self._forward(augmented_batch)
-        # TODO: i think row_mask should be the same for regular batch and augmented batch
-        aug_row_mask = compute_row_mask(augmented_batch)
-        # TODO: the distances need to be between each anchor set and each augmented set, so not in between...
-        # pros: don't need to consider item flow at all since I just need the distances
-        # cons: think this may be harder to implement?
-        aug_setwise_dist, _ = batch_chamfer_distance(
-            X=augmented_batch, row_mask=aug_row_mask
-        )
-        scale = self.hparams["sample_scale"]
-        aug_neg_idx, aug_neg_weights = negative_sampling(
-            setwise_dist=aug_setwise_dist, X=y_anchor, Y=y_aug_pos, scale=scale
+
+        # use a heuristic for negative sampling with the augmented data
+        # basically just use the negative idx for the original data
+        # idea is that the negative example, despite pointswapping,
+        # is still likely the negative example in the augmented set
+        # so we just need to calculate the weights as a function of the setwise distance
+        y_aug_neg, aug_neg_weights = heuristic_augmented_negative_sampling(
+            X_anchor=batch,
+            X_aug=augmented_batch,
+            y_aug=y_aug_pos,
+            neg_idx=neg_idx,
+            scale=self.hparams["sample_scale"],
+            anchor_row_mask=row_mask,
         )
 
-        return y_aug_pos, y_aug_pos[aug_neg_idx], aug_neg_weights
+        return y_aug_pos, y_aug_neg, aug_neg_weights
 
     def _shared_forward_step(
         self,
@@ -201,8 +208,8 @@ class _ProteinSetTransformer(L.LightningModule):
         if augment_data:
             y_aug_pos, y_aug_neg, aug_neg_weights = self._augmented_forward_step(
                 batch=batch_data,
-                y_anchor=y_anchor,
                 pos_idx=pos_idx,
+                neg_idx=neg_idx,
                 item_flow=item_flow,
                 row_mask=row_mask,
             )
