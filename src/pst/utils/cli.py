@@ -385,7 +385,7 @@ def parse_args() -> Args:
     parser.add_argument(
         "--mode",
         metavar="",
-        choices={"train", "predict", "test", "debug", "precompute"},
+        choices={"train", "predict", "test", "debug"},
         default="train",
         help="model mode (default: %(default)s) [choices: %(choices)s]",
     )

@@ -25,6 +25,7 @@ def _train_main(args: pst.utils.cli.Args):
     model = pst.modules.GenomeTransformer(
         in_dim=data_dim, **args.model, **args.optimizer
     )
+    # TODO: eff batch size
     trainer = L.Trainer(
         callbacks=[checkpointing, lr_monitor, swa],
         logger=True,
@@ -90,19 +91,6 @@ def _debug_main(args: pst.utils.cli.Args):
     trainer.fit(model=model, train_dataloaders=dataloader)
 
 
-def _precompute_main(args: pst.utils.cli.Args):
-    dataset, dataloader = _simple_data(args)
-    precompute_sampler = pst.sampling.PrecomputeSampler(
-        data_file=args.data["data_file"],
-        batch_size=args.data["batch_size"],
-        dataloader=dataloader,
-        sample_rate=args.model["sample_rate"],
-        scale=args.model["sample_scale"],
-        device=args.trainer["accelerator"],
-    )
-    precompute_sampler.save()
-
-
 def main():
     L.seed_everything(111)
     print("Lightning version: ", L.__version__)
@@ -122,8 +110,6 @@ def main():
         _predict_main(args)
     elif args.mode == "debug":
         _debug_main(args)
-    elif args.mode == "precompute":
-        _precompute_main(args)
     else:
         _test_main(args)
 
