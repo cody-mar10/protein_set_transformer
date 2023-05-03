@@ -29,15 +29,15 @@ class SetNorm(nn.LayerNorm):
 
         # 2 unsqueezes needed to broadcast correctly
         per_set_global_mean = (
-            X.sum(dim=(-2, -1)).div(n_true_elements).unsqueeze(1).unsqueeze(1)
+            X.sum(dim=(-2, -1)).div(n_true_elements).unsqueeze(-1).unsqueeze(-1)
         )
         per_set_global_std = (
             torch.square(X - per_set_global_mean)
             .sum(dim=(-2, -1))
             .div(n_true_elements)
             .sqrt()
-            .unsqueeze(1)
-            .unsqueeze(1)
+            .unsqueeze(-1)
+            .unsqueeze(-1)
         )
 
         # always keep padded rows zeroed out
