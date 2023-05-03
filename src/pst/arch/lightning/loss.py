@@ -60,18 +60,24 @@ class AugmentedWeightedTripletLoss(nn.Module):
         aug_neg_weights: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         loss: torch.Tensor = self.loss_fn(
-            y_self, y_pos, y_neg, neg_weights, class_weights
+            y_self=y_self,
+            y_pos=y_pos,
+            y_neg=y_neg,
+            weights=neg_weights,
+            reduce=False,
+            class_weights=class_weights,
         )
 
         if y_aug_pos is not None:
             if y_aug_neg is None or aug_neg_weights is None:
                 raise ValueError("Should also provide y_aug_neg and aug_neg_weights")
             augmented_loss: torch.Tensor = self.loss_fn(
-                y_self,
-                y_aug_pos,
-                y_aug_neg,
-                aug_neg_weights,
-                class_weights,
+                y_self=y_self,
+                y_pos=y_aug_pos,
+                y_neg=y_aug_neg,
+                weights=aug_neg_weights,
+                reduce=False,
+                class_weights=class_weights,
             )
             loss += augmented_loss
             return loss.mean(dim=0) / 2
