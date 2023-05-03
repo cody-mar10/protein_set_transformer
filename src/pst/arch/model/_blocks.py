@@ -185,9 +185,9 @@ class MultiheadAttention(nn.Module):
             ).repeat_interleave(repeats=self.num_heads, dim=0)
 
         # apply learnable weights and mask padded rows
-        Q = self.Wq(Q) * Q_row_mask
-        K = self.Wk(K) * K_row_mask
-        V = self.Wv(V) * K_row_mask
+        Q = self.Wq(Q) * Q_row_mask.unsqueeze(-1)
+        K = self.Wk(K) * K_row_mask.unsqueeze(-1)
+        V = self.Wv(V) * V_row_mask.unsqueeze(-1)
 
         # attn calculation with inputs reshaped for multiheaded attn
         output = self.scaled_dot_product_attention(
@@ -199,7 +199,9 @@ class MultiheadAttention(nn.Module):
         )
 
         # concatenate attn heads
-        attn_output = self.from_multiheaded(output.repr)
+        # shape is [b, Qn, vdim]
+        # zero out padded rows
+        attn_output = self.from_multiheaded(output.repr) * Q_row_mask.unsqueeze(-1)
 
         # residual connection
         # original transformer applies dropout to attn_output here
@@ -214,7 +216,9 @@ class MultiheadAttention(nn.Module):
             F.relu(self.Wo(normed_attn_output)), self.dropout, self.training
         )
         # zero out padded rows
-        output.repr = output.repr * V_row_mask
+        # final shape: [b, Qn, vdim]
+        # always zero out padded rows
+        output.repr = output.repr * Q_row_mask.unsqueeze(-1)
         return output
 
 

@@ -12,6 +12,7 @@ from ._blocks import (
     AttentionSchema,
 )
 from ._norm import SetNorm
+from pst.utils.mask import compute_row_mask
 
 MultilayerAttentionSchema = dict[int, AttentionSchema]
 
@@ -187,7 +188,7 @@ class SetTransformer(nn.Module):
 
         input = X
         outputs: MultilayerAttentionSchema = dict()
-        for idx, layer in enumerate(self._encoder):
+        for idx, layer in enumerate(self._encoder[:-1]):  # type: ignore
             output: AttentionSchema = layer(
                 input, return_weights=return_weights, attn_mask=attn_mask
             )
@@ -195,6 +196,11 @@ class SetTransformer(nn.Module):
                 outputs[idx] = output
 
             input = output.repr
+        # final setNorm after encoder layers
+        idx += 1  # type: ignore
+        row_mask = compute_row_mask(X)
+        output = self._encoder[-1](input, row_mask=row_mask)
+        outputs[idx] = AttentionSchema(repr=output, weights=None)  # type: ignore
         return outputs
 
     def decode(self, X: torch.Tensor) -> torch.Tensor:
