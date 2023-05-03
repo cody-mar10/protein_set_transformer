@@ -132,7 +132,11 @@ class SetTransformer(nn.Module):
             self._encoder.append(layer)
             start_dim = hidden_dim
         self._encoder.append(
-            SetNorm(feature_dim=hidden_dim, normalized_shape=(1000, hidden_dim))
+            SetNorm(
+                feature_dim=hidden_dim,
+                normalized_shape=(1000, hidden_dim),
+                elementwise_affine=False,
+            )
         )
 
         self.final_encoder_layer_idx = len(self._encoder) - 1
