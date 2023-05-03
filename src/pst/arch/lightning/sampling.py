@@ -214,7 +214,7 @@ def heuristic_augmented_negative_sampling(
     filled_mask = torch.where(full_mask, 0.0, torch.inf)
     neg_pairwise_dist += filled_mask
 
-    aug_neg_chamfer_dist = torch.zeros(X_anchor.size(0))
+    aug_neg_chamfer_dist = torch.zeros(X_anchor.size(0), device=X_anchor.device)
     for mask, dim in zip([anchor_row_mask, augmented_row_mask], [-1, -2]):
         # find closest item
         min_dist: torch.Tensor = torch.min(neg_pairwise_dist, dim=dim)[0]
