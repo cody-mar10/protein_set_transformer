@@ -33,7 +33,7 @@ class WeightedTripletLoss(nn.Module):
         # weights are 1.0 for most common class, and all rarer classes are > 1.0
         # this has the effect of amplifying bad performance for rare classes
         dist = (
-            torch.minimum(
+            torch.maximum(
                 positive_dist - negative_dist + self.margin, self.loss_minimum
             )
             * class_weights
