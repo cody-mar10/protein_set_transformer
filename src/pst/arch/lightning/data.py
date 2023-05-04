@@ -38,7 +38,11 @@ def class_imbalance_sampler(
         WeightedRandomSampler: PyTorch sampler obj to pass to a PyTorch DataLoader
     """
     class_counts = torch.bincount(labels)
-    class_sampling_weights = 1.0 / class_counts
+    # simple inverse freq leads to a burnout effect where initial batches have each class
+    # but then later classes tend to just be the most common class
+    # using log of inv leads a much more uniform sampling regime
+    class_sampling_weights = torch.log(1.0 / class_counts)
+    class_sampling_weights /= class_sampling_weights.sum()
     full_sample_weights = class_sampling_weights[labels]
     sampler = WeightedRandomSampler(
         weights=full_sample_weights,  # type: ignore
