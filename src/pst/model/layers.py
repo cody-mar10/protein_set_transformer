@@ -10,7 +10,7 @@ from torch_geometric.nn import GraphNorm, MessagePassing
 from torch_geometric.typing import OptTensor, PairTensor
 from torch_geometric.utils import add_self_loops, segment, softmax
 
-from ._types import OptionalAttentionOutput
+from pst._typing import OptionalAttentionOutput
 
 
 class MultiheadAttentionConv(MessagePassing):

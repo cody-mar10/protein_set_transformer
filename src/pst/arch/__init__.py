@@ -1,3 +1,3 @@
 from .data import GenomeDataset, GenomeDataModule
 from .modules import ProteinSetTransformer
-from ._types import DataBatch, EdgeIndexStrategy
+from .training import distance, loss, sampling

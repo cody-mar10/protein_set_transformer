@@ -6,11 +6,11 @@ import lightning as L
 import torch
 from transformers import get_linear_schedule_with_warmup
 
-from pst.arch import DataBatch
-from pst.model import SetTransformer, OptionalAttentionOutput
-from pst.training.distance import stacked_batch_chamfer_distance
-from pst.training.loss import AugmentedWeightedTripletLoss
-from pst.training.sampling import (
+from pst._typing import DataBatch, OptionalAttentionOutput
+from pst.model import SetTransformer
+from .training.distance import stacked_batch_chamfer_distance
+from .training.loss import AugmentedWeightedTripletLoss
+from .training.sampling import (
     heuristic_augmented_negative_sampling,
     negative_sampling,
     point_swap_sampling,

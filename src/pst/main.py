@@ -4,9 +4,9 @@ import lightning as L
 import torch
 
 import pst
+from pst import Trainer
 from pst.utils.cli import Args, parse_args
 from pst.arch import GenomeDataModule, ProteinSetTransformer
-from pst.training import Trainer
 
 
 def train_main(args: Args):

@@ -11,8 +11,8 @@ from more_itertools import chunked
 from torch.utils.data import Dataset, DataLoader
 from torch_geometric.data import Data, Batch
 
-from ._types import DataBatch, EdgeIndexStrategy
-from pst.training.cross_validation import ImbalancedGroupKFold
+from pst.cross_validation import ImbalancedGroupKFold
+from pst._typing import DataBatch, EdgeIndexStrategy
 
 FilePath = str | Path
 _DEFAULT_CHUNK_SIZE = 30

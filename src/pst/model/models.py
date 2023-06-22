@@ -5,7 +5,7 @@ from torch import nn
 from torch_geometric.nn import GraphNorm
 
 from .layers import MultiheadAttentionConv, MultiheadAttentionPooling
-from ._types import OptionalAttentionOutput
+from pst._typing import OptionalAttentionOutput
 
 
 class SetTransformer(nn.Module):
