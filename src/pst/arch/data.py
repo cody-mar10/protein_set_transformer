@@ -139,6 +139,10 @@ class GenomeDataset(Dataset):
         )
         return graph
 
+    @property
+    def feature_dim(self) -> int:
+        return int(self.data.shape[-1])
+
     @staticmethod
     def collate(batch: list[Data]) -> DataBatch:
         return Batch.from_data_list(batch)  # type: ignore
