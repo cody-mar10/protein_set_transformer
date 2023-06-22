@@ -5,6 +5,7 @@ from torch import nn
 from torch_geometric.nn import GraphNorm
 
 from .layers import MultiheadAttentionConv, MultiheadAttentionPooling
+from ._types import OptionalAttentionOutput
 
 
 class SetTransformer(nn.Module):
@@ -84,15 +85,38 @@ class SetTransformer(nn.Module):
         return x
 
     def decode(
-        self, x_out: torch.Tensor, edge_index: torch.Tensor, ptr: torch.Tensor
-    ) -> torch.Tensor:
+        self,
+        x_out: torch.Tensor,
+        edge_index: torch.Tensor,
+        ptr: torch.Tensor,
+        return_attention_weights: bool = False,
+    ) -> OptionalAttentionOutput:
         x_avg = self._decoder["pool"](
-            x=x_out, edge_index=edge_index, ptr=ptr, return_attention_weights=False
+            x=x_out,
+            edge_index=edge_index,
+            ptr=ptr,
+            return_attention_weights=return_attention_weights,
         )
-        return self._decoder["linear"](x_avg)
+        if return_attention_weights:
+            x_avg, (forward_edge_index, attn) = x_avg
+
+        output = self._decoder["linear"](x_avg)
+
+        if return_attention_weights:
+            return output, (forward_edge_index, attn)  # type: ignore
+        return output
 
     def forward(
-        self, x: torch.Tensor, edge_index: torch.Tensor, ptr: torch.Tensor
-    ) -> torch.Tensor:
+        self,
+        x: torch.Tensor,
+        edge_index: torch.Tensor,
+        ptr: torch.Tensor,
+        return_attention_weights: bool = False,
+    ) -> OptionalAttentionOutput:
         x_out = self.encode(x=x, edge_index=edge_index)
-        return self.decode(x_out=x_out, edge_index=edge_index, ptr=ptr)
+        return self.decode(
+            x_out=x_out,
+            edge_index=edge_index,
+            ptr=ptr,
+            return_attention_weights=return_attention_weights,
+        )
