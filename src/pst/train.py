@@ -13,7 +13,7 @@ from lightning.pytorch.loggers import TensorBoardLogger
 from torch.utils.data import DataLoader
 
 from pst.arch import GenomeDataModule, ProteinSetTransformer
-from pst.training import CrossValEventSummarizer
+from pst.cross_validation import CrossValEventSummarizer
 from pst.utils.cli import Args
 
 
