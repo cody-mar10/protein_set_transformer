@@ -57,3 +57,18 @@ def stacked_batch_chamfer_distance(
             flow_idx[j, i] = y_flow
 
     return chamfer_dist, flow_idx
+
+
+def pairwise_chamfer_distance(x: torch.Tensor, y: torch.Tensor) -> float:
+    dist = torch.cdist(x, y, p=2.0).square()
+    x_min: torch.Tensor
+    y_min: torch.Tensor
+    x_min = dist.min(dim=1)[0]
+    y_min = dist.min(dim=0)[0]
+
+    chamfer_dist = float(x_min.mean() + y_min.mean())
+    return chamfer_dist
+
+
+# TODO: heuristic all-against-all chamfer distance as a fn
+# of item-level knn using faiss
