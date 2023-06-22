@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
-from utils import asdict, register, _NONEXISTENT_FILE
+from .utils import asdict, register, _NONEXISTENT_FILE
 
 
 @dataclass

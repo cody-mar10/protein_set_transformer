@@ -5,7 +5,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from utils import asdict, register, _NONEXISTENT_FILE
+from .utils import asdict, register, _NONEXISTENT_FILE
 
 
 @dataclass

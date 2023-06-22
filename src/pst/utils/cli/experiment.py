@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 
-from utils import asdict, register
+from .utils import asdict, register
 
 
 @dataclass

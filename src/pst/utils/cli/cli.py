@@ -4,15 +4,15 @@ import argparse
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from augmentation import parse_augmentation_args
-from data import parse_data_args
-from experiment import parse_experiment_args
-from loss import parse_loss_args
-from model import parse_model_args
-from optimizer import parse_optimizer_args
-from predict import parse_predict_args
-from trainer import parse_trainer_args
-from utils import _ARGPARSE_HANDLERS
+from .augmentation import parse_augmentation_args
+from .data import parse_data_args
+from .experiment import parse_experiment_args
+from .loss import parse_loss_args
+from .model import parse_model_args
+from .optimizer import parse_optimizer_args
+from .predict import parse_predict_args
+from .trainer import parse_trainer_args
+from .utils import _ARGPARSE_HANDLERS
 
 _KWARG_TYPE = dict[str, Any]
 
