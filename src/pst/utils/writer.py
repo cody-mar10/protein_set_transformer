@@ -11,8 +11,7 @@ import torch
 from numpy.typing import NDArray
 from lightning.pytorch.callbacks import BasePredictionWriter
 
-from pst.arch.lightning.data import GenomeSetDataModule
-from pst.arch.lightning.modules import _ProteinSetTransformer
+from pst.arch import GenomeDataModule, ProteinSetTransformer
 
 
 def sort_key(file: Path) -> int:
@@ -28,12 +27,12 @@ class PredictionWriter(BasePredictionWriter):
     def __init__(
         self,
         outdir: Path,
-        dataset: GenomeSetDataModule,
+        datamodule: GenomeDataModule,
         write_interval: Literal["batch", "epoch", "batch_and_epoch"] = "batch",
     ) -> None:
         super().__init__(write_interval)
         self.outdir = outdir
-        self.dataset = dataset
+        self.datamodule = datamodule
         self.compression = tb.Filters(complevel=4, complib="blosc:lz4")
         self.dataset_prefix = "dataset"
         self.batch_prefix = "batch"
@@ -41,23 +40,19 @@ class PredictionWriter(BasePredictionWriter):
     def write_on_batch_end(
         self,
         trainer: L.Trainer,
-        pl_module: _ProteinSetTransformer,
+        pl_module: ProteinSetTransformer,
         predictions: torch.Tensor,
         batch_indices: Optional[list[int]],
         batch: torch.Tensor,
         batch_idx: int,
         dataloader_idx: int,
     ):
+        # results should come in order
         outdir = self.outdir.joinpath(f"{self.dataset_prefix}_{dataloader_idx}")
         outdir.mkdir(parents=True, exist_ok=True)
         output_file = outdir.joinpath(f"{self.batch_prefix}_{batch_idx}.h5")
-        name_output = outdir.joinpath(f"{self.batch_prefix}_{batch_idx}.names.txt")
         predictions = predictions.numpy()
 
-        batch_size = int(batch.size(0))
-        names = self.dataset._dataset.convert_batch_idx_to_genome_names(
-            batch_idx, batch_size
-        )
         with tb.File(output_file, "w") as fp:
             fp.create_carray(
                 "/",
@@ -66,10 +61,6 @@ class PredictionWriter(BasePredictionWriter):
                 shape=predictions.shape,
                 filters=self.compression,
             )
-
-        with name_output.open("w") as fp:
-            for name in names:
-                fp.write(f"{name}\n")
 
     def on_predict_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
         """Combine all separate batch files into a single file
@@ -86,12 +77,6 @@ class PredictionWriter(BasePredictionWriter):
         data_paths = {
             dataset_path: sorted(
                 dataset_path.glob(f"*{self.batch_prefix}*.h5"), key=sort_key
-            )
-            for dataset_path in dataset_paths
-        }
-        name_paths = {
-            dataset_path: sorted(
-                dataset_path.glob(f"*{self.batch_prefix}*.txt"), key=sort_key
             )
             for dataset_path in dataset_paths
         }
@@ -113,14 +98,6 @@ class PredictionWriter(BasePredictionWriter):
                     shape=concat.shape,
                     filters=self.compression,
                 )
-
-        # copy sequence names
-        for dataset_path, batch_paths in name_paths.items():
-            data_output = self.outdir.joinpath(f"{dataset_path.name}.names.txt")
-            with data_output.open("wb") as fdst:
-                for name_path in batch_paths:
-                    with name_path.open("rb") as fsrc:
-                        copyfileobj(fsrc, fdst)
 
         # delete dataset files
         for dataset_path in dataset_paths:
