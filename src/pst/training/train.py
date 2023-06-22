@@ -89,8 +89,10 @@ class Trainer:
 
         dataloaders = datamodule.train_val_dataloaders(shuffle=True)
 
+        in_dim = datamodule.dataset.feature_dim
+
         for fold_idx, (train_loader, val_loader) in enumerate(dataloaders):
-            model = ProteinSetTransformer(**self.model_kwargs)
+            model = ProteinSetTransformer(in_dim=in_dim, **self.model_kwargs)
 
             logger = TensorBoardLogger(
                 save_dir=self.trainer_kwargs["default_root_dir"],
