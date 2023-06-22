@@ -1,19 +1,26 @@
 from __future__ import annotations
 
-from typing import Iterator
+from typing import cast, Iterator, TypeVar, Generic
 
 import numpy as np
 import torch
 from numpy.typing import NDArray
 
 Int64Array = NDArray[np.int64]
-LongArray = Int64Array | torch.Tensor
+LongArray = TypeVar("LongArray", Int64Array, torch.Tensor)
 
 
-class ImbalancedGroupKFold:
-    def __init__(self, groups: LongArray, return_torch: bool = True) -> None:
-        self.X_idx = self.get_X_index(groups, return_torch)
+class ImbalancedGroupKFold(Generic[LongArray]):
+    def __init__(self, groups: LongArray) -> None:
+        if isinstance(groups, torch.Tensor):
+            self.index_fn = torch.arange
+        elif isinstance(groups, np.ndarray):
+            self.index_fn = np.arange
 
+        # send outputs as the same tensor type as input
+        self.X_idx = self.get_X_index(groups)
+
+        # but internally do everything as numpy arrays
         self.uniq_groups: Int64Array
         self.groups: Int64Array
         # self.groups maps actual group labels to consecutively increasing,
@@ -26,11 +33,9 @@ class ImbalancedGroupKFold:
         self.n_folds = self.uniq_groups.shape[0] - 1
         self.largest_group_id = np.argmax(self.group_counts)
 
-    def get_X_index(self, groups: LongArray, return_torch: bool = True) -> LongArray:
+    def get_X_index(self, groups: LongArray) -> LongArray:
         n = groups.shape[0]
-        if return_torch:
-            return torch.arange(n)
-        return np.arange(n)
+        return cast(LongArray, self.index_fn(n))
 
     def _sort_groups(self):
         # reverse sort, ie 0th element is count of most frequent group
@@ -54,4 +59,5 @@ class ImbalancedGroupKFold:
 
             train_idx = self.X_idx[train_mask]
             val_idx = self.X_idx[val_mask]
+
             yield train_idx, val_idx
