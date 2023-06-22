@@ -10,6 +10,8 @@ from torch_geometric.nn import GraphNorm, MessagePassing
 from torch_geometric.typing import OptTensor, PairTensor
 from torch_geometric.utils import add_self_loops, segment, softmax
 
+from ._types import OptionalAttentionOutput
+
 
 class MultiheadAttentionConv(MessagePassing):
     """Implement the SetTransformer attention layer using a graph-level
@@ -89,7 +91,7 @@ class MultiheadAttentionConv(MessagePassing):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         return_attention_weights: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
+    ) -> OptionalAttentionOutput:
         """Forward pass to compute scaled-dot product attention to update each
         node/item representation.
 
@@ -353,7 +355,7 @@ class ResidualMultiheadAttentionConv(MultiheadAttentionConv):
             return out, (edge_index, alpha)
 
         return out
-    
+
     def update(self, aggr_out: torch.Tensor) -> torch.Tensor:
         if self.concat:
             # shape: [-1, H, D] -> [-1, H * D]
