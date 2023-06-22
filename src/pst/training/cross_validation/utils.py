@@ -35,6 +35,7 @@ class CrossValEventSummarizer:
         metric_name = f"{metric}_{step}"
 
         summary: _SummaryType = list()
+        step2epoch: list[tuple[int, int, int]] = list()
         for version in self.logdir.glob("version_*"):
             fold_idx = int(version.stem.rsplit("_", maxsplit=1)[-1])
             events = self.load_events(version)
@@ -47,22 +48,25 @@ class CrossValEventSummarizer:
                 )
                 summary.append(record)
 
+            for event in events.Scalars("epoch"):
+                record = (fold_idx, event.step, int(event.epoch))
+                step2epoch.append(record)
+
+        # for some reason the same step may be logged multiple times
+        epochs: pd.DataFrame = pd.DataFrame(
+            step2epoch, columns=["fold", "step", "epoch"]
+        ).drop_duplicates()
+
+        # epochs should be a constant roughly across all folds
         df = (
             pd.DataFrame(summary)
+            .merge(epochs, on=["fold", "step"])
             .sort_values(by=["fold", "step"])
             .reset_index(drop=True)
         )
-        # need to normalize the step no. since all folds will have a diff number of steps
-        minmax = df.groupby("fold")["step"].agg(["min", "max"]).reset_index()
-        df = (
-            df.merge(minmax)
-            .assign(
-                diff=lambda df: df["max"] - df["min"],
-                norm_step=lambda df: (df["step"] - df["min"]) / df["diff"],
-            )
-            .drop(columns=["diff"])
-            .rename(columns={"min": "min_step", "max": "max_step"})
-        )
+
+        # TODO: report avg val loss at final epoch?
+
         return df
 
     def save(self, summary: pd.DataFrame, output_name: str):
