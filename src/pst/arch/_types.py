@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Literal, Protocol
 
 from torch import Tensor
 from torch_geometric.typing import OptTensor
@@ -15,3 +15,6 @@ class DataBatch(Protocol):
     setsize: Tensor
     weight: Tensor
     class_id: Tensor
+
+
+EdgeIndexStrategy = Literal["full", "sparse", "chunked"]

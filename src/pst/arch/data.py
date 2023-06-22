@@ -11,7 +11,7 @@ from more_itertools import chunked
 from torch.utils.data import Dataset, DataLoader
 from torch_geometric.data import Data, Batch
 
-from ._types import DataBatch
+from ._types import DataBatch, EdgeIndexStrategy
 from pst.training.cross_validation import ImbalancedGroupKFold
 
 FilePath = str | Path
@@ -66,9 +66,6 @@ def create_chunked_graph(
 
     edge_index = torch.cat(_edge_index, dim=1)
     return edge_index
-
-
-EdgeIndexStrategy = Literal["full", "sparse", "chunked"]
 
 
 class GenomeDataset(Dataset):
