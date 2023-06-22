@@ -35,9 +35,9 @@ def predict_main(args: Args):
 
 
 def main():
+    args = parse_args()
     L.seed_everything(111)
     print("Lightning version: ", L.__version__)
-    args = parse_args()
 
     if args.trainer["accelerator"] == "cpu":
         threads = args.trainer["devices"]
