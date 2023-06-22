@@ -11,6 +11,7 @@ from more_itertools import chunked
 from torch.utils.data import Dataset, DataLoader
 from torch_geometric.data import Data, Batch
 
+from ._types import DataBatch
 from pst.training.cross_validation import ImbalancedGroupKFold
 
 FilePath = str | Path
@@ -82,6 +83,12 @@ class GenomeDataset(Dataset):
             self.data: torch.Tensor = torch.from_numpy(fp.root.data[:])
             self.ptr: torch.Tensor = torch.from_numpy(fp.root.ptr[:])
             self.sizes: torch.Tensor = torch.from_numpy(fp.root.sizes[:])
+            # TODO: may want to calculate class weights per training fold
+            # if you do simple normalized inverse freq, then the values are the same across all folds
+            # and then you could just calculate this once
+            # but if you first take the log of inverse freq like these weights are,
+            # then values differ for the same class per fold, which may introduce some variability
+            # for now, will just leave this alone
             self.weights: torch.Tensor = torch.from_numpy(fp.root.weights[:])
             self.class_id: torch.Tensor = torch.from_numpy(fp.root.class_id[:])
 
@@ -136,7 +143,7 @@ class GenomeDataset(Dataset):
         return graph
 
     @staticmethod
-    def collate(batch: list[Data]) -> Batch:
+    def collate(batch: list[Data]) -> DataBatch:
         return Batch.from_data_list(batch)  # type: ignore
 
 
@@ -161,7 +168,7 @@ class SimpleTensorDataset(Dataset):
 
 def indices_to_genome_data_batch(
     idx_batch: list[torch.Tensor], genome_dataset: GenomeDataset
-) -> Batch:
+) -> DataBatch:
     batch = [genome_dataset[int(idx)] for idx in idx_batch]
     return GenomeDataset.collate(batch)
 
@@ -172,6 +179,7 @@ class GenomeDataModule(L.LightningDataModule):
         file: FilePath,
         batch_size: int,
         edge_strategy: EdgeIndexStrategy = "chunked",
+        train_on_full: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -179,10 +187,12 @@ class GenomeDataModule(L.LightningDataModule):
         edge_strat_kwargs = self._prune_init_kwargs_for_edge_strategy(
             edge_strategy, **kwargs
         )
+        self.dataloader_kwargs = kwargs
         self.dataset = GenomeDataset(
             file=file, edge_strategy=edge_strategy, **edge_strat_kwargs
         )
         self.batch_size = batch_size
+        self.train_on_full = train_on_full
         self.save_hyperparameters()
 
     @staticmethod
@@ -209,20 +219,19 @@ class GenomeDataModule(L.LightningDataModule):
 
     def _convert_data_indices_to_genome_data_batch(
         self, idx_batch: list[torch.Tensor]
-    ) -> Batch:
-        batch = [self.dataset[int(idx)] for idx in idx_batch]
-        return self.dataset.collate(batch)
+    ) -> DataBatch:
+        return indices_to_genome_data_batch(
+            idx_batch=idx_batch, genome_dataset=self.dataset
+        )
 
     def setup(self, stage: _StageType):
         if stage == "fit":
-            # TODO: what to do when doing full training on all data
-            # prob just pass another __init__ arg and return a simpledataloader
-
-            # just need to handle this manually with lightning
-            self.data_manager = ImbalancedGroupKFold(
-                groups=self.dataset.class_id, return_torch=True
-            )
-
+            if self.train_on_full:
+                # train final model with all data
+                self.train_dataset = self.dataset
+            else:
+                # train with cross validation
+                self.data_manager = ImbalancedGroupKFold(groups=self.dataset.class_id)
         elif stage == "test":
             self.test_dataset = self.dataset
         elif stage == "predict":
@@ -234,7 +243,7 @@ class GenomeDataModule(L.LightningDataModule):
         # pseudocode:
         train_idx: torch.Tensor
         val_idx: torch.Tensor
-        for train_idx, val_idx in self.data_manager.split():  # type: ignore
+        for train_idx, val_idx in self.data_manager.split(return_torch=True):  # type: ignore
             train_idx_dataset = SimpleTensorDataset(train_idx)
             val_idx_dataset = SimpleTensorDataset(val_idx)
             train_loader = DataLoader(
@@ -251,19 +260,20 @@ class GenomeDataModule(L.LightningDataModule):
             )
             yield train_loader, val_loader
 
-    def simple_dataloader(self, dataset: GenomeDataset, **kwargs) -> DataLoader:
+    def simple_dataloader(self, dataset: GenomeDataset) -> DataLoader:
         dataloader = DataLoader(
             dataset=dataset,
             batch_size=self.batch_size,
-            **kwargs,
+            collate_fn=dataset.collate,
+            **self.dataloader_kwargs,
         )
         return dataloader
 
-    def test_dataloader(self, **kwargs) -> DataLoader:
-        return self.simple_dataloader(self.test_dataset, **kwargs)
+    def train_dataloader(self) -> DataLoader:
+        return self.simple_dataloader(self.train_dataset)
 
-    def predict_dataloader(self, **kwargs) -> DataLoader:
-        return self.simple_dataloader(self.predict_dataset, **kwargs)
+    def test_dataloader(self) -> DataLoader:
+        return self.simple_dataloader(self.test_dataset)
 
-
-# TODO: at the end of training, need to summarize CV performance over all folds
+    def predict_dataloader(self) -> DataLoader:
+        return self.simple_dataloader(self.predict_dataset)
