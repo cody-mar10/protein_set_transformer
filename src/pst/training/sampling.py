@@ -1,13 +1,37 @@
 from __future__ import annotations
 
-import random
-from collections import defaultdict
 from typing import Optional
 
 import torch
-from torch.nn.utils.rnn import pad_sequence
 
-from pst.utils.mask import compute_row_mask, pairwise_row_mask
+from .distance import pairwise_chamfer_distance
+from ._types import FlowType
+
+
+def positive_sampling(
+    setdist: torch.Tensor, mask_diagonal: bool = True
+) -> torch.Tensor:
+    """Perform positive sampling using a set-wise distance metric like Chamfer distance.
+
+    It is recommended that the set-wise distance be calculated BEFORE a model forward
+    pass since this will be comparing data in the original dimension compared to the
+    embedding dimension. The positive pairs in the embedding dimension will be heavily
+    dependent on the model and how it is being trained and how it was initialized.
+
+    Args:
+        setdist (torch.Tensor)
+        mask_diagonal (bool): use if the diagonal needs to be masked since that
+            is likely a zero vector. In other words, don't choose self as the
+            positive index. Defaults to True.
+
+    Returns:
+        torch.Tensor: tensor with the indices of the positive set
+    """
+    # choose smallest k distances
+    # the diagonal is likely all 0s, so that will be the smallest values per row
+    k = 2 if mask_diagonal else 1
+    pos_sample_idx: torch.Tensor = setdist.topk(k, dim=-1, largest=False)[1][:, -1]
+    return pos_sample_idx
 
 
 def negative_sampling(
@@ -32,45 +56,44 @@ def negative_sampling(
     # so don't allow self to be chosen as neg sample
     # for pnt swap, generally diagonal should be the smallest, so chose another
     embed_dist = torch.cdist(X, Y)
-    idx = torch.arange(embed_dist.size(0))
 
     # don't allow points closer than the pos sample be chosen
     # this also has the effect of removing self-comparisons
-    pos_dists = embed_dist[idx, pos_idx].unsqueeze(1)
+    pos_dists = embed_dist.gather(dim=-1, index=pos_idx.unsqueeze(1))  # type: ignore
 
     gt_pos = embed_dist > pos_dists
     has_neg_choices = torch.sum(gt_pos, dim=-1).bool()
+    dist_from_pos = embed_dist - pos_dists
 
-    # TODO: unclear if this is the best sampling option, but not I think having the negative examples be
-    # weighted helps since there are no labels
-    # sample from all indices where distance is greater than the positive example
-    choice_idx, choice_opt = torch.where(gt_pos)
-    choices = defaultdict(list)
-    for i, j in zip(choice_idx, choice_opt):
-        i = int(i)
-        j = int(j)
-        choices[i].append(j)
+    if has_neg_choices.all():
+        # neg example is the one that is the next farther after
+        # dist = 0.0 is pos_idx, dist < 0.0 is closer than pos,
+        # but we want just farther than pos
+        neg_idx: torch.Tensor = torch.where(
+            dist_from_pos <= 0.0, torch.inf, dist_from_pos
+        ).min(dim=-1)[1]
+    else:
+        raise RuntimeError("can't find negative")
 
-    if not has_neg_choices.all():
-        # TODO: the above can cause a problem if the positive sample is somehow
-        # farther away than the negative samples in the embedding space,
-        # which may be common at the beginning of modeling
-        # next best thing is to choose the 1st index smaller than the positive example
-        # can just do:
-        dist_from_pos = pos_dists - embed_dist
-        dist_from_pos[torch.where(dist_from_pos <= 0.0)] = float("inf")
-        # the closest negative will have the smallest nonzero distance
-        idx_closest_to_pos = dist_from_pos.min(dim=-1)[1]
-        for idx in range(embed_dist.size(0)):
-            # only add the missing indices for now
-            if idx not in choices:
-                neg_ex = int(idx_closest_to_pos[idx])
-                choices[idx].append(neg_ex)
+        # TODO: check if neg_idx == pos_idx due to rounding errors
+    # else:
+    #     # TODO: the above can cause a problem if the positive sample is somehow
+    #     # farther away than the negative samples in the embedding space,
+    #     # which may be common at the beginning of modeling
+    #     # next best thing is to choose the 1st index smaller than the positive example
+    #     # can just do:
 
-    # need to keep this in order
-    neg_idx = torch.tensor([random.choice(choices[idx]) for idx in range(len(choices))])
+    #     abs_dist_from_pos = dist_from_pos.abs()
+    #     abs_dist_from_pos[
+    #         torch.where(torch.isclose(dist_from_pos, dist_from_pos.new_zeros(1)))
+    #     ] = torch.inf
+    #     # the closest negative will have the smallest nonzero distance
+    #     idx_closest_to_pos = dist_from_pos.min(dim=-1)[1]
+
     # calc negative sample weight
-    neg_setwise_dists = setwise_dist[idx, neg_idx]
+    neg_setwise_dists = setwise_dist.gather(
+        dim=-1, index=neg_idx.unsqueeze(1)
+    ).squeeze()
     setwise_std = setwise_dist.std()
     denom = 2 * (scale * setwise_std) ** 2
     neg_weight = torch.exp(-neg_setwise_dists / denom)
@@ -84,111 +107,58 @@ class TripletSetSampler:
     embedding space of the model. This allows for online triplet sampling.
     """
 
-    def __init__(self, setwise_distance: torch.Tensor) -> None:
-        """Creates a data augmentation set sampler for a mini-batch of PointSets.
-
-        Args:
-            setwise_distance (torch.Tensor): symmetric set-wise distance matrix
-        """
-        self._setdist = setwise_distance
-
-    def positive_sampling(self, mask_diagonal: bool = True) -> torch.Tensor:
-        """Perform positive sampling using a set-wise distance metric like Chamfer distance.
-
-        It is recommended that the set-wise distance be calculated BEFORE a model forward
-        pass since this will be comparing data in the original dimension compared to the
-        embedding dimension. The positive pairs in the embedding dimension will be heavily
-        dependent on the model and how it is being trained and how it was initialized.
-
-        Args:
-
-            mask_diagonal (bool): use if the diagonal needs to be masked since that
-                is likely a zero vector. In other words, don't choose self as the
-                positive index. Defaults to True.
-
-        Returns:
-            torch.Tensor: tensor with the indices of the positive set
-        """
-        # choose smallest k distances
-        # the diagonal is likely all 0s, so that will be the smallest values per row
-        k = 2 if mask_diagonal else 1
-        pos_sample_idx: torch.Tensor = self._setdist.topk(k, dim=-1, largest=False)[1][
-            :, -1
-        ]
-        return pos_sample_idx
-
-    def negative_sampling(
-        self,
-        X: torch.Tensor,
-        Y: Optional[torch.Tensor] = None,
-        *,
-        pos_idx: Optional[torch.Tensor] = None,
-        scale: float = 7.0,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        return negative_sampling(self._setdist, X, Y, pos_idx=pos_idx, scale=scale)
+    pass
 
 
-class PointSwapSampler:
-    _SENTINEL = -1
+def point_swap_sampling(
+    batch: torch.Tensor,
+    ptr: torch.Tensor,
+    pos_idx: torch.Tensor,
+    item_flow: FlowType,
+    sample_rate: float,
+) -> torch.Tensor:
+    """Perform point swap sampling data augmentation.
 
-    def __init__(
-        self,
-        batch: torch.Tensor,
-        pos_idx: torch.Tensor,
-        item_flow: torch.Tensor,
-        sample_rate: float,
-        row_mask: Optional[torch.Tensor] = None,
-    ):
-        if sample_rate <= 0.0 or sample_rate > 1:
-            raise ValueError(
-                f"Provided {sample_rate=} -- must be in the range (0.0, 1.0]"
-            )
+    Args:
+        batch (torch.Tensor): stacked batch, shape: [total_items, feat_dim]
+        ptr (torch.Tensor): data batch ptr to start/stop for each set in
+            batch, shape: [batch_size + 1]
+        pos_idx (torch.Tensor): at position i, holds the closest set j
+            index to set i, shape: [batch_size]
+        item_flow (FlowType): dict mapping pairs of indices (i,j) to the
+            closest item index for each item m in set i to the items n
+            in set j
+        sample_rate (float): rate of point swapping, (0.0, 1.0)
 
-        self._row_mask = compute_row_mask(batch) if row_mask is None else row_mask
+    Returns:
+        torch.Tensor: _description_
+    """
+    if sample_rate <= 0.0 or sample_rate >= 1.0:
+        raise ValueError(f"Provided {sample_rate=} must be in the range (0.0, 1.0)")
 
-        self._batch = batch
-        self._item_flow = item_flow
-        self._pos_idx = pos_idx
-        self.sample_rate = sample_rate
-        self._build_point_swap_index()
+    # build point swap index that maps k-th item in batch to its l-th neighbor
+    # as defined by randomly sampling among the available flow
+    # for set i and set j comparisons
+    point_swap_indices: list[torch.Tensor] = list()
+    for i, j in enumerate(pos_idx):
+        j = int(j)
 
-    def _build_point_swap_index(self):
-        n_items_per_set = self._row_mask.sum(-1)
-        # how many samples to draw per set based on how many real items there are
-        n_samples_per_set = n_items_per_set.mul(self.sample_rate).ceil().long()
+        # convert relative item indices to global item indices
+        i_offset = ptr[i]
+        j_offset = ptr[j]
 
-        samples: list[torch.Tensor] = list()
-        for row, n_samples in zip(self._row_mask, n_samples_per_set):
-            sample = torch.multinomial(row.float(), int(n_samples))
-            samples.append(sample)
+        pos_item_idx = item_flow[i, j] + j_offset
+        n_items = pos_item_idx.shape[0]
+        anchor_idx = torch.arange(n_items) + i_offset
 
-        # [b, n] where n is the maximum number of rows to swap
-        # index (i, j) gets the index of item j to swap from set i
-        # actual flow is stored in self._item_flow
-        self.point_swap_idx = pad_sequence(
-            samples, batch_first=True, padding_value=self._SENTINEL
-        )
+        # sample from uniform [0, 1) distribution
+        choices = torch.rand(n_items) >= sample_rate
+        point_swap_idx = torch.where(choices, pos_item_idx, anchor_idx)
+        point_swap_indices.append(point_swap_idx)
 
-        # mask the point swapping idx to prevent swapping padded rows
-        self.point_swap_mask = self.point_swap_idx != self._SENTINEL
-
-    def point_swap(self) -> torch.Tensor:
-        # clone batch so that the order of items in each set stays the same
-        # other than for the items that get swapped
-        # this will enable the use of positional encodings should the position
-        # of the items in the set actually be important
-        augmented_batch = self._batch.clone()
-
-        # this holds the positive set index for all sets in the mini-batch
-        for set_i, set_j in enumerate(self._pos_idx):
-            mask = self.point_swap_mask[set_i]
-            set_i_item_idx = self.point_swap_idx[set_i, mask]
-            # item flow idx (i, j, m) = closest item in set j to item m in set i
-            set_j_item_idx = self._item_flow[set_i, set_j, set_i_item_idx]
-            # don't get from augmented batch since it will swap everything multiple times
-            augmented_batch[set_i, set_i_item_idx] = self._batch[set_j, set_j_item_idx]
-
-        return augmented_batch
+    point_swap_index = torch.cat(point_swap_indices)
+    augmented_batch = batch[point_swap_index]
+    return augmented_batch
 
 
 def heuristic_augmented_negative_sampling(
@@ -196,40 +166,30 @@ def heuristic_augmented_negative_sampling(
     X_aug: torch.Tensor,
     y_aug: torch.Tensor,
     neg_idx: torch.Tensor,
+    ptr: torch.Tensor,
     scale: float = 7.0,
-    anchor_row_mask: Optional[torch.Tensor] = None,
-    average: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    X_aug_neg = X_aug[neg_idx]
+    chamfer_distances: list[float] = list()
+    for i, j in enumerate(neg_idx):
+        j = int(j)
 
-    ### CALC SETWISE DIST ###
-    # X: [b, n, d] -> neg_dist: [b, n, n]
-    neg_pairwise_dist = torch.cdist(X_anchor, X_aug_neg, p=2)
-    if anchor_row_mask is None:
-        anchor_row_mask = compute_row_mask(X_anchor)
+        start_i = ptr[i]
+        stop_i = ptr[i + 1]
+        start_j = ptr[j]
+        stop_j = ptr[j]
 
-    augmented_row_mask = compute_row_mask(X_aug_neg)
+        set_i = X_anchor[start_i:stop_i]
+        set_j = X_aug[start_j:stop_j]
 
-    full_mask = pairwise_row_mask(anchor_row_mask, augmented_row_mask)
-    filled_mask = torch.where(full_mask, 0.0, torch.inf)
-    neg_pairwise_dist += filled_mask
+        chamfer_dist = pairwise_chamfer_distance(set_i, set_j)
+        chamfer_distances.append(chamfer_dist)
 
-    aug_neg_chamfer_dist = torch.zeros(X_anchor.size(0), device=X_anchor.device)
-    for mask, dim in zip([anchor_row_mask, augmented_row_mask], [-1, -2]):
-        # find closest item
-        min_dist: torch.Tensor = torch.min(neg_pairwise_dist, dim=dim)[0]
-        # don't let padded rows/items count
-        min_dist[torch.where(min_dist == torch.inf)] = 0.0
-        item_dist = min_dist.sum(dim=-1)
-        if average:
-            item_dist /= mask.sum(dim=-1)
-
-        aug_neg_chamfer_dist += item_dist
-
+    aug_neg_dist = torch.tensor(chamfer_distances, device=X_anchor.device)
     ### AUG NEG WEIGHTS ###
     # TODO: using std here may make the weights really small since there are fewer distances
     # gonna use mean for now
-    denom = 2 * (scale * aug_neg_chamfer_dist.mean())
-    aug_neg_weights = torch.exp(-aug_neg_chamfer_dist / denom)
+    std = aug_neg_dist.std()
+    denom = 2 * (scale * std) ** 2
+    aug_neg_weights = torch.exp(-aug_neg_dist / denom)
 
     return y_aug[neg_idx], aug_neg_weights
