@@ -18,6 +18,7 @@ from pst.utils.cli import Args
 
 
 class Trainer:
+    # TODO: expand all opts
     def __init__(
         self,
         model_kwargs: dict[str, Any],
@@ -28,11 +29,14 @@ class Trainer:
         loss_kwargs: dict[str, Any],
         augmentation_kwargs: dict[str, Any],
     ) -> None:
-        self.model_kwargs = model_kwargs | optimizer_kwargs | augmentation_kwargs
-        self.data_kwargs = data_kwargs
+        self.model_kwargs = model_kwargs
+        self.model_kwargs["optimizer_kwargs"] = optimizer_kwargs
+        self.model_kwargs["augmentation_kwargs"] = augmentation_kwargs
+        self.model_kwargs["loss_kwargs"] = loss_kwargs
         self.trainer_kwargs = trainer_kwargs
         self.experiment_kwargs = experiment_kwargs
-        self.loss_kwargs = loss_kwargs
+
+        self.load_datamodule(**data_kwargs)
 
     @classmethod
     def from_cli_args(cls, args: Args):
@@ -63,13 +67,18 @@ class Trainer:
         callbacks.append(LearningRateMonitor(logging_interval="step"))
         callbacks.append(
             StochasticWeightAveraging(
-                swa_lrs=self.model_kwargs["lr"],
+                swa_lrs=self.model_kwargs["optimizer_kwargs"]["lr"],
                 swa_epoch_start=0.75,
                 annealing_strategy="linear",
             )
         )
 
         return callbacks
+
+    def load_datamodule(self, **data_kwargs):
+        self.datamodule = GenomeDataModule(**data_kwargs)
+        self.datamodule.prepare_data()
+        self.datamodule.setup("fit")
 
     def train(
         self,
@@ -83,13 +92,9 @@ class Trainer:
         )
 
     def train_with_cross_validation(self):
-        datamodule = GenomeDataModule(**self.data_kwargs)
-        datamodule.prepare_data()
-        datamodule.setup("fit")
+        dataloaders = self.datamodule.train_val_dataloaders(shuffle=True)
 
-        dataloaders = datamodule.train_val_dataloaders(shuffle=True)
-
-        in_dim = datamodule.dataset.feature_dim
+        in_dim = self.datamodule.dataset.feature_dim
 
         for fold_idx, (train_loader, val_loader) in enumerate(dataloaders):
             model = ProteinSetTransformer(in_dim=in_dim, **self.model_kwargs)
