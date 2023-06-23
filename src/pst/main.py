@@ -3,10 +3,8 @@ from __future__ import annotations
 import lightning as L
 import torch
 
-import pst
 from pst import Predictor, Trainer
 from pst.utils.cli import Args, parse_args
-from pst.arch import GenomeDataModule, ProteinSetTransformer
 
 
 def train_main(args: Args):
