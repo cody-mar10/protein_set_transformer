@@ -8,11 +8,11 @@ import lightning as L
 import tables as tb
 import torch
 from more_itertools import chunked
-from torch.utils.data import Dataset, DataLoader
-from torch_geometric.data import Data, Batch
+from torch.utils.data import DataLoader, Dataset
+from torch_geometric.data import Batch, Data
 
-from pst.cross_validation import ImbalancedGroupKFold
 from pst._typing import DataBatch, EdgeIndexStrategy
+from pst.cross_validation import ImbalancedGroupKFold
 
 FilePath = str | Path
 _DEFAULT_CHUNK_SIZE = 30
@@ -81,11 +81,11 @@ class GenomeDataset(Dataset):
             self.ptr: torch.Tensor = torch.from_numpy(fp.root.ptr[:])
             self.sizes: torch.Tensor = torch.from_numpy(fp.root.sizes[:])
             # TODO: may want to calculate class weights per training fold
-            # if you do simple normalized inverse freq, then the values are the same across all folds
-            # and then you could just calculate this once
+            # if you do simple normalized inverse freq, then the values are the same
+            # across all folds and then you could just calculate this once
             # but if you first take the log of inverse freq like these weights are,
-            # then values differ for the same class per fold, which may introduce some variability
-            # for now, will just leave this alone
+            # then values differ for the same class per fold, which may introduce some
+            # variability for now, will just leave this alone
             self.weights: torch.Tensor = torch.from_numpy(fp.root.weights[:])
             self.class_id: torch.Tensor = torch.from_numpy(fp.root.class_id[:])
 
@@ -97,16 +97,20 @@ class GenomeDataset(Dataset):
         edge_indices: list[torch.Tensor] = list()
         if edge_strategy == "sparse":
             if "threshold" not in kwargs:
-                raise ValueError(
-                    f"Passed {edge_strategy=}, which requires the `threshold` arg for `create_sparse_graph`"
+                errmsg = (
+                    f"Passed {edge_strategy=}, which requires the `threshold`"
+                    " arg for `create_sparse_graph`"
                 )
+                raise ValueError(errmsg)
 
             edge_create_fn = create_sparse_graph
         elif edge_strategy == "chunked":
             if "chunk_size" not in kwargs:
-                raise ValueError(
-                    f"Passed {edge_strategy=}, which requires the `chunk_size` arg for `create_chunked_graph`"
+                errmsg = (
+                    f"Passed {edge_strategy=}, which requires the `chunk_size`"
+                    " arg for `create_chunked_graph`"
                 )
+                raise ValueError(errmsg)
 
             edge_create_fn = create_chunked_graph
         else:
@@ -241,10 +245,7 @@ class GenomeDataModule(L.LightningDataModule):
     def train_val_dataloaders(
         self, **kwargs
     ) -> Iterator[tuple[DataLoader, DataLoader]]:
-        # pseudocode:
-        train_idx: torch.Tensor
-        val_idx: torch.Tensor
-        for train_idx, val_idx in self.data_manager.split(return_torch=True):  # type: ignore
+        for train_idx, val_idx in self.data_manager.split():
             train_idx_dataset = SimpleTensorDataset(train_idx)
             val_idx_dataset = SimpleTensorDataset(val_idx)
             train_loader = DataLoader(
