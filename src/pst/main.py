@@ -4,7 +4,7 @@ import lightning as L
 import torch
 
 import pst
-from pst import Trainer
+from pst import Predictor, Trainer
 from pst.utils.cli import Args, parse_args
 from pst.arch import GenomeDataModule, ProteinSetTransformer
 
@@ -19,19 +19,8 @@ def test_main(args: Args):
 
 
 def predict_main(args: Args):
-    # TODO: refactor into a prediction submodule
-    model = ProteinSetTransformer.load_from_checkpoint(args.predict["checkpoint"])
-
-    datamodule = GenomeDataModule(shuffle=False, **args.data)
-    writer = pst.utils.PredictionWriter(
-        outdir=args.predict["outdir"],
-        datamodule=datamodule,
-    )
-    trainer = L.Trainer(
-        callbacks=[writer],
-        **args.trainer,
-    )
-    trainer.predict(model=model, datamodule=datamodule)
+    predictor = Predictor.from_cli_args(args)
+    predictor.predict()
 
 
 def main():
