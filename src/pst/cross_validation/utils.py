@@ -49,7 +49,7 @@ class CrossValEventSummarizer:
                 summary.append(record)
 
             for event in events.Scalars("epoch"):
-                record = (fold_idx, event.step, int(event.epoch))
+                record = (fold_idx, event.step, int(event.value))
                 step2epoch.append(record)
 
         # for some reason the same step may be logged multiple times
