@@ -178,7 +178,7 @@ def heuristic_augmented_negative_sampling(
         start_i = ptr[i]
         stop_i = ptr[i + 1]
         start_j = ptr[j]
-        stop_j = ptr[j]
+        stop_j = ptr[j + 1]
 
         set_i = X_anchor[start_i:stop_i]
         set_j = X_aug[start_j:stop_j]
