@@ -28,7 +28,10 @@ def add_model_args(parser: argparse.ArgumentParser):
         metavar="INT",
         type=int,
         default=_DEFAULTS.out_dim,
-        help="output dimension (default: %(default)s which means use the input embedding dimension)",
+        help=(
+            "output dimension (default: %(default)s which means use the input "
+            "embedding dimension)"
+        ),
     )
     group.add_argument(
         "--num_heads",
@@ -49,7 +52,11 @@ def add_model_args(parser: argparse.ArgumentParser):
         metavar="FLOAT",
         type=float,
         default=_DEFAULTS.multiplier,
-        help="multiplicative weight to de-emphasize (< 1.0) or over-emphasize (> 1.0) protein weights when decoding a genome representation by pooling over all proteins in a genome (default: %(default)s)",
+        help=(
+            "multiplicative weight to de-emphasize (< 1.0) or over-emphasize (> 1.0) "
+            "protein weights when decoding a genome representation by pooling over "
+            "all proteins in a genome (default: %(default)s)"
+        ),
     )
     group.add_argument(
         "--dropout",

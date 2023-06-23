@@ -4,8 +4,9 @@ from typing import Optional
 
 import torch
 
-from .distance import pairwise_chamfer_distance
 from pst._typing import FlowType
+
+from .distance import pairwise_chamfer_distance
 
 
 def positive_sampling(
@@ -49,7 +50,8 @@ def negative_sampling(
         if pos_idx is None:
             raise ValueError("pos_idx must be supplied if a second tensor Y is not")
     else:
-        # pos_idx is just aligned already in the case of sampling from point swapped augmented data
+        # pos_idx is just aligned already in the case of sampling from point swapped
+        # augmented data
         pos_idx = torch.arange(Y.size(0))
 
     # in case of sampling from real dataset, diag should be 0 due to self-comparison
@@ -186,8 +188,8 @@ def heuristic_augmented_negative_sampling(
 
     aug_neg_dist = torch.tensor(chamfer_distances, device=X_anchor.device)
     ### AUG NEG WEIGHTS ###
-    # TODO: using std here may make the weights really small since there are fewer distances
-    # gonna use mean for now
+    # TODO: using std here may make the weights really small since there are fewer
+    # distances gonna use mean for now
     std = aug_neg_dist.std()
     denom = 2 * (scale * std) ** 2
     aug_neg_weights = torch.exp(-aug_neg_dist / denom)

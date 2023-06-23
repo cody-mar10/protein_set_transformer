@@ -32,7 +32,10 @@ def add_trainer_args(parser: argparse.ArgumentParser):
         metavar="INT",
         type=int,
         default=_DEFAULTS.devices,
-        help="number of accelerator devices to use. For CPUs, this sets the total thread usage. (default: %(default)s)",
+        help=(
+            "number of accelerator devices to use. For CPUs, this sets the total thread"
+            " usage. (default: %(default)s)"
+        ),
     )
     group.add_argument(
         "--accelerator",
@@ -60,7 +63,10 @@ def add_trainer_args(parser: argparse.ArgumentParser):
         metavar="",
         choices={"ddp", "ddp_spawn"},
         default=_DEFAULTS.strategy,
-        help="parallelized training strategy (default: %(default)s) [choices: %(choices)s]",
+        help=(
+            "parallelized training strategy (default: %(default)s) "
+            "[choices: %(choices)s]"
+        ),
     )
     group.add_argument(
         "--precision",
@@ -74,7 +80,10 @@ def add_trainer_args(parser: argparse.ArgumentParser):
         "--gradient-clip-algorithm",
         metavar="",
         choices={"norm", "value"},
-        help="optional procedure to clip gradients during (default: %(default)s) [choices: %(choices)s]",
+        help=(
+            "optional procedure to clip gradients during (default: %(default)s) "
+            "[choices: %(choices)s]"
+        ),
     )
     group.add_argument(
         "--gradient-clip-val",

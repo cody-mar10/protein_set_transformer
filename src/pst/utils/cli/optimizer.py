@@ -39,7 +39,10 @@ def add_optimizer_args(parser: argparse.ArgumentParser):
         metavar="INT",
         type=int,
         default=_DEFAULTS.warmup_steps,
-        help="number of training steps to warm-up the learning rate to the max (default: %(default)s)",
+        help=(
+            "number of training steps to warm-up the learning rate to the max "
+            "(default: %(default)s)"
+        ),
     )
     group.add_argument(
         "--betas",

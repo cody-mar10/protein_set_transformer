@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict as dc_asdict, is_dataclass
+from dataclasses import asdict as dc_asdict
+from dataclasses import is_dataclass
 from pathlib import Path
 from typing import Any, Callable
 

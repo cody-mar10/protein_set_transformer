@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import cast, Iterator, TypeVar, Generic
+from typing import Generic, Iterator, TypeVar, cast
 
 import numpy as np
 import torch

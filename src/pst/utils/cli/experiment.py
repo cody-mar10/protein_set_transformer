@@ -23,14 +23,14 @@ def add_experiment_args(parser: argparse.ArgumentParser):
         metavar="FLOAT",
         type=float,
         default=_DEFAULTS.name,
-        help="experiment name in logging directory during training (default: %(default)s)",
+        help="experiment name in logging directory during training (default: %(default)s)",  # noqa: E501
     )
     group.add_argument(
         "--patience",
         metavar="INT",
         type=int,
         default=_DEFAULTS.patience,
-        help="early stopping patience, see lightning description (default: %(default)s)",
+        help="early stopping patience, see lightning description (default: %(default)s)",  # noqa: E501
     )
 
 

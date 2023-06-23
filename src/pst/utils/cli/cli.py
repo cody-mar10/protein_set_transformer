@@ -46,7 +46,10 @@ class Args:
 
 def parse_args() -> Args:
     parser = argparse.ArgumentParser(
-        description="Train or predict genome-level embeddings based on sets of protein-level embeddings"
+        description=(
+            "Train or predict genome-level embeddings based on sets of protein-level "
+            "embeddings"
+        )
     )
     parser.add_argument(
         "--mode",

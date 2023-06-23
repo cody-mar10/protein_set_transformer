@@ -28,7 +28,8 @@ def stacked_batch_chamfer_distance(
     batch_size = int(ptr.numel() - 1)
     chamfer_dist = torch.zeros(batch_size, batch_size, device=batch.device)
 
-    # TODO: this could probably just be a single tensor, and then you compute the offsets as necessary
+    # TODO: this could probably just be a single tensor, and then you compute the
+    # offsets as necessary
     flow_idx: dict[tuple[int, int], torch.Tensor] = dict()
     for i in range(batch_size):
         start_x = ptr[i]

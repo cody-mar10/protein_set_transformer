@@ -6,6 +6,7 @@ import lightning as L
 
 from pst.arch import GenomeDataModule, ProteinSetTransformer
 from pst.utils.cli import Args
+
 from .writer import PredictionWriter
 
 
@@ -20,7 +21,7 @@ class Predictor:
         self.model = ProteinSetTransformer.load_from_checkpoint(
             predict_kwargs["checkpoint"]
         )
-        self.datamodule = GenomeDataModule(shuffle=False, **data_kwargs)
+        self.datamodule = GenomeDataModule(shuffle=False, **data_kwargs)  # type: ignore
         writer = PredictionWriter(
             outdir=predict_kwargs["outdir"],
             datamodule=self.datamodule,

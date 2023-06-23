@@ -4,9 +4,10 @@ import torch
 from torch import nn
 from torch_geometric.nn import GraphNorm
 
-from .layers import MultiheadAttentionConv, MultiheadAttentionPooling
 from pst._typing import OptionalAttentionOutput
 from pst.utils.cli.model import _DEFAULTS
+
+from .layers import MultiheadAttentionConv, MultiheadAttentionPooling
 
 
 class SetTransformer(nn.Module):

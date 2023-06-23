@@ -23,7 +23,10 @@ def add_augmentation_args(parser: argparse.ArgumentParser):
         metavar="FLOAT",
         type=float,
         default=_DEFAULTS.sample_scale,
-        help="exponential decay scale factor for weighting negative samples during loss (default: %(default)s)",
+        help=(
+            "exponential decay scale factor for weighting negative samples during loss "
+            "(default: %(default)s)"
+        ),
     )
     group.add_argument(
         "--sample_rate",

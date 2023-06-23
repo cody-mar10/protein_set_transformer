@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, cast, Literal
+from typing import Any, Literal, cast
 
 import lightning as L
 import torch
@@ -8,6 +8,7 @@ from transformers import get_linear_schedule_with_warmup
 
 from pst._typing import DataBatch, OptionalAttentionOutput
 from pst.model import SetTransformer
+
 from .training.distance import stacked_batch_chamfer_distance
 from .training.loss import AugmentedWeightedTripletLoss
 from .training.sampling import (

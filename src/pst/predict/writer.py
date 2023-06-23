@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from shutil import copyfileobj, rmtree
+from shutil import rmtree
 from typing import Literal, Optional
 
-import numpy as np
 import lightning as L
+import numpy as np
 import tables as tb
 import torch
-from numpy.typing import NDArray
 from lightning.pytorch.callbacks import BasePredictionWriter
+from numpy.typing import NDArray
 
 from pst.arch import GenomeDataModule, ProteinSetTransformer
 

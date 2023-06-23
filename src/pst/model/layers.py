@@ -22,7 +22,8 @@ class MultiheadAttentionConv(MessagePassing):
 
     _alpha: OptTensor
 
-    # TODO: add option to change normalization strategy <- actually don't think it matters that much
+    # TODO: add option to change normalization strategy <- actually don't think it
+    # matters that much
     # the major bottleneck was with chamfer dist calc
     def __init__(
         self,
@@ -260,7 +261,8 @@ class MultiheadAttentionPooling(nn.Module):
         Returns:
             torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
                 If `:param:return_attention_weights=False`, just returns the
-                weighted average over all nodes in graph (items in set). Shape [batch_size, D]. Otherwise, also returns the attention weights,
+                weighted average over all nodes in graph (items in set).
+                Shape [batch_size, D]. Otherwise, also returns the attention weights,
                 or the scores that computed the weighted average.
         """
         attn_score = self.pooling_attn_layer(
