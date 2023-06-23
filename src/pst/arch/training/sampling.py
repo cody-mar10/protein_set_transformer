@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 import torch
 
@@ -35,6 +35,29 @@ def positive_sampling(
     return pos_sample_idx
 
 
+_NO_NEGATIVES_MODES = Literal["closest_to_positive", "closest_to_anchor"]
+
+
+def _semi_hard_negative_sampling(
+    dist_from_pos: torch.Tensor, pos_idx: torch.Tensor, batch_size: Optional[int] = None
+) -> torch.Tensor:
+    if batch_size is None:
+        batch_size = pos_idx.size(0)
+
+    # mask positive idx from being selected -- avoids comparisons with 0
+    mask = dist_from_pos.new_full(size=(batch_size, 1), fill_value=torch.inf)
+    dist_from_pos = dist_from_pos.scatter(dim=-1, index=pos_idx.unsqueeze(1), src=mask)
+    # mask closer than positive idx
+    # this is only for when there are actually are negative choices
+    # that are greater than the positive idx
+    # in other cases when looking for negatives that are closer than the positive
+    # just take the absolute value of the dist_from_pos tensor first
+    dist_from_pos = torch.where(dist_from_pos <= 0.0, torch.inf, dist_from_pos)
+    neg_idx = dist_from_pos.argmin(dim=-1)
+    return neg_idx
+
+
+@torch.no_grad()
 def negative_sampling(
     setwise_dist: torch.Tensor,
     X: torch.Tensor,
@@ -42,6 +65,7 @@ def negative_sampling(
     *,
     pos_idx: Optional[torch.Tensor] = None,
     scale: float = 7.0,
+    no_negatives_mode: _NO_NEGATIVES_MODES = "closest_to_positive",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if Y is None:
         # this chooses the neg sample from the real dataset
@@ -53,7 +77,7 @@ def negative_sampling(
         # pos_idx is just aligned already in the case of sampling from point swapped
         # augmented data
         pos_idx = torch.arange(Y.size(0))
-
+    batch_size = pos_idx.size(0)
     # in case of sampling from real dataset, diag should be 0 due to self-comparison
     # so don't allow self to be chosen as neg sample
     # for pnt swap, generally diagonal should be the smallest, so chose another
@@ -67,30 +91,46 @@ def negative_sampling(
     has_neg_choices = torch.sum(gt_pos, dim=-1).bool()
     dist_from_pos = embed_dist - pos_dists
 
+    # semi-hardish negative mining
     if has_neg_choices.all():
         # neg example is the one that is the next farther after
         # dist = 0.0 is pos_idx, dist < 0.0 is closer than pos,
         # but we want just farther than pos
-        neg_idx: torch.Tensor = torch.where(
-            dist_from_pos <= 0.0, torch.inf, dist_from_pos
-        ).min(dim=-1)[1]
+        neg_idx = _semi_hard_negative_sampling(
+            dist_from_pos=dist_from_pos, pos_idx=pos_idx, batch_size=batch_size
+        )
     else:
-        raise RuntimeError("can't find negative")
+        neg_idx = pos_idx.new_full((batch_size,), fill_value=-1)
+        has_neg_idx = has_neg_choices.nonzero(as_tuple=True)[0]
+        no_neg_idx = has_neg_choices.logical_not().nonzero(as_tuple=True)[0]
 
-        # TODO: check if neg_idx == pos_idx due to rounding errors
-    # else:
-    #     # TODO: the above can cause a problem if the positive sample is somehow
-    #     # farther away than the negative samples in the embedding space,
-    #     # which may be common at the beginning of modeling
-    #     # next best thing is to choose the 1st index smaller than the positive example
-    #     # can just do:
+        # calc negative for those with proper negative ie negative
+        # is just the next set farther than the positive
+        has_neg_dist_from_pos = dist_from_pos[has_neg_idx]
+        has_neg_neg_idx = _semi_hard_negative_sampling(
+            dist_from_pos=has_neg_dist_from_pos,
+            pos_idx=pos_idx[has_neg_idx],
+            batch_size=None,
+        )
+        neg_idx[has_neg_idx] = has_neg_neg_idx
 
-    #     abs_dist_from_pos = dist_from_pos.abs()
-    #     abs_dist_from_pos[
-    #         torch.where(torch.isclose(dist_from_pos, dist_from_pos.new_zeros(1)))
-    #     ] = torch.inf
-    #     # the closest negative will have the smallest nonzero distance
-    #     idx_closest_to_pos = dist_from_pos.min(dim=-1)[1]
+        if no_negatives_mode == "closest_to_positive":
+            no_neg_dist_from_pos = dist_from_pos[no_neg_idx].abs()
+            no_neg_neg_idx = _semi_hard_negative_sampling(
+                dist_from_pos=no_neg_dist_from_pos,
+                pos_idx=pos_idx[no_neg_idx],
+                batch_size=None,
+            )
+        elif no_negatives_mode == "closest_to_anchor":
+            dist_from_anchor = embed_dist[no_neg_idx]
+            # mask anchor
+            dist_from_anchor[:, no_neg_idx] = torch.inf
+            no_neg_neg_idx = dist_from_anchor.argmin(dim=-1)
+        else:
+            raise ValueError(
+                f"Invalid strategy passed for no negatives: {no_negatives_mode=}"
+            )
+        neg_idx[no_neg_idx] = no_neg_neg_idx
 
     # calc negative sample weight
     neg_setwise_dists = setwise_dist.gather(
