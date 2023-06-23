@@ -10,7 +10,7 @@ from .utils import _NONEXISTENT_FILE, asdict, register
 
 @dataclass
 class DataArgs:
-    data_file: Path
+    file: Path
     batch_size: int = 32
     train_on_full: bool = False
     num_workers: int = 0
@@ -20,7 +20,7 @@ class DataArgs:
     threshold: Optional[int] = -1
 
 
-_DEFAULTS = DataArgs(data_file=_NONEXISTENT_FILE)
+_DEFAULTS = DataArgs(file=_NONEXISTENT_FILE)
 
 
 @register
@@ -100,7 +100,7 @@ def add_data_args(parser: argparse.ArgumentParser):
 @asdict
 def parse_data_args(args: argparse.Namespace) -> DataArgs:
     return DataArgs(
-        data_file=args.data_file,
+        file=args.data_file,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=not args.no_pin_memory,
