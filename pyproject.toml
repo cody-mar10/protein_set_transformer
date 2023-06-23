@@ -21,6 +21,7 @@ dependencies = [
     "lightning",
     "tables",
     "torch_geometric",
+    "pandas",
 ]
 
 [project.scripts]
