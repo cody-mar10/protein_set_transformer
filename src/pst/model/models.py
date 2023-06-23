@@ -6,6 +6,7 @@ from torch_geometric.nn import GraphNorm
 
 from .layers import MultiheadAttentionConv, MultiheadAttentionPooling
 from pst._typing import OptionalAttentionOutput
+from pst.utils.cli.model import _DEFAULTS
 
 
 class SetTransformer(nn.Module):
@@ -19,6 +20,8 @@ class SetTransformer(nn.Module):
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
+        if out_dim == _DEFAULTS.out_dim:
+            out_dim = in_dim
 
         # the pyg strategy for attention is for each head to attend to the full
         # length of the input, rather than splitting the input into `head`-sized
