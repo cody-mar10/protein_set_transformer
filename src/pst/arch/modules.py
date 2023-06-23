@@ -76,7 +76,7 @@ class ProteinSetTransformer(L.LightningModule):
 
         return config
 
-    def _log_loss(self, loss: torch.Tensor, stage: _STAGE_TYPE):
+    def _log_loss(self, loss: torch.Tensor, batch_size: int, stage: _STAGE_TYPE):
         self.log(
             f"{stage}_loss",
             value=loss.item(),
@@ -85,6 +85,7 @@ class ProteinSetTransformer(L.LightningModule):
             prog_bar=True,
             logger=True,
             sync_dist=True,
+            batch_size=batch_size,
         )
 
     def forward(
@@ -119,6 +120,7 @@ class ProteinSetTransformer(L.LightningModule):
         stage: _STAGE_TYPE,
         augment_data: bool = True,
     ) -> torch.Tensor:
+        batch_size = batch.setsize.numel()
         setwise_dist, item_flow = stacked_batch_chamfer_distance(
             batch=batch.x, ptr=batch.ptr
         )
@@ -168,7 +170,7 @@ class ProteinSetTransformer(L.LightningModule):
             aug_neg_weights=aug_neg_weights,
         )
 
-        self._log_loss(loss=loss, stage=stage)
+        self._log_loss(loss=loss, batch_size=batch_size, stage=stage)
         return loss
 
     def _augmented_forward_step(
@@ -192,7 +194,7 @@ class ProteinSetTransformer(L.LightningModule):
             ptr=batch.ptr,
             return_attention_weights=False,
         )
-
+        # TODO: fix error with min reduction
         y_aug_neg, aug_neg_weights = heuristic_augmented_negative_sampling(
             X_anchor=batch.x,
             X_aug=augmented_batch,
