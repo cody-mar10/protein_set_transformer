@@ -16,7 +16,7 @@ class TrainerArgs:
     default_root_dir: Path = Path("lightning_root")
     max_epochs: int = 1000
     precision: Literal["16-mixed", "bf16-mixed", 32, "32"] = "16-mixed"
-    strategy: Literal["ddp", "ddp_spawn"] = "ddp"
+    strategy: Literal["ddp", "ddp_spawn", "ddp_notebook"] = "ddp"
     gradient_clip_algorithm: Optional[Literal["norm", "value"]] = None
     gradient_clip_val: Optional[float] = None
 
@@ -61,7 +61,7 @@ def add_trainer_args(parser: argparse.ArgumentParser):
     group.add_argument(
         "--strategy",
         metavar="",
-        choices={"ddp", "ddp_spawn"},
+        choices={"ddp", "ddp_spawn", "ddp_notebook"},
         default=_DEFAULTS.strategy,
         help=(
             "parallelized training strategy (default: %(default)s) "
