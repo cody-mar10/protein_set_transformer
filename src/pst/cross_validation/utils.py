@@ -5,7 +5,10 @@ from pathlib import Path
 from typing import Literal
 
 import pandas as pd
-from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+from tensorboard.backend.event_processing.event_accumulator import (
+    EventAccumulator,
+    ScalarEvent,
+)
 
 
 @dataclass
@@ -39,6 +42,7 @@ class CrossValEventSummarizer:
         for version in self.logdir.glob("version_*"):
             fold_idx = int(version.stem.rsplit("_", maxsplit=1)[-1])
             events = self.load_events(version)
+            event: ScalarEvent
             for event in events.Scalars(metric_name):
                 record = _CVRecord(
                     fold=fold_idx,
