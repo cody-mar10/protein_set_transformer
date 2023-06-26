@@ -22,6 +22,7 @@ dependencies = [
     "tables",
     "torch_geometric",
     "pandas",
+    "more-itertools",
 ]
 
 [project.scripts]
