@@ -29,8 +29,7 @@ def add_experiment_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("EXPERIMENT ARGS")
     group.add_argument(
         "--exp-name",
-        metavar="FLOAT",
-        type=float,
+        metavar="NAME",
         default=_DEFAULTS.name,
         help="experiment name in logging directory during training (default: %(default)s)",  # noqa: E501
     )
