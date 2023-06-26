@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 
-from .utils import asdict, register
+from .utils import asdict, register_defaults, register_handler
 
 
 @dataclass
@@ -13,9 +13,10 @@ class ExperimentArgs:
 
 
 _DEFAULTS = ExperimentArgs()
+register_defaults(_DEFAULTS, "experiment")
 
 
-@register
+@register_handler
 def add_experiment_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("EXPERIMENT ARGS")
     group.add_argument(

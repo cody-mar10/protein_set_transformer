@@ -8,9 +8,22 @@ from typing import Any, Callable
 
 _ADDER_TYPE = Callable[[argparse.ArgumentParser], None]
 _ARGPARSE_HANDLERS: list[_ADDER_TYPE] = list()
+_DEFAULTS: dict[str, dict[str, Any]] = dict()
 
 
-def register(func: _ADDER_TYPE):
+def register_defaults(defaults, key: str):
+    if is_dataclass(defaults):
+        _DEFAULTS[key] = dc_asdict(defaults)
+    raise ValueError(
+        f"Input type {type(defaults)} is not a dataclasses.dataclass instance"
+    )
+
+
+def get_defaults(key: str) -> dict[str, Any]:
+    return _DEFAULTS[key]
+
+
+def register_handler(func: _ADDER_TYPE):
     _ARGPARSE_HANDLERS.append(func)
 
 

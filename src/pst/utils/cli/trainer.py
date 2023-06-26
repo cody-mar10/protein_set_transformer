@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
-from .utils import asdict, register
+from .utils import asdict, register_defaults, register_handler
 
 
 # these are directly passed to the lightning.Trainer class as kwargs
@@ -22,9 +22,10 @@ class TrainerArgs:
 
 
 _DEFAULTS = TrainerArgs()
+register_defaults(_DEFAULTS, "trainer")
 
 
-@register
+@register_handler
 def add_trainer_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("TRAINER ARGS")
     group.add_argument(

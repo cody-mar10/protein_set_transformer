@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
-from .utils import _NONEXISTENT_FILE, asdict, register
+from .utils import _NONEXISTENT_FILE, asdict, register_defaults, register_handler
 
 
 @dataclass
@@ -21,9 +21,10 @@ class DataArgs:
 
 
 _DEFAULTS = DataArgs(file=_NONEXISTENT_FILE)
+register_defaults(_DEFAULTS, "data")
 
 
-@register
+@register_handler
 def add_data_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("DATA ARGS")
     group.add_argument(

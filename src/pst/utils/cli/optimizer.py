@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 
-from .utils import asdict, register
+from .utils import asdict, register_defaults, register_handler
 
 
 @dataclass
@@ -15,9 +15,10 @@ class OptimizerArgs:
 
 
 _DEFAULTS = OptimizerArgs()
+register_defaults(_DEFAULTS, "optimizer")
 
 
-@register
+@register_handler
 def add_optimizer_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("OPTIMIZER ARGS")
     group.add_argument(

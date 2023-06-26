@@ -5,7 +5,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from .utils import _NONEXISTENT_FILE, asdict, register
+from .utils import _NONEXISTENT_FILE, asdict, register_defaults, register_handler
 
 
 @dataclass
@@ -15,9 +15,10 @@ class PredictArgs:
 
 
 _DEFAULTS = PredictArgs(checkpoint=_NONEXISTENT_FILE)
+register_defaults(_DEFAULTS, "predict")
 
 
-@register
+@register_handler
 def add_predict_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("PREDICT ARGS")
     is_inference_mode = "predict" in sys.argv

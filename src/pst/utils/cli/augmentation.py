@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 
-from .utils import asdict, register
+from .utils import asdict, register_defaults, register_handler
 
 
 @dataclass
@@ -13,9 +13,10 @@ class AugmentationArgs:
 
 
 _DEFAULTS = AugmentationArgs()
+register_defaults(_DEFAULTS, "augmentation")
 
 
-@register
+@register_handler
 def add_augmentation_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("AUGMENTATION ARGS")
     group.add_argument(

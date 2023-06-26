@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 
-from .utils import asdict, register
+from .utils import asdict, register_defaults, register_handler
 
 
 @dataclass
@@ -12,9 +12,10 @@ class LossArgs:
 
 
 _DEFAULTS = LossArgs()
+register_defaults(_DEFAULTS, "loss")
 
 
-@register
+@register_handler
 def add_loss_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("LOSS ARGS")
     group.add_argument(
