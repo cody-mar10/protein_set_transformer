@@ -195,7 +195,7 @@ class Trainer:
                 save_top_k=self.experiment_kwargs["save_top_k"],
                 every_n_epochs=1,
                 save_last=True,
-                filename="{epoch}-{step}-{val_loss}",
+                filename="{epoch}-{step}-{val_loss:.3f}",
             )
         )
         callbacks.append(
