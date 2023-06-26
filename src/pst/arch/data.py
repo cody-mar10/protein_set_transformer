@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from copy import copy
+from dataclasses import dataclass
 from itertools import permutations
 from pathlib import Path
-from typing import Iterator, Literal
+from typing import Any, Iterator, Literal
 
 import lightning as L
 import tables as tb
@@ -73,48 +75,66 @@ class GenomeDataset(Dataset):
         self,
         file: FilePath,
         edge_strategy: EdgeIndexStrategy,
-        **kwargs,
+        chunk_size: int = _DEFAULT_CHUNK_SIZE,
+        threshold: int = _SENTINEL_THRESHOLD,
+        log_inverse: bool = True,
     ) -> None:
         super().__init__()
         with tb.File(file) as fp:
             self.data: torch.Tensor = torch.from_numpy(fp.root.data[:])
             self.ptr: torch.Tensor = torch.from_numpy(fp.root.ptr[:])
             self.sizes: torch.Tensor = torch.from_numpy(fp.root.sizes[:])
-            # TODO: may want to calculate class weights per training fold
-            # if you do simple normalized inverse freq, then the values are the same
-            # across all folds and then you could just calculate this once
-            # but if you first take the log of inverse freq like these weights are,
-            # then values differ for the same class per fold, which may introduce some
-            # variability for now, will just leave this alone
-            self.weights: torch.Tensor = torch.from_numpy(fp.root.weights[:])
             self.class_id: torch.Tensor = torch.from_numpy(fp.root.class_id[:])
 
-        self.edge_indices = self.get_edge_indices(edge_strategy, **kwargs)
+        self.weights = self.get_class_weights(log_inverse)
+
+        self.edge_indices = self.get_edge_indices(edge_strategy, chunk_size, threshold)
+
+    def get_class_weights(self, log_inverse: bool = True) -> torch.Tensor:
+        if hasattr(self, "class_id"):
+            # calc using inverse frequency
+            # convert to ascending 0..n range
+            class_counts: torch.Tensor
+            _, class_counts = torch.unique(self.class_id, return_counts=True)
+            freq: torch.Tensor = class_counts / class_counts.sum()
+            inv_freq = 1.0 / freq
+            if log_inverse:
+                # with major class imbalance the contribution from rare classes can
+                # be extremely high relative to other classes
+                inv_freq = torch.log(inv_freq)
+
+            # not sure if normalization does anything since all still contribute
+            # the relative same amount to loss
+            inv_freq /= torch.amin(inv_freq)
+            weights = inv_freq[self.class_id]
+        else:
+            # no weights
+            weights = torch.ones(size=(len(self),))
+
+        return weights
 
     def get_edge_indices(
-        self, edge_strategy: EdgeIndexStrategy, **kwargs
+        self,
+        edge_strategy: EdgeIndexStrategy,
+        chunk_size: int = _DEFAULT_CHUNK_SIZE,
+        threshold: int = _SENTINEL_THRESHOLD,
     ) -> list[torch.Tensor]:
         edge_indices: list[torch.Tensor] = list()
+        kwargs = dict()
         if edge_strategy == "sparse":
-            if "threshold" not in kwargs:
+            if threshold <= 1:
                 errmsg = (
                     f"Passed {edge_strategy=}, which requires the `threshold`"
-                    " arg for `create_sparse_graph`"
+                    " arg for `create_sparse_graph` to be >1"
                 )
                 raise ValueError(errmsg)
-
+            kwargs["threshold"] = threshold
             edge_create_fn = create_sparse_graph
         elif edge_strategy == "chunked":
-            if "chunk_size" not in kwargs:
-                errmsg = (
-                    f"Passed {edge_strategy=}, which requires the `chunk_size`"
-                    " arg for `create_chunked_graph`"
-                )
-                raise ValueError(errmsg)
-
+            kwargs["threshold"] = threshold
+            kwargs["chunk_size"] = chunk_size
             edge_create_fn = create_chunked_graph
         else:
-            kwargs = dict()
             edge_create_fn = create_fully_connected_graph
 
         for num_nodes in self.sizes:
@@ -178,49 +198,43 @@ def indices_to_genome_data_batch(
     return GenomeDataset.collate(batch)
 
 
+@dataclass
+class CVDataLoader:
+    train_loader: DataLoader
+    val_loader: DataLoader
+    train_group_ids: list[int]
+    val_group_id: int
+
+
+_KwargType = dict[str, Any]
+
+
 class GenomeDataModule(L.LightningDataModule):
     def __init__(
         self,
         file: FilePath,
         batch_size: int,
         edge_strategy: EdgeIndexStrategy = "chunked",
+        chunk_size: int = _DEFAULT_CHUNK_SIZE,
+        threshold: int = _SENTINEL_THRESHOLD,
+        log_inverse: bool = True,
         train_on_full: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
 
-        edge_strat_kwargs = self._prune_init_kwargs_for_edge_strategy(
-            edge_strategy, **kwargs
-        )
+        # shared / global dataloader kwargs, but they can still be updated
         self.dataloader_kwargs = kwargs
         self.dataset = GenomeDataset(
-            file=file, edge_strategy=edge_strategy, **edge_strat_kwargs
+            file=file,
+            edge_strategy=edge_strategy,
+            chunk_size=chunk_size,
+            threshold=threshold,
+            log_inverse=log_inverse,
         )
         self.batch_size = batch_size
         self.train_on_full = train_on_full
         self.save_hyperparameters()
-
-    @staticmethod
-    def _prune_init_kwargs_for_edge_strategy(
-        edge_strategy: EdgeIndexStrategy, **kwargs
-    ) -> dict[str, int]:
-        edge_strat_kwargs: dict[str, int] = dict()
-        if edge_strategy == "chunked":
-            defaults = {
-                "chunk_size": _DEFAULT_CHUNK_SIZE,
-                "threshold": _SENTINEL_THRESHOLD,
-            }
-        elif edge_strategy == "sparse":
-            defaults = {
-                "threshold": _DEFAULT_THRESHOLD,
-            }
-        else:
-            defaults = dict()
-
-        for key, default in defaults.items():
-            edge_strat_kwargs[key] = kwargs.pop(key, default)
-
-        return edge_strat_kwargs
 
     def _convert_data_indices_to_genome_data_batch(
         self, idx_batch: list[torch.Tensor]
@@ -242,40 +256,59 @@ class GenomeDataModule(L.LightningDataModule):
         elif stage == "predict":
             self.predict_dataset = self.dataset
 
-    def train_val_dataloaders(
-        self, **kwargs
-    ) -> Iterator[tuple[DataLoader, DataLoader]]:
+    def train_val_dataloaders(self, **kwargs) -> Iterator[CVDataLoader]:
+        train_kwargs, val_kwargs = self._split_train_val_kwargs(**kwargs)
         for train_idx, val_idx in self.data_manager.split():
+            train_group_ids = self.data_manager.train_group_ids
+            val_group_id = self.data_manager.val_group_id
             train_idx_dataset = SimpleTensorDataset(train_idx)
             val_idx_dataset = SimpleTensorDataset(val_idx)
             train_loader = DataLoader(
                 dataset=train_idx_dataset,
                 batch_size=self.batch_size,
                 collate_fn=self._convert_data_indices_to_genome_data_batch,
-                **kwargs,
+                **train_kwargs,
             )
             val_loader = DataLoader(
                 dataset=val_idx_dataset,
                 batch_size=self.batch_size,
                 collate_fn=self._convert_data_indices_to_genome_data_batch,
-                **kwargs,
+                **val_kwargs,
             )
-            yield train_loader, val_loader
+            cv_dataloader = CVDataLoader(
+                train_loader=train_loader,
+                val_loader=val_loader,
+                train_group_ids=train_group_ids,
+                val_group_id=val_group_id,
+            )
+            yield cv_dataloader
 
-    def simple_dataloader(self, dataset: GenomeDataset) -> DataLoader:
+    def _split_train_val_kwargs(self, **kwargs) -> tuple[_KwargType, _KwargType]:
+        train_kwargs = self._overwrite_dataloader_kwargs(**kwargs)
+        val_kwargs = copy(train_kwargs)
+        val_kwargs["shuffle"] = False
+        return train_kwargs, val_kwargs
+
+    def _overwrite_dataloader_kwargs(self, **kwargs) -> _KwargType:
+        # overwrite the shared/global dataloader kwargs with kwargs specifically input
+        # and then return a copy
+        return self.dataloader_kwargs | kwargs
+
+    def simple_dataloader(self, dataset: GenomeDataset, **kwargs) -> DataLoader:
+        kwargs = self._overwrite_dataloader_kwargs(**kwargs)
         dataloader = DataLoader(
             dataset=dataset,
             batch_size=self.batch_size,
             collate_fn=dataset.collate,
-            **self.dataloader_kwargs,
+            **kwargs,
         )
         return dataloader
 
-    def train_dataloader(self) -> DataLoader:
-        return self.simple_dataloader(self.train_dataset)
+    def train_dataloader(self, **kwargs) -> DataLoader:
+        return self.simple_dataloader(self.train_dataset, **kwargs)
 
-    def test_dataloader(self) -> DataLoader:
-        return self.simple_dataloader(self.test_dataset)
+    def test_dataloader(self, **kwargs) -> DataLoader:
+        return self.simple_dataloader(self.test_dataset, **kwargs)
 
-    def predict_dataloader(self) -> DataLoader:
-        return self.simple_dataloader(self.predict_dataset)
+    def predict_dataloader(self, **kwargs) -> DataLoader:
+        return self.simple_dataloader(self.predict_dataset, **kwargs)
