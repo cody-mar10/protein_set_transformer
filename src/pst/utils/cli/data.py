@@ -18,6 +18,7 @@ class DataArgs:
     edge_strategy: Literal["chunked", "sparse", "full"] = "chunked"
     chunk_size: Optional[int] = 30
     threshold: Optional[int] = -1
+    log_inverse: bool = False
 
 
 _DEFAULTS = DataArgs(file=_NONEXISTENT_FILE)
@@ -96,6 +97,11 @@ def add_data_args(parser: argparse.ArgumentParser):
             "(default: %(default)s which means don't prune by distance)"
         ),
     )
+    group.add_argument(
+        "--log-inverse",
+        action="store_true",
+        help="take the log of inverse class freqs as weights (default: %(default)s)",
+    )
 
 
 @asdict
@@ -109,4 +115,5 @@ def parse_data_args(args: argparse.Namespace) -> DataArgs:
         edge_strategy=args.edge_strategy,
         chunk_size=args.chunk_size,
         threshold=args.threshold,
+        log_inverse=args.log_inverse,
     )
