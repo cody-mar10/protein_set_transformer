@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import fields
 from datetime import timedelta
 from pathlib import Path
 from typing import Optional
@@ -149,13 +148,17 @@ class Trainer:
 
     @classmethod
     def from_cli_args(cls, args: Args):
-        kwargs = {
-            key: value for f in fields(args) for key, value in getattr(args, f.name)
-        }
-        kwargs.pop("predict")
-        kwargs.pop("mode")
+        instance = cls.from_kwargs(
+            model_kwargs=args.model,
+            data_kwargs=args.data,
+            optimizer_kwargs=args.optimizer,
+            loss_kwargs=args.loss,
+            augmentation_kwargs=args.augmentation,
+            trainer_kwargs=args.trainer,
+            experiment_kwargs=args.experiment,
+        )
 
-        return cls(**kwargs)
+        return instance
 
     @classmethod
     def from_kwargs(
