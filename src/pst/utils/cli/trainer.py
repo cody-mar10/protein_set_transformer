@@ -94,7 +94,7 @@ def add_trainer_args(parser: argparse.ArgumentParser):
     group.add_argument(
         "--strategy",
         metavar="",
-        choices={"ddp", "ddp_spawn", "ddp_notebook"},
+        choices={"ddp", "ddp_spawn", "ddp_notebook", "fsdp"},
         default=_DEFAULTS.strategy,
         help=(
             "parallelized training strategy (default: %(default)s) "
