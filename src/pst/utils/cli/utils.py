@@ -12,11 +12,7 @@ _DEFAULTS: dict[str, dict[str, Any]] = dict()
 
 
 def register_defaults(defaults, key: str):
-    if is_dataclass(defaults):
-        _DEFAULTS[key] = dc_asdict(defaults)
-    raise ValueError(
-        f"Input type {type(defaults)} is not a dataclasses.dataclass instance"
-    )
+    _DEFAULTS[key] = dc_asdict(defaults)
 
 
 def get_defaults(key: str) -> dict[str, Any]:
