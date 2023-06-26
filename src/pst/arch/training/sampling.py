@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Optional
 
 import torch
 
 from pst._typing import FlowType
+from pst.utils.cli import NO_NEGATIVES_MODES
 
 from .distance import pairwise_chamfer_distance
 
@@ -35,9 +36,6 @@ def positive_sampling(
     return pos_sample_idx
 
 
-_NO_NEGATIVES_MODES = Literal["closest_to_positive", "closest_to_anchor"]
-
-
 def _semi_hard_negative_sampling(
     dist_from_pos: torch.Tensor, pos_idx: torch.Tensor, batch_size: Optional[int] = None
 ) -> torch.Tensor:
@@ -65,7 +63,7 @@ def negative_sampling(
     *,
     pos_idx: Optional[torch.Tensor] = None,
     scale: float = 7.0,
-    no_negatives_mode: _NO_NEGATIVES_MODES = "closest_to_positive",
+    no_negatives_mode: NO_NEGATIVES_MODES = "closest_to_positive",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if Y is None:
         # this chooses the neg sample from the real dataset

@@ -142,6 +142,7 @@ class ProteinSetTransformer(L.LightningModule):
             X=y_anchor,
             pos_idx=pos_idx,
             scale=scale,
+            no_negatives_mode=self.augmentation_kwargs["no_negatives_mode"],
         )
 
         y_pos = y_anchor[pos_idx]
