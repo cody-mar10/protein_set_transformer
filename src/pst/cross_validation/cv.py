@@ -12,10 +12,8 @@ LongArray = TypeVar("LongArray", Int64Array, torch.Tensor)
 
 class ImbalancedGroupKFold(Generic[LongArray]):
     def __init__(self, groups: LongArray) -> None:
-        if isinstance(groups, torch.Tensor):
-            self.index_fn = torch.arange
-        elif isinstance(groups, np.ndarray):
-            self.index_fn = np.arange
+        self.val_group_id = -1
+        self.train_group_ids: list[int] = list()
 
         # send outputs as the same tensor type as input
         self.X_idx = self.get_X_index(groups)
@@ -34,8 +32,12 @@ class ImbalancedGroupKFold(Generic[LongArray]):
         self.largest_group_id = np.argmax(self.group_counts)
 
     def get_X_index(self, groups: LongArray) -> LongArray:
+        if isinstance(groups, torch.Tensor):
+            index_fn = torch.arange
+        elif isinstance(groups, np.ndarray):
+            index_fn = np.arange
         n = groups.shape[0]
-        return cast(LongArray, self.index_fn(n))
+        return cast(LongArray, index_fn(n))
 
     def _sort_groups(self):
         # reverse sort, ie 0th element is count of most frequent group
@@ -53,6 +55,12 @@ class ImbalancedGroupKFold(Generic[LongArray]):
                 # we don't want a fold where teh most frequent group
                 # is the validation set
                 continue
+
+            # keep track of current CV group id and the training groups
+            self.val_group_id = group_id
+            self.train_group_ids = self.uniq_groups[
+                np.where(self.uniq_groups != group_id)
+            ].tolist()
 
             val_mask = np.where(self.groups == group_id, True, False)
             train_mask = ~val_mask
