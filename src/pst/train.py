@@ -20,6 +20,7 @@ from pst.arch import EdgeIndexStrategy, GenomeDataModule, ProteinSetTransformer
 from pst.cross_validation import CrossValEventSummarizer, CVStatusLogger
 from pst.utils.cli import (
     _KWARG_TYPE,
+    NO_NEGATIVES_MODES,
     AcceleratorOpts,
     AnnealingOpts,
     Args,
@@ -78,6 +79,7 @@ class Trainer:
         # augmentation kwargs
         sample_scale: float = 7.0,
         sample_rate: float = 0.5,
+        no_negatives_mode: NO_NEGATIVES_MODES = "closest_to_positive",
         **trainer_kwargs,
     ) -> None:
         self.data_kwargs: _KWARG_TYPE = dict(
@@ -97,6 +99,7 @@ class Trainer:
         self.augmentation_kwargs = dict(
             sample_rate=sample_rate,
             sample_scale=sample_scale,
+            no_negatives_mode=no_negatives_mode,
         )
         self.optimizer_kwargs: _KWARG_TYPE = dict(
             lr=lr,
