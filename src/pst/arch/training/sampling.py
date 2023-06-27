@@ -180,6 +180,7 @@ def point_swap_sampling(
     # as defined by randomly sampling among the available flow
     # for set i and set j comparisons
     point_swap_indices: list[torch.Tensor] = list()
+    device = pos_idx.device
     for i, j in enumerate(pos_idx):
         j = int(j)
 
@@ -189,14 +190,14 @@ def point_swap_sampling(
 
         pos_item_idx = item_flow[i, j] + j_offset
         n_items = pos_item_idx.shape[0]
-        anchor_idx = torch.arange(n_items) + i_offset
+        anchor_idx = torch.arange(n_items, device=device) + i_offset
 
         # sample from uniform [0, 1) distribution
-        choices = torch.rand(n_items) >= sample_rate
+        choices = torch.rand(n_items, device=device) >= sample_rate
         point_swap_idx = torch.where(choices, pos_item_idx, anchor_idx)
         point_swap_indices.append(point_swap_idx)
 
-    point_swap_index = torch.cat(point_swap_indices)
+    point_swap_index = torch.cat(point_swap_indices).to(device=device)
     augmented_batch = batch[point_swap_index]
     return augmented_batch
 
