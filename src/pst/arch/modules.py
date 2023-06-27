@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Any, Iterator, Literal, cast
 
 import lightning as L
 import torch
+from torch.nn.parameter import Parameter
 from transformers import get_linear_schedule_with_warmup
 
 from pst._typing import DataBatch, OptionalAttentionOutput
@@ -45,6 +46,7 @@ class ProteinSetTransformer(L.LightningModule):
             multiplier=multiplier,
             dropout=dropout,
         )
+        self.model.parameters()
 
         if compile:
             self.model = torch.compile(self.model)
@@ -53,9 +55,12 @@ class ProteinSetTransformer(L.LightningModule):
         self.optimizer_kwargs = optimizer_kwargs
         self.augmentation_kwargs = augmentation_kwargs
 
+    def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
+        return self.model.parameters(recurse=recurse)
+
     def configure_optimizers(self) -> dict[str, Any]:
         optimizer = torch.optim.AdamW(
-            params=self.model.parameters(),
+            params=self.trainer.model.parameters(),  # type: ignore
             lr=self.optimizer_kwargs["lr"],
             betas=self.optimizer_kwargs["betas"],
             weight_decay=self.optimizer_kwargs["weight_decay"],
