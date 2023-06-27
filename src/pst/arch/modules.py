@@ -46,7 +46,6 @@ class ProteinSetTransformer(L.LightningModule):
             multiplier=multiplier,
             dropout=dropout,
         )
-        self.model.parameters()
 
         if compile:
             self.model = torch.compile(self.model)
