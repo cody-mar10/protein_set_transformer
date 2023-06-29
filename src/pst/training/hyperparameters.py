@@ -103,7 +103,3 @@ class HyperparameterRegistryMixin:
         self._hparams["sample_rate"] = self._trial.suggest_float(
             "sample_rate", low=0.25, high=0.75
         )
-
-
-# x = Hyperparameter.from_value(value=1.2, value_range=(0.0, 5.0), tunable=True)
-# y = Hyperparameter.from_value(value="A", categories=["A", "B", "C"])
