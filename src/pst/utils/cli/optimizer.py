@@ -29,14 +29,14 @@ def add_optimizer_args(parser: argparse.ArgumentParser):
         help="learning rate (default: %(default)s)",
     )
     group.add_argument(
-        "--weight_decay",
+        "--weight-decay",
         metavar="FLOAT",
         type=float,
         default=_DEFAULTS.weight_decay,
         help="optimizer weight decay (default: %(default)s)",
     )
     group.add_argument(
-        "--warmup_steps",
+        "--warmup-steps",
         metavar="INT",
         type=int,
         default=_DEFAULTS.warmup_steps,

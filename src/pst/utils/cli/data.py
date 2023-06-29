@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, get_args
 
 from .utils import _NONEXISTENT_FILE, asdict, register_defaults, register_handler
+
+EdgeIndexStrategy = Literal["chunked", "sparse", "full"]
 
 
 @dataclass
@@ -15,7 +17,7 @@ class DataArgs:
     train_on_full: bool = False
     num_workers: int = 0
     pin_memory: bool = True
-    edge_strategy: Literal["chunked", "sparse", "full"] = "chunked"
+    edge_strategy: EdgeIndexStrategy = "chunked"
     chunk_size: Optional[int] = 30
     threshold: Optional[int] = -1
     log_inverse: bool = False
@@ -30,7 +32,7 @@ def add_data_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("DATA ARGS")
     group.add_argument(
         "-d",
-        "--data_file",
+        "--data-file",
         metavar="FILE",
         type=Path,
         required=True,
@@ -38,21 +40,21 @@ def add_data_args(parser: argparse.ArgumentParser):
     )
     group.add_argument(
         "-b",
-        "--batch_size",
+        "--batch-size",
         metavar="INT",
         type=int,
         default=_DEFAULTS.batch_size,
         help="batch size (default: %(default)s)",
     )
     group.add_argument(
-        "--num_workers",
+        "--num-workers",
         metavar="INT",
         type=int,
         default=_DEFAULTS.num_workers,
         help="additional cpu workers to load data (default: %(default)s)",
     )
     group.add_argument(
-        "--no-pin_memory",
+        "--no-pin-memory",
         action="store_true",
         help="whether to pin memory onto a CUDA GPU (default: %(default)s)",
     )
@@ -66,19 +68,19 @@ def add_data_args(parser: argparse.ArgumentParser):
         ),
     )
     group.add_argument(
-        "--edge_strategy",
+        "--edge-strategy",
         metavar="",
-        choices={"chunked", "full", "sparse"},
+        choices=get_args(EdgeIndexStrategy),
         default=_DEFAULTS.edge_strategy,
         help=(
             "strategy to create 'edges' between protein nodes in a genome graph. "
-            "chunked = split genomes in --chunk_size chunks. sparse = remove "
+            "chunked = split genomes in --chunk-size chunks. sparse = remove "
             "interactions longer than --threshold. full = fully connected graph "
             "like a regular transformer. (default: %(default)s) [choices: %(choices)s]"
         ),
     )
     group.add_argument(
-        "--chunk_size",
+        "--chunk-size",
         metavar="INT",
         type=int,
         default=_DEFAULTS.chunk_size,

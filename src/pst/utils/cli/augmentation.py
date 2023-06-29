@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, get_args
 
 from .utils import asdict, register_defaults, register_handler
 
@@ -24,7 +24,7 @@ register_defaults(_DEFAULTS, "augmentation")
 def add_augmentation_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("AUGMENTATION ARGS")
     group.add_argument(
-        "--sample_scale",
+        "--sample-scale",
         metavar="FLOAT",
         type=float,
         default=_DEFAULTS.sample_scale,
@@ -34,7 +34,7 @@ def add_augmentation_args(parser: argparse.ArgumentParser):
         ),
     )
     group.add_argument(
-        "--sample_rate",
+        "--sample-rate",
         metavar="FLOAT",
         type=float,
         default=_DEFAULTS.sample_rate,
@@ -43,11 +43,11 @@ def add_augmentation_args(parser: argparse.ArgumentParser):
     group.add_argument(
         "--no-negatives-mode",
         metavar="",
-        choices={"closest_to_positive", "closest_to_anchor"},
+        choices=get_args(NO_NEGATIVES_MODES),
         default=_DEFAULTS.no_negatives_mode,
         help=(
             "mode to handle event of no semihard negative sample existing "
-            "(default: %(default)s)"
+            "(default: %(default)s) [choices: %(choices)s]"
         ),
     )
 
