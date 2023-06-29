@@ -4,5 +4,6 @@ dist/
 test/
 *_kernels/
 *lightning_logs/
+*lightning_root/
 *.ipynb
 .vscode/
