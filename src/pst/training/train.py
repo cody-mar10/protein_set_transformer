@@ -13,6 +13,7 @@ from lightning.pytorch.callbacks import (
     Timer,
 )
 from lightning.pytorch.loggers import TensorBoardLogger
+from optuna import TrialPruned
 from torch.utils.data import DataLoader
 
 from pst.arch import EdgeIndexStrategy, GenomeDataModule, ProteinSetTransformer
@@ -29,7 +30,7 @@ from pst.utils.cli import (
 )
 
 
-class Trainer:
+class CrossValidationTrainer:
     # TODO: all defaults can be gotten from cli.py technically
     def __init__(
         self,
@@ -65,6 +66,8 @@ class Trainer:
         gradient_clip_algorithm: Optional[GradClipAlgOpts] = None,
         gradient_clip_val: Optional[float] = None,
         max_time: Optional[timedelta] = None,
+        limit_train_batches: Optional[int | float] = None,
+        limit_val_batches: Optional[int | float] = None,
         # experiment kwargs
         name: str = "exp0",
         patience: int = 5,
@@ -92,7 +95,6 @@ class Trainer:
             threshold=threshold,
             log_inverse=log_inverse,
         )
-        self.load_datamodule(**self.data_kwargs)
 
         self.loss_kwargs = {"margin": margin}
         self.augmentation_kwargs = dict(
@@ -108,7 +110,7 @@ class Trainer:
         )
 
         self.model_kwargs: _KWARG_TYPE = dict(
-            in_dim=self.datamodule.dataset.feature_dim,
+            # in_dim=self.datamodule.dataset.feature_dim,
             out_dim=out_dim,
             num_heads=num_heads,
             n_enc_layers=n_enc_layers,
@@ -129,6 +131,8 @@ class Trainer:
             strategy=strategy,
             gradient_clip_algorithm=gradient_clip_algorithm,
             gradient_clip_val=gradient_clip_val,
+            limit_train_batches=limit_train_batches,
+            limit_val_batches=limit_val_batches,
             **trainer_kwargs,
         )
         # keep separately to use as a callback
@@ -145,6 +149,11 @@ class Trainer:
                 annealing_strategy=annealing_strategy,
             ),
         )
+
+        # hold callback constructors to be created each fold
+        self._callbacks: list[tuple[type[L.Callback], _KWARG_TYPE]] = list()
+        # populate with a default set of callbacks
+        self.default_callbacks()
 
     @classmethod
     def from_cli_args(cls, args: Args):
@@ -182,40 +191,43 @@ class Trainer:
         )
         return cls(**kwargs)
 
-    def trainer_callbacks(self, num_folds: Optional[int] = None) -> list[L.Callback]:
-        callbacks: list[L.Callback] = list()
+    def register_callback(self, callback: type[L.Callback], **kwargs):
+        callback_constructor = (callback, kwargs)
+        self._callbacks.append(callback_constructor)
 
-        if num_folds is not None and self.max_time is not None:
-            max_time = self.max_time / num_folds
-        else:
-            max_time = self.max_time
-
-        callbacks.append(Timer(duration=max_time))
-
-        callbacks.append(
-            ModelCheckpoint(
-                monitor="val_loss",
-                save_top_k=self.experiment_kwargs["save_top_k"],
-                every_n_epochs=1,
-                save_last=True,
-                filename="{epoch}-{step}-{val_loss:.3f}",
-            )
+    def default_callbacks(self):
+        self.register_callback(
+            ModelCheckpoint,
+            monitor="val_loss",
+            save_top_k=self.experiment_kwargs["save_top_k"],
+            every_n_epochs=1,
+            save_last=True,
+            filename="{epoch}-{step}-{val_loss:.3f}",
         )
-        callbacks.append(
-            EarlyStopping(
+        self.register_callback(LearningRateMonitor, logging_interval="step")
+
+        # TODO: make this optional
+        # TODO: add tuning arg
+        # actual prob don't need this
+        if self.experiment_kwargs.get("early_stopping", False):
+            self.register_callback(
+                EarlyStopping,
                 monitor="val_loss",
                 min_delta=0.0,
                 patience=self.experiment_kwargs["patience"],
             )
-        )
-        callbacks.append(LearningRateMonitor(logging_interval="step"))
+
         if self.experiment_kwargs["swa"]:
-            callbacks.append(
-                StochasticWeightAveraging(
-                    swa_lrs=self.optimizer_kwargs["lr"],
-                    **self.experiment_kwargs["swa_kwargs"],
-                )
+            self.register_callback(
+                StochasticWeightAveraging,
+                swa_lrs=self.optimizer_kwargs["lr"],
+                **self.experiment_kwargs["swa_kwargs"],
             )
+
+    def trainer_callbacks(self) -> list[L.Callback]:
+        callbacks = [
+            callback(**kwargs) for callback, kwargs in self._callbacks  # type: ignore
+        ]
 
         return callbacks
 
@@ -235,18 +247,89 @@ class Trainer:
             model=model, train_dataloaders=train_loader, val_dataloaders=val_loader
         )
 
-    def train_with_cross_validation(self):
+    def on_train_with_cross_validation_start(self):
+        # TODO: maybe register hyperparams?
+        self.load_datamodule(**self.data_kwargs)
+        self._cv_scores: list[float] = list()
+
+    def on_fold_training_start(self):
+        pass
+
+    def on_before_trainer_init(
+        self,
+        callbacks: list[L.Callback],
+        fold_idx: int,
+        train_group_ids: list[int],
+        val_group_id: int,
+    ):
+        cv_status_logger_callback = CVStatusLogger(
+            fold_idx=fold_idx,
+            train_group_ids=train_group_ids,
+            val_group_id=val_group_id,
+        )
+        self.add_callback_during_fold(callbacks, cv_status_logger_callback)
+
+    def on_after_trainer_init(self, trainer: L.Trainer):
+        """Called immediately before the actual training loop is called"""
+        pass
+
+    def on_fold_training_end(self, trainer: L.Trainer):
+        # this is the val loss of the final epoch, maybe should look into other epocs,
+        # ie best epoch
+        val_loss: float = trainer.callback_metrics["val_loss"].item()
+        self._cv_scores.append(val_loss)
+
+    def on_train_with_cross_validation_end(self, was_pruned: bool) -> float:
+        if not was_pruned:
+            exp_name = self.experiment_kwargs["name"]
+            print(
+                f"Cross validation experiment {exp_name} finished. "
+                f"Summarizing validation loss per epoch per fold in log dir."
+            )
+            self.summarize_cross_validation()
+        else:
+            # don't try to summarize if trial is pruned
+            print("Trial was pruned")
+        avg_val_loss: float = float("inf")
+        if self._cv_scores:
+            avg_val_loss = sum(self._cv_scores) / len(self._cv_scores)
+        return avg_val_loss
+
+    def add_callback_during_fold(
+        self, callbacks: list[L.Callback], addition: L.Callback
+    ):
+        """Add a `lightning.Callback` instance during the CV-training loop.
+
+        Args:
+            callbacks (list[L.Callback]): list of `lightning.Callback` instances
+            addition (L.Callback): new `L.Callback` instance.
+        """
+        callbacks.append(addition)
+
+    def train_with_cross_validation(self) -> float:
+        self.on_train_with_cross_validation_start()
         # will only apply shuffling to training dataloader and NOT val dataloader
         dataloaders = self.datamodule.train_val_dataloaders(shuffle=True)
+        num_folds = self.datamodule.data_manager.n_folds
 
+        # adjust max time since that is max time for a single fold
+        if self.max_time is not None:
+            duration = self.max_time / num_folds
+            self.register_callback(Timer, duration=duration)
+
+        in_dim = self.datamodule.dataset.feature_dim
+
+        was_pruned = False
         for fold_idx, cv_dataloader in enumerate(dataloaders):
+            self.on_fold_training_start()
+
             train_loader = cv_dataloader.train_loader
             val_loader = cv_dataloader.val_loader
             train_group_ids = cv_dataloader.train_group_ids
             val_group_id = cv_dataloader.val_group_id
 
             enable_model_summary = fold_idx == 0
-            model = ProteinSetTransformer(**self.model_kwargs)
+            model = ProteinSetTransformer(in_dim=in_dim, **self.model_kwargs)
 
             logger = TensorBoardLogger(
                 save_dir=self.trainer_kwargs["default_root_dir"],
@@ -254,13 +337,13 @@ class Trainer:
                 version=fold_idx,
                 default_hp_metric=False,
             )
+
             callbacks = self.trainer_callbacks()
-            callbacks.append(
-                CVStatusLogger(
-                    fold_idx=fold_idx,
-                    train_group_ids=train_group_ids,
-                    val_group_id=val_group_id,
-                )
+            self.on_before_trainer_init(
+                callbacks=callbacks,
+                fold_idx=fold_idx,
+                train_group_ids=train_group_ids,
+                val_group_id=val_group_id,
             )
             trainer = L.Trainer(
                 callbacks=callbacks,
@@ -270,19 +353,22 @@ class Trainer:
                 enable_model_summary=enable_model_summary,
                 **self.trainer_kwargs,
             )
-            self.train(
-                trainer=trainer,
-                model=model,
-                train_loader=train_loader,
-                val_loader=val_loader,
-            )
 
-        exp_name = self.experiment_kwargs["name"]
-        print(
-            f"Cross validation experiment {exp_name} finished. "
-            f"Summarizing validation loss per epoch per fold in log dir."
-        )
-        self.summarize_cross_validation()
+            self.on_after_trainer_init(trainer)
+            try:
+                self.train(
+                    trainer=trainer,
+                    model=model,
+                    train_loader=train_loader,
+                    val_loader=val_loader,
+                )
+            except TrialPruned:
+                # if one fold is pruned, just cancel entire thing
+                # since we want a good trial for all folds
+                was_pruned = True
+                break
+            self.on_fold_training_end(trainer)
+        return self.on_train_with_cross_validation_end(was_pruned)
 
     def summarize_cross_validation(self):
         cv_summarizer = CrossValEventSummarizer(
