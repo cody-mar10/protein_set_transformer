@@ -2,9 +2,16 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from typing import Literal
+from functools import partial
+from typing import Literal, get_args
 
-from .utils import asdict, register_defaults, register_handler
+from .utils import (
+    asdict,
+    parse_int_or_float_arg,
+    register_defaults,
+    register_handler,
+    validate_proportion_range,
+)
 
 AnnealingOpts = Literal["linear", "cos"]
 
@@ -18,6 +25,10 @@ class ExperimentArgs:
     swa_epoch_start: int | float = 0.8
     annealing_epochs: int = 10
     annealing_strategy: AnnealingOpts = "linear"
+    tune: bool = True
+    n_trials: int = 100
+    prune: bool = True
+    parallel: bool = False
 
 
 _DEFAULTS = ExperimentArgs()
@@ -48,16 +59,50 @@ def add_experiment_args(parser: argparse.ArgumentParser):
         help="save the best k models (default: %(default)s)",
     )
 
+    # TUNING ARGS
+    group.add_argument(
+        "--no-tune",
+        action="store_true",
+        help="don't use hyperparameter sampling/tuning during training (default: %(default)s)",  # noqa: E501
+    )
+    group.add_argument(
+        "--n-trials",
+        metavar="INT",
+        type=int,
+        default=_DEFAULTS.n_trials,
+        help="number of tuning trials is tuning (default: %(default)s)",
+    )
+    group.add_argument(
+        "--no-prune",
+        action="store_true",
+        help="don't use early pruning during tuning for bad hyperparameter sets (default: %(default)s)",  # noqa: E501
+    )
+    group.add_argument(
+        "--parallel",
+        action="store_true",
+        help=(
+            "if multiple GPUs are available, run tuning trials in parallel "
+            "determined by the number of GPUs requested (default: %(default)s)"
+        ),
+    )
+
     ### SWA args
     group.add_argument(
         "--swa",
         action="store_true",
         help="use stochastic weight averaging (default: %(default)s)",
     )
+
+    range_check = partial(
+        validate_proportion_range, left_inclusive=False, right_inclusive=False
+    )
+    parse_int_or_float_arg_with_range_check = partial(
+        parse_int_or_float_arg, float_predicate=range_check
+    )
     group.add_argument(
         "--swa-epoch-start",
         metavar="INT|FLOAT",
-        type=lambda x: int(x) if x.isdigit() else float(x),
+        type=parse_int_or_float_arg_with_range_check,
         default=_DEFAULTS.swa_epoch_start,
         help=(
             "when to start SWA if enabled. Integers are an epoch number, "
@@ -79,7 +124,7 @@ def add_experiment_args(parser: argparse.ArgumentParser):
         "--annealing-strategy",
         metavar="",
         default=_DEFAULTS.annealing_strategy,
-        choices={"linear", "cos"},
+        choices=get_args(AnnealingOpts),
         help=(
             "annealing strategy using during swa if enabled "
             "(default: %(default)s) [choices: %(choices)s]"
@@ -93,6 +138,10 @@ def parse_experiment_args(args: argparse.Namespace) -> ExperimentArgs:
         name=args.exp_name,
         patience=args.patience,
         save_top_k=args.save_top_k,
+        tune=not args.no_tune,
+        n_trials=args.n_trials,
+        prune=not args.no_prune,
+        parallel=args.parallel,
         swa=args.swa,
         swa_epoch_start=args.swa_epoch_start,
         annealing_epochs=args.annealing_epochs,
