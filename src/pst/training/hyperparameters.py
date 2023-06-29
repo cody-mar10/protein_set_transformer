@@ -40,7 +40,10 @@ class HyperparameterRegistryMixin:
         self._hparams["n_enc_layers"] = complexity_values.n_enc_layers
 
         self._hparams["multiplier"] = self._trial.suggest_float(
-            "multiplier", low=1e-2, high=10.0
+            "multiplier",
+            low=0.5,
+            high=10.0,
+            log=True,
         )
         self._hparams["dropout"] = self._trial.suggest_float(
             "dropout", low=0.0, high=0.5
