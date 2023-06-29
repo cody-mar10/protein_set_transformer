@@ -23,6 +23,7 @@ dependencies = [
     "torch_geometric",
     "pandas",
     "more-itertools",
+    "optuna",
 ]
 
 [project.scripts]
