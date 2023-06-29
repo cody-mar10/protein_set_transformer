@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
-from typing import Any, Literal
+from dataclasses import dataclass, fields
+from typing import Any, Literal, Optional, Sequence, get_args
 
 from .augmentation import parse_augmentation_args
 from .data import parse_data_args
@@ -16,6 +16,8 @@ from .utils import _ARGPARSE_HANDLERS
 
 _KWARG_TYPE = dict[str, Any]
 
+RuntimeModes = Literal["train", "test", "predict"]
+
 
 @dataclass
 class Args:
@@ -27,7 +29,7 @@ class Args:
     experiment: _KWARG_TYPE
     optimizer: _KWARG_TYPE
     predict: _KWARG_TYPE
-    mode: Literal["train", "test", "predict"]
+    mode: RuntimeModes
 
     @classmethod
     def from_argparse(cls, args: argparse.Namespace):
@@ -43,6 +45,25 @@ class Args:
             mode=args.mode,
         )
 
+    def flatten(self, ignore: Optional[Sequence[str] | str] = None) -> _KWARG_TYPE:
+        # always ignore the mode arg
+        if ignore is None:
+            ignore_set: set[str] = set()
+        elif isinstance(ignore, str):
+            ignore_set = {ignore}
+        else:
+            ignore_set = set(ignore)
+
+        ignore_set.add("mode")
+
+        kwargs: _KWARG_TYPE = {
+            key: value
+            for field in fields(self)
+            if field.name not in ignore_set
+            for key, value in getattr(self, field.name).items()
+        }
+        return kwargs
+
 
 def parse_args() -> Args:
     parser = argparse.ArgumentParser(
@@ -54,7 +75,7 @@ def parse_args() -> Args:
     parser.add_argument(
         "--mode",
         metavar="",
-        choices={"train", "predict", "test"},
+        choices=get_args(RuntimeModes),
         default="train",
         help="model mode (default: %(default)s) [choices: %(choices)s]",
     )
