@@ -3,14 +3,21 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from datetime import timedelta
+from functools import partial
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, get_args
 
-from .utils import asdict, register_defaults, register_handler
+from .utils import (
+    asdict,
+    parse_int_or_float_arg,
+    register_defaults,
+    register_handler,
+    validate_proportion_range,
+)
 
 AcceleratorOpts = Literal["cpu", "gpu", "tpu", "auto"]
-PrecisionOpts = Literal["16-mixed", "bf16-mixed", 32, "32"]
-StrategyOpts = Literal["ddp", "ddp_spawn", "ddp_notebook", "fsdp"]
+PrecisionOpts = Literal["16-mixed", "bf16-mixed", "32"]
+StrategyOpts = Literal["ddp", "ddp_spawn", "ddp_notebook", "fsdp", "auto"]
 GradClipAlgOpts = Literal["norm", "value"]
 MaxTimeOpts = Literal["short", "medium", "long", None]
 
@@ -27,6 +34,8 @@ class TrainerArgs:
     gradient_clip_algorithm: Optional[GradClipAlgOpts] = None
     gradient_clip_val: Optional[float] = None
     max_time: Optional[timedelta] = None
+    limit_train_batches: Optional[int | float] = None
+    limit_val_batches: Optional[int | float] = None
 
 
 _DEFAULTS = TrainerArgs()
@@ -73,19 +82,19 @@ def add_trainer_args(parser: argparse.ArgumentParser):
     group.add_argument(
         "--accelerator",
         metavar="DEVICE",
-        choices={"cpu", "gpu", "tpu", "auto"},
+        choices=get_args(AcceleratorOpts),
         default=_DEFAULTS.accelerator,
         help="accelerator to use (default: %(default)s) [choices: %(choices)s]",
     )
     group.add_argument(
-        "--default_root_dir",
+        "--default-root-dir",
         metavar="DIR",
         type=Path,
         default=_DEFAULTS.default_root_dir,
         help="lightning root dir for model checkpointing (default: %(default)s)",
     )
     group.add_argument(
-        "--max_epochs",
+        "--max-epochs",
         metavar="INT",
         type=int,
         default=_DEFAULTS.max_epochs,
@@ -94,7 +103,7 @@ def add_trainer_args(parser: argparse.ArgumentParser):
     group.add_argument(
         "--strategy",
         metavar="",
-        choices={"ddp", "ddp_spawn", "ddp_notebook", "fsdp"},
+        choices=get_args(StrategyOpts),
         default=_DEFAULTS.strategy,
         help=(
             "parallelized training strategy (default: %(default)s) "
@@ -104,15 +113,14 @@ def add_trainer_args(parser: argparse.ArgumentParser):
     group.add_argument(
         "--precision",
         metavar="",
-        choices={"16-mixed", 32, "bf16-mixed"},
+        choices=get_args(PrecisionOpts),
         default=_DEFAULTS.precision,
-        type=lambda x: int(x) if x.isdigit() else x,
         help="floating point precision (default: %(default)s) [choices: %(choices)s]",
     )
     group.add_argument(
         "--gradient-clip-algorithm",
         metavar="",
-        choices={"norm", "value"},
+        choices=get_args(GradClipAlgOpts),
         help=(
             "optional procedure to clip gradients during (default: %(default)s) "
             "[choices: %(choices)s]"
@@ -127,11 +135,41 @@ def add_trainer_args(parser: argparse.ArgumentParser):
     group.add_argument(
         "--max-time",
         metavar="",
-        choices={"short", "medium", "long", None, "None"},
+        choices=get_args(MaxTimeOpts),
+        type=lambda x: None if x in ("None", "none") else x,
         default=_DEFAULTS.max_time,
         help=(
             "maximum amount of time for training (default: %(default)s) "
             "[choices: short=12h, medium=1d, long=7d, None=no limit]"
+        ),
+    )
+
+    range_check = partial(
+        validate_proportion_range, left_inclusive=False, right_inclusive=True
+    )
+    parse_int_or_float_arg_with_float_range_check = partial(
+        parse_int_or_float_arg, float_predicate=range_check
+    )
+    group.add_argument(
+        "--limit-train-batches",
+        metavar="INT|FLOAT",
+        type=parse_int_or_float_arg_with_float_range_check,
+        default=_DEFAULTS.limit_train_batches,
+        help=(
+            "optional limit to number of training batches. An integer means "
+            "train with that number of training batches, while a float between "
+            "(0.0, 1.0] (default: %(default)s)"
+        ),
+    )
+    group.add_argument(
+        "--limit-val-batches",
+        metavar="INT|FLOAT",
+        type=parse_int_or_float_arg_with_float_range_check,
+        default=_DEFAULTS.limit_val_batches,
+        help=(
+            "optional limit to number of validation batches. An integer means "
+            "train with that number of validation batches, while a float between "
+            "(0.0, 1.0] (default: %(default)s)"
         ),
     )
 
@@ -148,6 +186,8 @@ def parse_trainer_args(args: argparse.Namespace) -> TrainerArgs:
         gradient_clip_algorithm=args.gradient_clip_algorithm,
         gradient_clip_val=args.gradient_clip_val,
         max_time=_convert_max_time(args.max_time),
+        limit_train_batches=args.limit_train_batches,
+        limit_val_batches=args.limit_val_batches,
     )
 
     return targs
