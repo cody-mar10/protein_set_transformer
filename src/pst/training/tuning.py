@@ -150,7 +150,12 @@ def optimize(
     ):
         # in distributed training case, even with multi-gpu single node
         # cannot use the default InMemoryStorage. Instead, use a sqlite db
-        storage = f"sqlite:///{logdir}/tuning.db"
+        dbname = "tuning.db"
+        dbpath = logdir.joinpath(dbname)
+
+        # also the logdir must exist
+        logdir.mkdir(parents=True, exist_ok=True)
+        storage = f"sqlite:///{dbpath}"
     else:
         # defaults back to InMemoryStorage
         storage = None
