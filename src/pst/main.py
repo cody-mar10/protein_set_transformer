@@ -3,8 +3,7 @@ from __future__ import annotations
 import lightning as L
 import torch
 
-import pst
-from pst import CrossValidationTrainer, Predictor
+from pst import CrossValidationTrainer, FullTrainer, Predictor, training
 from pst.utils.cli import Args, parse_args
 
 _SEED = 111
@@ -17,9 +16,13 @@ def train_main(args: Args):
     parallel = args.experiment.pop("parallel")
     if tune:
         cv_trainer_kwargs = args.flatten(ignore="predict")
-        pst.training.optimize(
+        training.optimize(
             n_trials=n_trials, prune=prune, parallel=parallel, **cv_trainer_kwargs
         )
+    elif args.data["train_on_full"]:
+        args.data["shuffle"] = False
+        trainer = FullTrainer.from_cli_args(args)
+        trainer.train()
     else:
         L.seed_everything(_SEED)
         trainer = CrossValidationTrainer.from_cli_args(args)

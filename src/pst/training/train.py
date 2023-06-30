@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from datetime import timedelta
 from pathlib import Path
 from typing import Optional
@@ -30,7 +31,7 @@ from pst.utils.cli import (
 )
 
 
-class CrossValidationTrainer:
+class BaseTrainer(ABC):
     # TODO: all defaults can be gotten from cli.py technically
     def __init__(
         self,
@@ -236,6 +237,12 @@ class CrossValidationTrainer:
         self.datamodule.prepare_data()
         self.datamodule.setup("fit")
 
+    @abstractmethod
+    def train(self):
+        ...
+
+
+class CrossValidationTrainer(BaseTrainer):
     def train(
         self,
         trainer: L.Trainer,
@@ -381,3 +388,34 @@ class CrossValidationTrainer:
             metric="val_loss",
             step="epoch",
         )
+
+
+class FullTrainer(BaseTrainer):
+    def __init__(self, **kwargs):
+        kwargs["train_on_full"] = True
+        super().__init__(**kwargs)
+        self.init_trainer()
+        self.load_datamodule(**self.data_kwargs)
+        self.init_model()
+
+    def init_trainer(self):
+        callbacks = self.trainer_callbacks()
+        logger = TensorBoardLogger(
+            save_dir=self.trainer_kwargs["default_root_dir"],
+            name=self.experiment_kwargs["name"],
+            default_hp_metric=False,
+        )
+        self.trainer = L.Trainer(
+            callbacks=callbacks,
+            logger=logger,
+            log_every_n_steps=1,
+            num_sanity_val_steps=0,
+            **self.trainer_kwargs,
+        )
+
+    def init_model(self):
+        in_dim = self.datamodule.dataset.feature_dim
+        self.model = ProteinSetTransformer(in_dim=in_dim, **self.model_kwargs)
+
+    def train(self):
+        self.trainer.fit(model=self.model, datamodule=self.datamodule)
