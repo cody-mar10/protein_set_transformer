@@ -135,12 +135,22 @@ def optimize(
         cv_trainer_kwargs["accelerator"] == "gpu" or torch.cuda.is_available()
     )
 
+    # change default_root_dir to include the original expt name
+    # then during the training for each trial, the expt name will be changed
+    # to the trial number, and each trial trains for n CV folds called
+    # version_0...version_n, thus the overall dir structure is:
+    # rootdir/exptname/trial_X/version_X/...
+    logdir = _get_logdir(
+        cv_trainer_kwargs["default_root_dir"], cv_trainer_kwargs["name"]
+    )
+    cv_trainer_kwargs["default_root_dir"] = logdir
+
     if strategy in ("ddp", "ddp_spawn", "ddp_notebook") or (
         device_count > 1 and gpu_available_or_requested
     ):
         # in distributed training case, even with multi-gpu single node
         # cannot use the default InMemoryStorage. Instead, use a sqlite db
-        storage = "sqlite:///tuning.db"
+        storage = f"sqlite:///{logdir}/tuning.db"
     else:
         # defaults back to InMemoryStorage
         storage = None
@@ -151,16 +161,6 @@ def optimize(
         study_name=cv_trainer_kwargs["name"],
         pruner=pruner,
     )
-
-    # change default_root_dir to include the original expt name
-    # then during the training for each trial, the expt name will be changed
-    # to the trial number, and each trial trains for n CV folds called
-    # version_0...version_n, thus the overall dir structure is:
-    # rootdir/exptname/trial_X/version_X/...
-    logdir = _get_logdir(
-        cv_trainer_kwargs["default_root_dir"], cv_trainer_kwargs["name"]
-    )
-    cv_trainer_kwargs["default_root_dir"] = logdir
 
     # optuna callbacks are called after every time objective is finished
     callback = OptunaHyperparameterLogger(logdir=logdir)
