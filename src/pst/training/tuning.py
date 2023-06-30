@@ -128,8 +128,28 @@ def optimize(
     pruner: optuna.pruners.BasePruner = (
         optuna.pruners.MedianPruner() if prune else optuna.pruners.NopPruner()
     )
+
+    strategy: str = cv_trainer_kwargs["strategy"]
+    device_count: int = cv_trainer_kwargs["devices"]
+    gpu_available_or_requested = (
+        cv_trainer_kwargs["accelerator"] == "gpu" or torch.cuda.is_available()
+    )
+
+    if strategy in ("ddp", "ddp_spawn", "ddp_notebook") or (
+        device_count > 1 and gpu_available_or_requested
+    ):
+        # in distributed training case, even with multi-gpu single node
+        # cannot use the default InMemoryStorage. Instead, use a sqlite db
+        storage = "sqlite:///tuning.db"
+    else:
+        # defaults back to InMemoryStorage
+        storage = None
+
     study = optuna.create_study(
-        direction="minimize", study_name=cv_trainer_kwargs["name"], pruner=pruner
+        storage=storage,
+        direction="minimize",
+        study_name=cv_trainer_kwargs["name"],
+        pruner=pruner,
     )
 
     # change default_root_dir to include the original expt name
@@ -151,9 +171,7 @@ def optimize(
         gc_after_trial=True,
         callbacks=[callback],
     )
-    gpu_available_or_requested = (
-        cv_trainer_kwargs["accelerator"] == "gpu" or torch.cuda.is_available()
-    )
+
     if gpu_available_or_requested and parallel:
         device_count: int = cv_trainer_kwargs.pop("devices")
         # TODO: what if no CUDA_VISIBLE_DEVICES?
