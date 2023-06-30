@@ -23,11 +23,12 @@ dependencies = [
     "torch_geometric",
     "pandas",
     "more-itertools",
-    "optuna",
+    "optuna>=3.1",
 ]
 
 [project.scripts]
 pst = "pst:main.main"
+chtc-utils = "pst:utils.chtc.job.main"
 
 [project.urls]
 "Homepage" = "https://github.com/cody-mar10/protein_set_transformer"
