@@ -5,6 +5,7 @@ import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 DEVICES = 1
 DURATION = "long"
@@ -20,7 +21,7 @@ class Args:
     disk: str
     n_trials: int
     jobs: int
-    submit: bool
+    submit: Optional[Path]
 
 
 def parse_args() -> Args:
@@ -91,8 +92,10 @@ def parse_args() -> Args:
     )
     parser.add_argument(
         "--submit",
-        action="store_true",
-        help="submit condor job (ie condor_submit)",
+        metavar="FILE",
+        type=Path,
+        default=None,
+        help="submission condor file to be passed to condor_submit if supplied",
     )
 
     parsed_args = parser.parse_args()
@@ -111,8 +114,8 @@ def parse_args() -> Args:
     return args
 
 
-def submit(output: Path):
-    command = f"condor_submit {output}"
+def submit(submit_file: Path):
+    command = f"condor_submit {submit_file}"
     subprocess.run(shlex.split(command))
 
 
@@ -135,8 +138,8 @@ def main():
             csvline = ",".join(line)
             fp.write(f"{csvline}\n")
 
-    if args.submit:
-        submit(args.output)
+    if args.submit is not None:
+        submit(args.submit)
 
 
 if __name__ == "__main__":
