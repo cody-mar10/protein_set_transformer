@@ -149,13 +149,18 @@ def optimize(
         device_count > 1 and gpu_available_or_requested
     ):
         # in distributed training case, even with multi-gpu single node
-        # cannot use the default InMemoryStorage. Instead, use a sqlite db
-        dbname = "tuning.db"
-        dbpath = logdir.joinpath(dbname)
+        # cannot use the default InMemoryStorage. Instead, use a journaling fs
+        # sqlite dbs do not work in a parallel tuning case, even multi-gpu single node
+        # and other sql backends (mysql, postgresql) are still complicated with
+        # multi-node parallelization, so a journaling fs is most appropriate for all
+        # cases
+        fname = "tuning.journal"
+        fpath = logdir.joinpath(fname)
 
         # also the logdir must exist
         logdir.mkdir(parents=True, exist_ok=True)
-        storage = f"sqlite:///{dbpath}"
+        file_storage = optuna.storages.JournalFileStorage(file_path=fpath.as_posix())
+        storage = optuna.storages.JournalStorage(file_storage)
     else:
         # defaults back to InMemoryStorage
         storage = None
@@ -165,6 +170,7 @@ def optimize(
         direction="minimize",
         study_name=cv_trainer_kwargs["name"],
         pruner=pruner,
+        load_if_exists=True,
     )
 
     # optuna callbacks are called after every time objective is finished
