@@ -152,15 +152,17 @@ def optimize(
         # cannot use the default InMemoryStorage. Instead, use a journaling fs
         # sqlite dbs do not work in a parallel tuning case, even multi-gpu single node
         # and other sql backends (mysql, postgresql) are still complicated with
-        # multi-node parallelization, so a journaling fs is most appropriate for all
-        # cases
-        fname = "tuning.journal"
+        # multi-node parallelization <- require setting up server,
+        # so a journaling fs is most appropriate for all cases, HOWEVER,
+        # PyTorchLightningPruningCallback is only compatible with a RDBstorage backend
+        # thus, we have to use sqlite backend, which means parallel gpu tuning may not
+        # work
+        fname = "tuning.db"
         fpath = logdir.joinpath(fname)
 
         # also the logdir must exist
         logdir.mkdir(parents=True, exist_ok=True)
-        file_storage = optuna.storages.JournalFileStorage(file_path=fpath.as_posix())
-        storage = optuna.storages.JournalStorage(file_storage)
+        storage = f"sqlite:///{fpath}"
     else:
         # defaults back to InMemoryStorage
         storage = None
