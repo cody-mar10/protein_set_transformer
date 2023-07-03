@@ -1,105 +1,61 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Literal, cast, get_args
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
 
 import optuna
 
 from pst.utils.cli import _KWARG_TYPE
 
-MODEL_COMPLEXITY = Literal["small", "medium", "large", "xl", "xxl"]
-
-
-@dataclass
-class ModelComplexityValues:
-    num_heads: int
-    n_enc_layers: int
-
-
-MODEL_COMPLEXITY_MAP = {
-    "small": ModelComplexityValues(num_heads=4, n_enc_layers=5),
-    "medium": ModelComplexityValues(num_heads=8, n_enc_layers=10),
-    "large": ModelComplexityValues(num_heads=16, n_enc_layers=15),
-    "xl": ModelComplexityValues(num_heads=32, n_enc_layers=20),
-    "xxl": ModelComplexityValues(num_heads=32, n_enc_layers=30),
-}
+from .config import load_config
 
 
 class HyperparameterRegistryMixin:
-    def __init__(self, trial: optuna.Trial):
+    def __init__(
+        self,
+        trial: optuna.Trial,
+        configfile: Path,
+    ):
         self._hparams: _KWARG_TYPE = dict()
         self._trial = trial
+        self._config = load_config(configfile)
+        self._extract_suggest_type()
+        self._extract_maps()
 
-    def _register_model_hparams(self):
-        complexity_choices = cast(tuple[str, ...], get_args(MODEL_COMPLEXITY))
-        complexity = self._trial.suggest_categorical(
-            "complexity", choices=complexity_choices
-        )
-        complexity_values = MODEL_COMPLEXITY_MAP[complexity]
-        self._hparams["num_heads"] = complexity_values.num_heads
-        self._hparams["n_enc_layers"] = complexity_values.n_enc_layers
+    def _extract_suggest_type(self):
+        suggestions: defaultdict[str, dict[str, str]] = defaultdict(dict)
+        for hparam_type, hparams in self._config.items():
+            for hparam, opts in hparams.items():
+                suggestion = opts.pop("suggest")
+                suggestions[hparam_type][hparam] = suggestion
 
-        self._hparams["multiplier"] = self._trial.suggest_float(
-            "multiplier",
-            low=0.5,
-            high=10.0,
-            log=True,
-        )
-        self._hparams["dropout"] = self._trial.suggest_float(
-            "dropout", low=0.0, high=0.5
-        )
+        self._suggestions = suggestions
 
-    def _register_optim_hparams(self):
-        self._hparams["lr"] = self._trial.suggest_float(
-            "lr", low=1e-5, high=1e-2, log=True
-        )
-        self._hparams["weight_decay"] = self._trial.suggest_float(
-            "weight_decay", low=1e-5, high=1e-1, log=True
-        )
-        # betas?
-        # warmup? -> TODO: need a flag to post-norm
+    def _extract_maps(self):
+        category_maps: dict[str, dict[str, dict[str, Any]]] = dict()
+        for hparam_type, hparams in self._config.items():
+            for hparam, opts in hparams.items():
+                mapvalues = opts.pop("map", None)
+                if mapvalues is None:
+                    continue
+                category_maps[hparam] = mapvalues
 
-    def _register_data_hparams(self):
-        self._hparams["batch_size"] = self._trial.suggest_categorical(
-            "batch_size", choices=[16, 32, 64]
-        )
-        # TODO: edge strategy?
-        self._hparams["chunk_size"] = self._trial.suggest_int(
-            "chunk_size", low=15, high=50, step=5
-        )
+        self._category_maps = category_maps
 
-    def _register_trainer_hparams(self):
-        # these are for the lightning.Trainer
-        # epochs maybe constant?
-        # self._hparams["max_epochs"] = self._trial.suggest_int(
-        #     "max_epochs", low=10, high=500, step=25
-        # )
-        # gradient clipping?
-        pass
+    def _map_categories(self):
+        for hparam, categories in self._category_maps.items():
+            trialed_value = self._hparams.pop(hparam)
+            mapped_values = categories[trialed_value]
+            self._hparams.update(**mapped_values)
 
-    def _register_loss_hparams(self):
-        self._hparams["margin"] = self._trial.suggest_float(
-            "margin", low=0.05, high=10.0
-        )
+    def register_hparams(self):
+        for hparam_type, hparams in self._config.items():
+            for hparam, opts in hparams.items():
+                suggest = self._suggestions[hparam_type][hparam]
+                method = f"suggest_{suggest}"
+                self._hparams[hparam] = getattr(self._trial, method)(
+                    name=hparam, **opts
+                )
 
-    def _register_experiment_hparams(self):
-        # self._hparams["patience"]
-        if self._hparams["swa"]:
-            self._hparams["swa_epoch_start"] = self._trial.suggest_float(
-                "swa_epoch_start", low=0.5, high=0.8
-            )
-            self._hparams["annealing_epochs"] = self._trial.suggest_int(
-                "annealing_epochs", low=10, high=100
-            )
-            self._hparams["annealing_strategy"] = self._trial.suggest_categorical(
-                "annealing_strategy",
-                choices=["linear", "cosine"],  # TODO: could get from typing.Literal
-            )
-
-    def _register_augmentation_hparams(self):
-        self._hparams["sample_scale"] = self._trial.suggest_float(
-            "sample_scale", low=1.0, high=15.0
-        )
-        self._hparams["sample_rate"] = self._trial.suggest_float(
-            "sample_rate", low=0.25, high=0.75
-        )
+        self._map_categories()

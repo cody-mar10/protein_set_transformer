@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from functools import partial
-from inspect import getmembers
 from multiprocessing import Manager, Queue
 from pathlib import Path
 
@@ -25,10 +24,10 @@ from .train import CrossValidationTrainer
 def _get_logdir(default_root_dir: Path, exp_name: str) -> Path:
     return default_root_dir.joinpath(exp_name)
 
-
+# TODO: add configfile as param
 class TuningCrossValidationTrainer(CrossValidationTrainer, HyperparameterRegistryMixin):
-    def __init__(self, trial: optuna.Trial, **cv_trainer_kwargs):
-        HyperparameterRegistryMixin.__init__(self, trial=trial)
+    def __init__(self, trial: optuna.Trial, configfile: Path, **cv_trainer_kwargs):
+        HyperparameterRegistryMixin.__init__(self, trial=trial, configfile=configfile)
         trial_number = f"TRIAL {self._trial.number}"
         self._trial_status = partial(
             "==============={trial} {status}===============".format, trial=trial_number
@@ -46,16 +45,6 @@ class TuningCrossValidationTrainer(CrossValidationTrainer, HyperparameterRegistr
         cv_trainer_kwargs.update(self._hparams)
 
         self.cv_trainer_kwargs = cv_trainer_kwargs
-
-        # delay CV Trainer init until it is time to actually run the CV training loop
-        # super().__init__(**cv_trainer_kwargs)
-
-    def register_hparams(self):
-        for methodname, method in getmembers(self):
-            # need to distinguish actual registry methods from this one
-            # so they must all start with an _
-            if methodname.startswith("_register") and methodname.endswith("hparams"):
-                method()
 
     def add_switches(self, **kwargs):
         switch_args = ["swa"]  # TODO: make this all more programmatic
