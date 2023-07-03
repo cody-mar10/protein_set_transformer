@@ -24,6 +24,7 @@ dependencies = [
     "pandas",
     "more-itertools",
     "optuna>=3.1",
+    "pydantic"
 ]
 
 [project.scripts]
