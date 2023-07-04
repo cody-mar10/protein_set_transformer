@@ -4,6 +4,7 @@ import os
 from functools import partial
 from multiprocessing import Manager, Queue
 from pathlib import Path
+from typing import Optional
 
 import lightning as L
 import optuna
@@ -24,9 +25,15 @@ from .train import CrossValidationTrainer
 def _get_logdir(default_root_dir: Path, exp_name: str) -> Path:
     return default_root_dir.joinpath(exp_name)
 
+
 # TODO: add configfile as param
 class TuningCrossValidationTrainer(CrossValidationTrainer, HyperparameterRegistryMixin):
-    def __init__(self, trial: optuna.Trial, configfile: Path, **cv_trainer_kwargs):
+    def __init__(
+        self,
+        trial: optuna.Trial,
+        configfile: Optional[Path] = None,
+        **cv_trainer_kwargs,
+    ):
         HyperparameterRegistryMixin.__init__(self, trial=trial, configfile=configfile)
         trial_number = f"TRIAL {self._trial.number}"
         self._trial_status = partial(
@@ -118,6 +125,7 @@ def optimize(
         optuna.pruners.MedianPruner() if prune else optuna.pruners.NopPruner()
     )
 
+    configfile: Optional[Path] = cv_trainer_kwargs.pop("config")
     strategy: str = cv_trainer_kwargs["strategy"]
     device_count: int = cv_trainer_kwargs["devices"]
     gpu_available_or_requested = (
@@ -189,7 +197,9 @@ def optimize(
                     break
                 queue.put(device)
 
-            partial_trainer = partial(TuningCrossValidationTrainer, **cv_trainer_kwargs)
+            partial_trainer = partial(
+                TuningCrossValidationTrainer, configfile=configfile, **cv_trainer_kwargs
+            )
             objective = partial(
                 _parallel_objective,
                 queue=queue,
@@ -199,7 +209,9 @@ def optimize(
             with parallel_backend(backend="multiprocessing", n_jobs=device_count):
                 optimizer(func=objective, n_jobs=device_count)
     else:
-        partial_trainer = partial(TuningCrossValidationTrainer, **cv_trainer_kwargs)
+        partial_trainer = partial(
+            TuningCrossValidationTrainer, configfile=configfile, **cv_trainer_kwargs
+        )
         objective = partial(_objective, partial_trainer=partial_trainer)
         optimizer(func=objective)
 
