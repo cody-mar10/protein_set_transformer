@@ -2,24 +2,28 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import optuna
 
 from pst.utils.cli import _KWARG_TYPE
 
-from .config import load_config
+from .config import _DEFAULT_CONFIG, load_config
 
 
 class HyperparameterRegistryMixin:
     def __init__(
         self,
         trial: optuna.Trial,
-        configfile: Path,
+        configfile: Optional[Path] = None,
     ):
         self._hparams: _KWARG_TYPE = dict()
         self._trial = trial
-        self._config = load_config(configfile)
+
+        if configfile is None:
+            self._config = _DEFAULT_CONFIG
+        else:
+            self._config = load_config(configfile)
         self._extract_suggest_type()
         self._extract_maps()
 
