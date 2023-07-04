@@ -3,7 +3,8 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from functools import partial
-from typing import Literal, get_args
+from pathlib import Path
+from typing import Literal, Optional, get_args
 
 from .utils import (
     asdict,
@@ -18,6 +19,7 @@ AnnealingOpts = Literal["linear", "cos"]
 
 @dataclass
 class ExperimentArgs:
+    config: Optional[Path] = None
     name: str = "exp0"
     patience: int = 5
     save_top_k: int = 3
@@ -38,6 +40,11 @@ register_defaults(_DEFAULTS, "experiment")
 @register_handler
 def add_experiment_args(parser: argparse.ArgumentParser):
     group = parser.add_argument_group("EXPERIMENT ARGS")
+    group.add_argument(
+        "--config",
+        metavar="FILE",
+        help="optional config toml file to specify which hyperparameters to tune with optuna",  # noqa: E501
+    )
     group.add_argument(
         "--exp-name",
         metavar="NAME",
@@ -135,6 +142,7 @@ def add_experiment_args(parser: argparse.ArgumentParser):
 @asdict
 def parse_experiment_args(args: argparse.Namespace) -> ExperimentArgs:
     return ExperimentArgs(
+        config=args.config,
         name=args.exp_name,
         patience=args.patience,
         save_top_k=args.save_top_k,
