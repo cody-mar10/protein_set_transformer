@@ -24,7 +24,6 @@ from pst.utils.cli import (
     NO_NEGATIVES_MODES,
     AcceleratorOpts,
     AnnealingOpts,
-    Args,
     GradClipAlgOpts,
     PrecisionOpts,
     StrategyOpts,
@@ -157,39 +156,17 @@ class BaseTrainer(ABC):
         self.default_callbacks()
 
     @classmethod
-    def from_cli_args(cls, args: Args):
-        instance = cls.from_kwargs(
-            model_kwargs=args.model,
-            data_kwargs=args.data,
-            optimizer_kwargs=args.optimizer,
-            loss_kwargs=args.loss,
-            augmentation_kwargs=args.augmentation,
-            trainer_kwargs=args.trainer,
-            experiment_kwargs=args.experiment,
-        )
-
-        return instance
-
-    @classmethod
     def from_kwargs(
         cls,
-        model_kwargs: _KWARG_TYPE,
-        data_kwargs: _KWARG_TYPE,
-        optimizer_kwargs: _KWARG_TYPE,
-        loss_kwargs: _KWARG_TYPE,
-        augmentation_kwargs: _KWARG_TYPE,
-        trainer_kwargs: _KWARG_TYPE,
-        experiment_kwargs: _KWARG_TYPE,
+        model: _KWARG_TYPE,
+        data: _KWARG_TYPE,
+        optimizer: _KWARG_TYPE,
+        loss: _KWARG_TYPE,
+        augmentation: _KWARG_TYPE,
+        trainer: _KWARG_TYPE,
+        experiment: _KWARG_TYPE,
     ):
-        kwargs = (
-            model_kwargs
-            | data_kwargs
-            | optimizer_kwargs
-            | loss_kwargs
-            | augmentation_kwargs
-            | trainer_kwargs
-            | experiment_kwargs
-        )
+        kwargs = model | data | optimizer | loss | augmentation | trainer | experiment
         return cls(**kwargs)
 
     def register_callback(self, callback: type[L.Callback], **kwargs):
@@ -225,10 +202,14 @@ class BaseTrainer(ABC):
                 **self.experiment_kwargs["swa_kwargs"],
             )
 
-    def trainer_callbacks(self) -> list[L.Callback]:
-        callbacks = [
-            callback(**kwargs) for callback, kwargs in self._callbacks  # type: ignore
-        ]
+    def trainer_callbacks(
+        self, exclude_checkpointing: bool = False
+    ) -> list[L.Callback]:
+        callbacks: list[L.Callback] = list()
+        for callback, kwargs in self._callbacks:
+            if exclude_checkpointing and issubclass(callback, ModelCheckpoint):
+                continue
+            callbacks.append(callback(**kwargs))
 
         return callbacks
 
@@ -278,7 +259,10 @@ class CrossValidationTrainer(BaseTrainer):
 
     def on_after_trainer_init(self, trainer: L.Trainer):
         """Called immediately before the actual training loop is called"""
-        pass
+        logger = trainer.logger
+        datamodule_hparams = dict(self.datamodule.hparams)
+        if logger is not None:
+            logger.log_hyperparams(datamodule_hparams)
 
     def on_fold_training_end(self, trainer: L.Trainer):
         # this is the val loss of the final epoch, maybe should look into other epocs,
@@ -395,11 +379,12 @@ class FullTrainer(BaseTrainer):
         kwargs["train_on_full"] = True
         super().__init__(**kwargs)
         self.init_trainer()
+        self.data_kwargs["shuffle"] = False
         self.load_datamodule(**self.data_kwargs)
         self.init_model()
 
     def init_trainer(self):
-        callbacks = self.trainer_callbacks()
+        callbacks = self.trainer_callbacks(exclude_checkpointing=True)
         logger = TensorBoardLogger(
             save_dir=self.trainer_kwargs["default_root_dir"],
             name=self.experiment_kwargs["name"],
