@@ -210,6 +210,15 @@ _KwargType = dict[str, Any]
 
 
 class GenomeDataModule(L.LightningDataModule):
+    _LOGGABLE_HPARAMS = [
+        "batch_size",
+        "edge_strategy",
+        "chunk_size",
+        "threshold",
+        "log_inverse",
+        "train_on_full",
+    ]
+
     def __init__(
         self,
         file: FilePath,
@@ -234,7 +243,7 @@ class GenomeDataModule(L.LightningDataModule):
         )
         self.batch_size = batch_size
         self.train_on_full = train_on_full
-        self.save_hyperparameters()
+        self.save_hyperparameters(*self._LOGGABLE_HPARAMS)
 
     def _convert_data_indices_to_genome_data_batch(
         self, idx_batch: list[torch.Tensor]
