@@ -5,7 +5,6 @@ from typing import Any
 import lightning as L
 
 from pst.arch import GenomeDataModule, ProteinSetTransformer
-from pst.utils.cli import Args
 
 from .writer import PredictionWriter
 
@@ -14,28 +13,18 @@ from .writer import PredictionWriter
 class Predictor:
     def __init__(
         self,
-        predict_kwargs: dict[str, Any],
-        data_kwargs: dict[str, Any],
-        trainer_kwargs: dict[str, Any],
+        predict: dict[str, Any],
+        data: dict[str, Any],
+        trainer: dict[str, Any],
     ):
-        self.model = ProteinSetTransformer.load_from_checkpoint(
-            predict_kwargs["checkpoint"]
-        )
-        self.datamodule = GenomeDataModule(shuffle=False, **data_kwargs)  # type: ignore
+        self.model = ProteinSetTransformer.load_from_checkpoint(predict["checkpoint"])
+        self.datamodule = GenomeDataModule(shuffle=False, **data)  # type: ignore
         writer = PredictionWriter(
-            outdir=predict_kwargs["outdir"],
+            outdir=predict["outdir"],
             datamodule=self.datamodule,
         )
 
-        self.trainer = L.Trainer(callbacks=[writer], **trainer_kwargs)
-
-    @classmethod
-    def from_cli_args(cls, args: Args):
-        return cls(
-            data_kwargs=args.data,
-            trainer_kwargs=args.trainer,
-            predict_kwargs=args.predict,
-        )
+        self.trainer = L.Trainer(callbacks=[writer], **trainer)
 
     def predict(self):
         self.trainer.predict(model=self.model, datamodule=self.datamodule)
