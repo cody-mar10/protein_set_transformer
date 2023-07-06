@@ -119,13 +119,15 @@ def _parallel_objective(
 
 
 def optimize(
-    n_trials: int = 100, prune: bool = True, parallel: bool = False, **cv_trainer_kwargs
+    n_trials: int = 100,
+    prune: bool = True,
+    parallel: bool = False,
+    configfile: Optional[Path] = None,
+    **cv_trainer_kwargs,
 ):
     pruner: optuna.pruners.BasePruner = (
         optuna.pruners.MedianPruner() if prune else optuna.pruners.NopPruner()
     )
-
-    configfile: Optional[Path] = cv_trainer_kwargs.pop("config")
     strategy: str = cv_trainer_kwargs["strategy"]
     device_count: int = cv_trainer_kwargs["devices"]
     gpu_available_or_requested = (
