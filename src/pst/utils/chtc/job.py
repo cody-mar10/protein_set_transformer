@@ -1,117 +1,68 @@
 #!/usr/bin/env python3
 
-import argparse
 import shlex
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
+
+from pydantic import BaseModel, ByteSize, Field, validator
+from pydantic.errors import InvalidByteSize, InvalidByteSizeUnit
+from pydantic_argparse import ArgumentParser
 
 DEVICES = 1
-DURATION = "long"
+DurationOpts = Literal["short", "medium", "long"]
 
 
-@dataclass
-class Args:
-    input: Path
-    outdir_base: str
-    output: Path
-    epochs: int
-    memory: str
-    disk: str
-    n_trials: int
-    jobs: int
-    submit: Optional[Path]
+def validate_byte_size_argument(b: str) -> str:
+    try:
+        ByteSize.validate(b)
+    except (InvalidByteSize, InvalidByteSizeUnit) as err:
+        print(err)
+        raise err
+    else:
+        return b
+
+
+class Args(BaseModel):
+    input: Path = Field(..., description="input data .h5 file")
+    outdir_base: str = Field(
+        ...,
+        description="base name of the output directory, will be appended with an exp number",  # noqa: E501
+    )
+    output: Path = Field(
+        Path("tuning_inputs.csv"), description="tuning inputs file for job submission"
+    )
+    epochs: int = Field(
+        75, description="number of epochs to run per unit training session", gt=0
+    )
+    memory: str = Field("35GB", description="memory requested")
+    disk: str = Field("20GB", description="disk space requested")
+    n_trials: int = Field(
+        3, description="number of tuning trials to run for a single job instance", gt=0
+    )
+    jobs: int = Field(25, description="number of tuning jobs to run", gt=0)
+    submit: Optional[Path] = Field(
+        None,
+        description="submission condor file to be passed to condor_submit if supplied",
+    )
+    duration: DurationOpts = Field(
+        "long", description="CHTC job length: [short=12h, medium=24h, long=7d]"
+    )
+
+    _check_memory = validator("memory", pre=True, allow_reuse=True)(
+        validate_byte_size_argument
+    )
+    _check_dist = validator("memory", pre=True, allow_reuse=True)(
+        validate_byte_size_argument
+    )
 
 
 def parse_args() -> Args:
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "-i",
-        "--input",
-        metavar="FILE",
-        type=Path,
-        required=True,
-        help="input data .h5 file",
-    )
-    parser.add_argument(
-        "-o",
-        "--outdir-base",
-        required=True,
-        help="base name of the output directory, will be appended with an exp number",
-    )
-    parser.add_argument(
-        "-f",
-        "--file",
-        metavar="FILE",
-        type=Path,
-        default=Path("tuning_inputs.csv"),
-        help="tuning inputs file for job submission (default: %(default)s)",
-    )
-    parser.add_argument(
-        "-e",
-        "--epochs",
-        metavar="INT",
-        type=int,
-        default=75,
-        help="number of epochs to run per unit training session (default: %(default)s)",
-    )
-    parser.add_argument(
-        "-m",
-        "--memory",
-        metavar="BYTES",
-        default="35GB",
-        help="memory requested (default: %(default)s)",
-    )
-    parser.add_argument(
-        "-d",
-        "--disk",
-        metavar="BYTES",
-        default="20GB",
-        help="disk space requested (default: %(default)s)",
-    )
-    parser.add_argument(
-        "-n",
-        "--n-trials",
-        metavar="INT",
-        type=int,
-        default=3,
-        help=(
-            "number of tuning trials to run for a single job instance "
-            "(default: %(default)s)"
-        ),
-    )
-    parser.add_argument(
-        "-j",
-        "--jobs",
-        metavar="INT",
-        type=int,
-        default=25,
-        help="number of tuning jobs to run (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--submit",
-        metavar="FILE",
-        type=Path,
-        default=None,
-        help="submission condor file to be passed to condor_submit if supplied",
+    parser = ArgumentParser(
+        model=Args,
     )
 
-    parsed_args = parser.parse_args()
-    args = Args(
-        input=parsed_args.input,
-        outdir_base=parsed_args.outdir_base,
-        output=parsed_args.file,
-        epochs=parsed_args.epochs,
-        memory=parsed_args.memory,
-        disk=parsed_args.disk,
-        n_trials=parsed_args.n_trials,
-        jobs=parsed_args.jobs,
-        submit=parsed_args.submit,
-    )
-
-    return args
+    return parser.parse_typed_args()
 
 
 def submit(submit_file: Path):
@@ -129,9 +80,9 @@ def main():
                 f"{args.outdir_base}_{i}",
                 f"{DEVICES}",
                 f"{args.epochs}",
-                f"{args.memory}",
-                f"{args.disk}",
-                DURATION,
+                args.memory,
+                args.disk,
+                args.duration,
                 f"{args.n_trials}",
                 f"exp{i}",
             ]
