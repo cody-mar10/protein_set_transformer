@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Optional
 
@@ -19,11 +20,18 @@ class HyperparameterRegistryMixin:
     ):
         self._hparams: _KWARG_TYPE = dict()
         self._trial = trial
+        self._configfile = configfile
+        self.reload()
 
-        if configfile is None:
-            self._config = _DEFAULT_CONFIG
+    def reload(self):
+        if self._configfile is None:
+            self._config = deepcopy(_DEFAULT_CONFIG)
         else:
-            self._config = load_config(configfile)
+            self._config = load_config(self._configfile)
+        # TODO: this has a bug with multiple optuna trials
+        # tryinh to pop the suggest and map args again
+        # 1. should copy _DEFAULT_CONFIG
+        # 2. may need to make a reload fn?
         self._extract_suggest_type()
         self._extract_maps()
 
