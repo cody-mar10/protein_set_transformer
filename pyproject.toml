@@ -17,14 +17,16 @@ classifiers = [
 dependencies = [
     "torch>=2",
     "transformers",
-    "jsonargparse[signatures]",
     "lightning>=2",
     "tables",
     "torch_geometric",
     "pandas",
     "more-itertools",
     "optuna>=3.1",
-    "pydantic"
+    "pydantic",
+    "lightning-cv",
+    # use my custom fork
+    "pydantic-argparse @ git+https://github.com/cody-mar10/pydantic-argparse.git",
 ]
 
 [project.scripts]
@@ -34,3 +36,13 @@ chtc-utils = "pst:utils.chtc.job.main"
 [project.urls]
 "Homepage" = "https://github.com/cody-mar10/protein_set_transformer"
 "Bug Tracker" = "https://github.com/cody-mar10/protein_set_transformer/issues"
+
+[tool.ruff]
+src = ["src"]
+line-length = 90
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"] # allow unused imports in `__init__.py`
+
+[tool.coverage.run]
+plugins = ["covdefaults"]
