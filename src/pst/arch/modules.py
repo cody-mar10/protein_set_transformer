@@ -63,6 +63,24 @@ class ModelConfig(BaseModelConfig):
     loss: LossConfig
     augmentation: AugmentationConfig
 
+    @classmethod
+    def default(cls):
+        schema = dict()
+        for key, field in cls.model_fields.items():
+            if isinstance(field.annotation, type):
+                if isinstance(field.annotation, BaseModel) or issubclass(
+                    field.annotation, BaseModel
+                ):
+                    # field is a pydantic model
+                    # NOTE: does not handle any nesting below this...
+                    value = field.annotation.model_construct()
+                else:
+                    value = field.get_default()
+
+                schema[key] = value
+
+        return cls.model_validate(schema)
+
 
 class ProteinSetTransformer(L.LightningModule):
     def __init__(self, config: ModelConfig) -> None:
