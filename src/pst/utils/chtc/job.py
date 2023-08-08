@@ -5,22 +5,11 @@ import subprocess
 from pathlib import Path
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ByteSize, Field, validator
-from pydantic.errors import InvalidByteSize, InvalidByteSizeUnit
+from pydantic import BaseModel, ByteSize, Field, ValidationError, field_validator
 from pydantic_argparse import ArgumentParser
 
 DEVICES = 1
 DurationOpts = Literal["short", "medium", "long"]
-
-
-def validate_byte_size_argument(b: str) -> str:
-    try:
-        ByteSize.validate(b)
-    except (InvalidByteSize, InvalidByteSizeUnit) as err:
-        print(err)
-        raise err
-    else:
-        return b
 
 
 class Args(BaseModel):
@@ -49,19 +38,22 @@ class Args(BaseModel):
         "long", description="CHTC job length: [short=12h, medium=24h, long=7d]"
     )
 
-    _check_memory = validator("memory", pre=True, allow_reuse=True)(
-        validate_byte_size_argument
-    )
-    _check_dist = validator("memory", pre=True, allow_reuse=True)(
-        validate_byte_size_argument
-    )
+    @field_validator("memory", "disk", mode="before")
+    def validate_byte_size_argument(cls, value: str) -> str:
+        try:
+            ByteSize._validate(
+                value,
+                "",  # type: ignore - arg not used
+            )
+        except ValidationError as err:
+            print(err)
+            raise err
+        else:
+            return value
 
 
 def parse_args() -> Args:
-    parser = ArgumentParser(
-        model=Args,
-    )
-
+    parser = ArgumentParser(model=Args)
     return parser.parse_typed_args()
 
 
