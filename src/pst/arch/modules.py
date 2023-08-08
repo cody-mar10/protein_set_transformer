@@ -4,6 +4,8 @@ from typing import Any, Iterator, Literal, cast
 
 import lightning as L
 import torch
+from lightning_cv import BaseModelConfig, CrossValModuleMixin
+from pydantic import BaseModel, Field
 from torch.nn.parameter import Parameter
 from transformers import get_linear_schedule_with_warmup
 
@@ -11,8 +13,9 @@ from pst._typing import DataBatch, OptionalAttentionOutput
 from pst.model import SetTransformer
 
 from .training.distance import stacked_batch_chamfer_distance
-from .training.loss import AugmentedWeightedTripletLoss
+from .training.loss import AugmentedWeightedTripletLoss, LossConfig
 from .training.sampling import (
+    AugmentationConfig,
     heuristic_augmented_negative_sampling,
     negative_sampling,
     point_swap_sampling,
@@ -22,59 +25,94 @@ from .training.sampling import (
 _STAGE_TYPE = Literal["train", "val", "test"]
 
 
+class OptimizerConfig(BaseModel):
+    lr: float = Field(1e-3, description="learning rate", ge=1e-5, le=1e-1)
+    weight_decay: float = Field(
+        0.0, description="optimizer weight decay", ge=0.0, le=1e-1
+    )
+    betas: tuple[float, float] = Field((0.9, 0.999), description="optimizer betas")
+    warmup_steps: int = Field(0, description="number of warmup steps", ge=0)
+    use_scheduler: bool = Field(
+        False, description="whether or not to use a linearly decaying scheduler"
+    )
+
+
+class ModelConfig(BaseModelConfig):
+    in_dim: int = Field(
+        -1, description="input dimension, default is to use the dataset dimension"
+    )
+    out_dim: int = Field(
+        -1, description="output dimension, default is to use the input dimension"
+    )
+    num_heads: int = Field(4, description="number of attention heads", gt=0)
+    n_enc_layers: int = Field(5, description="number of encoder layers", gt=0)
+    multiplier: float = Field(
+        1.0,
+        description=(
+            "multiplicative weight to de-emphasize (< 1.0) or over-emphasize "
+            "(> 1.0) protein weights when decoding a genome representation by "
+            "pooling over all proteins in a genome"
+        ),
+        gt=0.0,
+    )
+    dropout: float = Field(
+        0.5, description="dropout proportion during training", ge=0.0, lt=1.0
+    )
+    compile: bool = Field(False, description="compile model using torch.compile")
+    optimizer: OptimizerConfig
+    loss: LossConfig
+    augmentation: AugmentationConfig
+
+
 class ProteinSetTransformer(L.LightningModule):
-    def __init__(
-        self,
-        in_dim: int,
-        out_dim: int,
-        num_heads: int,
-        n_enc_layers: int,
-        multiplier: float,
-        dropout: float,
-        optimizer_kwargs: dict[str, Any],
-        loss_kwargs: dict[str, Any],
-        augmentation_kwargs: dict[str, Any],
-        compile: bool = False,
-    ) -> None:
+    def __init__(self, config: ModelConfig) -> None:
         super().__init__()
-        self.save_hyperparameters()
+        self.config = config
+        self.save_hyperparameters(config.model_dump(exclude={"fabric"}))
         self.model = SetTransformer(
-            in_dim=in_dim,
-            out_dim=out_dim,
-            heads=num_heads,
-            n_enc_layers=n_enc_layers,
-            multiplier=multiplier,
-            dropout=dropout,
+            **self.config.model_dump(
+                include={
+                    "in_dim",
+                    "out_dim",
+                    "num_heads",
+                    "n_enc_layers",
+                    "multiplier",
+                    "dropout",
+                }
+            )
         )
 
-        if compile:
+        if self.config.compile:
             self.model = torch.compile(self.model)
 
-        self.criterion = AugmentedWeightedTripletLoss(**loss_kwargs)
-        self.optimizer_kwargs = optimizer_kwargs
-        self.augmentation_kwargs = augmentation_kwargs
+        self.criterion = AugmentedWeightedTripletLoss(**config.loss.model_dump())
+        self.optimizer_cfg = config.optimizer
+        self.augmentation_cfg = config.augmentation
+        self.fabric = config.fabric
 
     def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
         return self.model.parameters(recurse=recurse)
 
     def configure_optimizers(self) -> dict[str, Any]:
         optimizer = torch.optim.AdamW(
-            params=self.trainer.model.parameters(),  # type: ignore
-            lr=self.optimizer_kwargs["lr"],
-            betas=self.optimizer_kwargs["betas"],
-            weight_decay=self.optimizer_kwargs["weight_decay"],
-            eps=1e-7 if self.trainer.precision == "16-mixed" else 1e-8,
+            params=self.parameters(),
+            lr=self.optimizer_cfg.lr,
+            betas=self.optimizer_cfg.betas,
+            weight_decay=self.optimizer_cfg.weight_decay,
         )
         config: dict[str, Any] = {"optimizer": optimizer}
-        if self.optimizer_kwargs.get("use_scheduler", True):
+        if self.optimizer_cfg.use_scheduler:
+            if self.fabric is None:
+                self.estimated_steps = self.trainer.estimated_stepping_batches
+
             scheduler = get_linear_schedule_with_warmup(
                 optimizer=optimizer,
-                num_warmup_steps=self.optimizer_kwargs["warmup_steps"],
-                num_training_steps=self.trainer.estimated_stepping_batches,
+                num_warmup_steps=self.optimizer_cfg.warmup_steps,
+                num_training_steps=self.estimated_steps,
             )
             config["lr_scheduler"] = {
                 "scheduler": scheduler,
-                "interval": "step",
+                "interval": "epoch",
                 "frequency": 1,
             }
 
@@ -140,13 +178,13 @@ class ProteinSetTransformer(L.LightningModule):
         )
 
         # negative sampling
-        scale = self.augmentation_kwargs["sample_scale"]
+        scale = self.augmentation_cfg.sample_scale
         neg_idx, neg_weights = negative_sampling(
             setwise_dist=setwise_dist,
             X=y_anchor,
             pos_idx=pos_idx,
             scale=scale,
-            no_negatives_mode=self.augmentation_kwargs["no_negatives_mode"],
+            no_negatives_mode=self.augmentation_cfg.no_negatives_mode,
         )
 
         y_pos = y_anchor[pos_idx]
@@ -175,7 +213,8 @@ class ProteinSetTransformer(L.LightningModule):
             aug_neg_weights=aug_neg_weights,
         )
 
-        self._log_loss(loss=loss, batch_size=batch_size, stage=stage)
+        if self.fabric is None:
+            self._log_loss(loss=loss, batch_size=batch_size, stage=stage)
         return loss
 
     def _augmented_forward_step(
@@ -190,7 +229,7 @@ class ProteinSetTransformer(L.LightningModule):
             ptr=batch.ptr,
             pos_idx=pos_idx,
             item_flow=item_flow,
-            sample_rate=self.augmentation_kwargs["sample_rate"],
+            sample_rate=self.augmentation_cfg.sample_rate,
         )
 
         y_aug_pos = self(
@@ -206,7 +245,7 @@ class ProteinSetTransformer(L.LightningModule):
             y_aug=y_aug_pos,
             neg_idx=neg_idx,
             ptr=batch.ptr,
-            scale=self.augmentation_kwargs["sample_scale"],
+            scale=self.augmentation_cfg.sample_scale,
         )
 
         return y_aug_pos, y_aug_neg, aug_neg_weights
@@ -239,3 +278,23 @@ class ProteinSetTransformer(L.LightningModule):
         self, batch: DataBatch, batch_idx: int, dataloader_idx: int = 0
     ) -> Any:
         return self._databatch_forward(batch=batch)
+
+
+class CrossValPST(CrossValModuleMixin, ProteinSetTransformer):
+    __error_msg__ = (
+        "Model {stage} is not allowed during cross validation. Only training and "
+        "validation is supported."
+    )
+
+    def __init__(self, config: ModelConfig):
+        ProteinSetTransformer.__init__(self, config=config)
+
+        # needed for type hints
+        self.fabric: L.Fabric
+        CrossValModuleMixin.__init__(self, config=config)
+
+    def test_step(self, test_batch: DataBatch, batch_idx: int):
+        raise RuntimeError(self.__error_msg__.format(stage="testing"))
+
+    def predict_step(self, batch: DataBatch, batch_idx: int, dataloader_idx: int = 0):
+        raise RuntimeError(self.__error_msg__.format(stage="inference"))

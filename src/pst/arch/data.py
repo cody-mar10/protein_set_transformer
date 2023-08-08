@@ -1,25 +1,69 @@
 from __future__ import annotations
 
-from copy import copy
 from dataclasses import dataclass
 from itertools import permutations
 from pathlib import Path
-from typing import Any, Iterator, Literal
+from typing import Any, Literal
 
-import lightning as L
 import tables as tb
 import torch
+from lightning_cv import CrossValidationDataModule
+from lightning_cv.split import ImbalancedLeaveOneGroupOut
 from more_itertools import chunked
+from pydantic import BaseModel, Field
 from torch.utils.data import DataLoader, Dataset
 from torch_geometric.data import Batch, Data
 
 from pst._typing import DataBatch, EdgeIndexStrategy
-from pst.cross_validation import ImbalancedGroupKFold
 
 FilePath = str | Path
 _DEFAULT_CHUNK_SIZE = 30
 _SENTINEL_THRESHOLD = -1
 _DEFAULT_THRESHOLD = 30
+
+
+class DataConfig(BaseModel):
+    file: Path = Field(
+        ...,
+        description="input protein embeddings file in .h5 file format with the fields .data for protein embeddings",  # TODO: add more desc  # noqa: E501
+    )
+    batch_size: int = Field(
+        32, description="batch size in number of genomes", gt=4, le=128, multiple_of=2
+    )
+    train_on_full: bool = Field(
+        False,
+        description=(
+            "whether to train a single model on the full input data. When not "
+            "specified, the default is  to train multiple models with cross "
+            "validation"
+        ),
+    )
+    pin_memory: bool = Field(
+        True, description="whether to pin memory onto a CUDA GPU or not"
+    )
+    num_workers: int = Field(0, description="additional cpu workers to load data", ge=0)
+    edge_strategy: EdgeIndexStrategy = Field(
+        "chunked",
+        description=(
+            "strategy to create 'edges' between protein nodes in a genome graph. "
+            "chunked = split genomes in --chunk-size chunks. sparse = remove "
+            "interactions longer than --threshold. full = fully connected graph "
+            "like a regular transformer."
+        ),
+    )
+    chunk_size: int = Field(
+        30,
+        description="size of sub-chunks to break genomes into if using --edge_strategy chunked",  # noqa: E501
+        ge=15,
+        le=50,
+    )
+    threshold: int = Field(
+        -1,
+        description="range of protein interactions if using --edge_strategy [chunked|sparse]",  # noqa: E501,
+    )
+    log_inverse: bool = Field(
+        False, description="take the log of inverse class freqs as weights"
+    )
 
 
 def create_fully_connected_graph(num_nodes: int) -> torch.Tensor:
@@ -209,42 +253,40 @@ class CVDataLoader:
 _KwargType = dict[str, Any]
 
 
-class GenomeDataModule(L.LightningDataModule):
-    _LOGGABLE_HPARAMS = [
+class GenomeDataModule(CrossValidationDataModule):
+    _LOGGABLE_HPARAMS = {
         "batch_size",
         "edge_strategy",
         "chunk_size",
         "threshold",
         "log_inverse",
         "train_on_full",
-    ]
+    }
 
-    def __init__(
-        self,
-        file: FilePath,
-        batch_size: int,
-        edge_strategy: EdgeIndexStrategy = "chunked",
-        chunk_size: int = _DEFAULT_CHUNK_SIZE,
-        threshold: int = _SENTINEL_THRESHOLD,
-        log_inverse: bool = True,
-        train_on_full: bool = False,
-        **kwargs,
-    ) -> None:
-        super().__init__()
+    def __init__(self, config: DataConfig, **kwargs) -> None:
+        self.config = config
+        self.dataset = GenomeDataset(
+            file=config.file,
+            edge_strategy=config.edge_strategy,
+            chunk_size=config.chunk_size,
+            threshold=config.threshold,
+            log_inverse=config.log_inverse,
+        )
+        super().__init__(
+            dataset=self.dataset,
+            batch_size=config.batch_size,
+            cross_validator=ImbalancedLeaveOneGroupOut,
+            cross_validator_config={"groups": self.dataset.class_id},
+            collate_fn=self._convert_data_indices_to_genome_data_batch,
+            **kwargs,
+        )
 
         # shared / global dataloader kwargs, but they can still be updated
         self.dataloader_kwargs = kwargs
-        self.dataset = GenomeDataset(
-            file=file,
-            edge_strategy=edge_strategy,
-            chunk_size=chunk_size,
-            threshold=threshold,
-            log_inverse=log_inverse,
-        )
-        self.batch_size = batch_size
-        self.train_on_full = train_on_full
-        self.save_hyperparameters(*self._LOGGABLE_HPARAMS)
 
+        self.save_hyperparameters(config.dict(include=self._LOGGABLE_HPARAMS))
+
+    # collate_fn
     def _convert_data_indices_to_genome_data_batch(
         self, idx_batch: list[torch.Tensor]
     ) -> DataBatch:
@@ -254,54 +296,17 @@ class GenomeDataModule(L.LightningDataModule):
 
     def setup(self, stage: _StageType):
         if stage == "fit":
-            if self.train_on_full:
+            if self.config.train_on_full:
                 # train final model with all data
                 self.train_dataset = self.dataset
             else:
                 # train with cross validation
-                self.data_manager = ImbalancedGroupKFold(groups=self.dataset.class_id)
+                # sets self.data_manager module which keeps track of the folds
+                super().setup("fit")
         elif stage == "test":
             self.test_dataset = self.dataset
         elif stage == "predict":
             self.predict_dataset = self.dataset
-
-    def train_val_dataloaders(self, **kwargs) -> Iterator[CVDataLoader]:
-        train_kwargs, val_kwargs = self._split_train_val_kwargs(**kwargs)
-        for train_idx, val_idx in self.data_manager.split():
-            train_group_ids = self.data_manager.train_group_ids
-            val_group_id = self.data_manager.val_group_id
-            train_idx_dataset = SimpleTensorDataset(train_idx)
-            val_idx_dataset = SimpleTensorDataset(val_idx)
-            train_loader = DataLoader(
-                dataset=train_idx_dataset,
-                batch_size=self.batch_size,
-                collate_fn=self._convert_data_indices_to_genome_data_batch,
-                **train_kwargs,
-            )
-            val_loader = DataLoader(
-                dataset=val_idx_dataset,
-                batch_size=self.batch_size,
-                collate_fn=self._convert_data_indices_to_genome_data_batch,
-                **val_kwargs,
-            )
-            cv_dataloader = CVDataLoader(
-                train_loader=train_loader,
-                val_loader=val_loader,
-                train_group_ids=train_group_ids,
-                val_group_id=val_group_id,
-            )
-            yield cv_dataloader
-
-    def _split_train_val_kwargs(self, **kwargs) -> tuple[_KwargType, _KwargType]:
-        train_kwargs = self._overwrite_dataloader_kwargs(**kwargs)
-        val_kwargs = copy(train_kwargs)
-        val_kwargs["shuffle"] = False
-        return train_kwargs, val_kwargs
-
-    def _overwrite_dataloader_kwargs(self, **kwargs) -> _KwargType:
-        # overwrite the shared/global dataloader kwargs with kwargs specifically input
-        # and then return a copy
-        return self.dataloader_kwargs | kwargs
 
     def simple_dataloader(self, dataset: GenomeDataset, **kwargs) -> DataLoader:
         kwargs = self._overwrite_dataloader_kwargs(**kwargs)
