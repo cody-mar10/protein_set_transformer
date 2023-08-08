@@ -5,7 +5,6 @@ from torch import nn
 from torch_geometric.nn import GraphNorm
 
 from pst._typing import OptionalAttentionOutput
-from pst.utils.cli.model import _DEFAULTS
 
 from .layers import MultiheadAttentionConv, MultiheadAttentionPooling
 
@@ -15,13 +14,13 @@ class SetTransformer(nn.Module):
         self,
         in_dim: int,
         out_dim: int,
-        heads: int = 4,
+        num_heads: int = 4,
         n_enc_layers: int = 2,
         multiplier: float = 1.0,
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
-        if out_dim == _DEFAULTS.out_dim:
+        if out_dim == -1:
             out_dim = in_dim
 
         # the pyg strategy for attention is for each head to attend to the full
@@ -29,9 +28,9 @@ class SetTransformer(nn.Module):
         # chunks. The memory reqs can be bypassed by projecting to a smaller
         # dim that is desired out_dim // heads, and then concatenated the heads
         # back together.
-        hidden_dim, remainder = divmod(out_dim, heads)
+        hidden_dim, remainder = divmod(out_dim, num_heads)
         if remainder != 0:
-            raise ValueError(f"{out_dim=} must be divisible by {heads=}")
+            raise ValueError(f"{out_dim=} must be divisible by {num_heads=}")
 
         ##### ENCODER #####
         self._encoder = nn.ModuleDict()
@@ -41,7 +40,7 @@ class SetTransformer(nn.Module):
             layer = MultiheadAttentionConv(
                 in_channels=start_dim,
                 out_channels=hidden_dim,
-                heads=heads,
+                heads=num_heads,
                 concat=True,
                 dropout=dropout,
             )
@@ -68,7 +67,7 @@ class SetTransformer(nn.Module):
         # number of graphs/sets
         self._decoder["pool"] = MultiheadAttentionPooling(
             in_channels=out_dim,
-            heads=heads,
+            heads=num_heads,
             multiplier=multiplier,
             dropout=dropout,
         )
