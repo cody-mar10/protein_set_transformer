@@ -4,6 +4,11 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+from pydantic import BaseModel, Field
+
+
+class LossConfig(BaseModel):
+    margin: float = Field(0.1, description="triplet loss margin", gt=0.0)
 
 
 class WeightedTripletLoss(nn.Module):
@@ -23,7 +28,7 @@ class WeightedTripletLoss(nn.Module):
     ) -> torch.Tensor:
         if class_weights is None:
             # no actual weights
-            class_weights = torch.ones(y_self.size(0))
+            class_weights = y_self.new_ones(y_self.size(0))
 
         positive_dist = torch.pow(y_self - y_pos, 2).sum(dim=-1)
         negative_dist = torch.pow(y_self - y_neg, 2).sum(dim=-1).mul(weights)
