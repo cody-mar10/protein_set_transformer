@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import lightning_cv as lcv
+from lightning.fabric.loggers.csv_logs import CSVLogger
 
 from pst.arch import GenomeDataModule
 from pst.arch.modules import CrossValPST as PST
@@ -22,8 +23,11 @@ def train_with_cross_validation(config: TrainingMode):
     if config.model.in_dim == -1:
         config.model.in_dim = datamodule.dataset.feature_dim
 
+    logger = CSVLogger(
+        root_dir=config.trainer.default_root_dir, name=config.experiment.name
+    )
     trainer_config = lcv.CrossValidationTrainerConfig(
-        loggers=None,  # defaults to CSVLogger
+        loggers=logger,
         callbacks=trainer_callbacks,
         limit_train_batches=config.trainer.limit_train_batches or 1.0,
         limit_val_batches=config.trainer.limit_val_batches or 1.0,

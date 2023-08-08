@@ -40,7 +40,7 @@ def tune(config: TrainingMode):
         trainer_callbacks.append(lcv.callbacks.LearningRateMonitor())
 
     trainer_config = lcv.CrossValidationTrainerConfig(
-        loggers=None,  # defaults to CSVLogger
+        loggers=None,  # defaults to CSVLogger THRU TUNER
         callbacks=trainer_callbacks,
         limit_train_batches=config.trainer.limit_train_batches or 1.0,
         limit_val_batches=config.trainer.limit_val_batches or 1.0,
