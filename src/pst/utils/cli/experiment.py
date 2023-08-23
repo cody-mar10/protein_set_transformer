@@ -50,3 +50,13 @@ class ExperimentArgs(BaseModel):
         False,
         description="whether to run tuning trials in parallel if multiple GPUs are available",  # noqa: E501
     )
+    tuning_dir: Optional[Path] = Field(
+        None,
+        description="tuning directory path that stores optuna SQL history databases",
+    )
+    pruning_warmup_steps: int = Field(
+        3, description="number of epochs before pruning can start"
+    )
+    pruning_warmup_trials: int = Field(
+        1, description="number of trials allowed to complete before pruning can start"
+    )
