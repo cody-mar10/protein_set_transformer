@@ -7,3 +7,4 @@ test/
 *lightning_root/
 *.ipynb
 .vscode/
+build/
