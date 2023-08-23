@@ -46,7 +46,13 @@ class TrialManager:
             # merging existing trial dbs
             self._set_initial_values()
         else:
-            self.master_file.touch()
+            # touching causes problems in multigpu single node setting
+            # with ddp: second proc will think file already
+            # exists and then try to _set_initial_values
+            # but if this is the first run
+            # there is no data to read
+
+            # self.master_file.touch()
             self._reset_values()
 
         self._files = _files or []
@@ -85,7 +91,10 @@ class TrialManager:
                 last_row = session.scalars(
                     select(table).order_by(-getattr(table, primary_key))
                 ).first()
-                last_value = int(getattr(last_row, primary_key))
+                # defaults to -1 so current_value points to 0
+                last_value = (
+                    int(getattr(last_row, primary_key)) if last_row is not None else -1
+                )
                 self.current_values[primary_key] = last_value + 1
 
     @staticmethod
