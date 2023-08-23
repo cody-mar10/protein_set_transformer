@@ -35,8 +35,8 @@ class OptunaIntegration:
             return TrialManager(local_storage)
 
         tuning_dbs = list(self._config.tuning_dir.glob("*.db"))
-        trial_manager = TrialManager.from_files(local=local_storage, files=tuning_dbs)
-        trial_manager.sync_files(files=tuning_dbs)
+        trial_manager = TrialManager.with_files(local=local_storage, files=tuning_dbs)
+        trial_manager.sync_files()
 
         return trial_manager
 

@@ -5,13 +5,13 @@ from pathlib import Path
 from shutil import copyfile
 from typing import Any, Optional, Sequence
 
+from optuna.storages import RDBStorage
 from optuna.storages._rdb.models import (
     TrialIntermediateValueModel,
     TrialModel,
     TrialParamModel,
     TrialValueModel,
 )
-from optuna.storages import RDBStorage
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.engine import create_engine as _create_engine
@@ -36,8 +36,9 @@ class TrialManager:
     ENGINE_KWARGS: dict[str, Any] = dict(connect_args=dict(check_same_thread=False))
     OTHER = "other"
 
-    # TODO: what about the first case when there won't be any files?
-    def __init__(self, master_file: FilePath):
+    def __init__(
+        self, master_file: FilePath, _files: Optional[Sequence[FilePath]] = None
+    ):
         self.master_file = Path(master_file)
         self.master_url = TrialManager.create_url(self.master_file)
         self.master_engine = TrialManager.create_engine(url=self.master_url)
@@ -48,15 +49,19 @@ class TrialManager:
             self.master_file.touch()
             self._reset_values()
 
-    @classmethod
-    def from_files(cls, local: FilePath, files: Sequence[FilePath]):
-        # just choose the first file as the master
-        # it will just not contribute anything later
-        master_file = files[0]
+        self._files = _files or []
 
-        # copy chosen master_file to local
-        copyfile(master_file, local)
-        return cls(local)
+    @classmethod
+    def with_files(cls, local: FilePath, files: Sequence[FilePath]):
+        other_files = None
+        if files:
+            # just choose the first file as the master
+            # it will just not contribute anything later
+            master_file, *other_files = files
+
+            # copy chosen master_file to local
+            copyfile(master_file, local)
+        return cls(local, _files=other_files)
 
     def _reset_values(self):
         self.current_values = dict()
@@ -134,8 +139,8 @@ class TrialManager:
 
                 db[tablename].insert_all(new_records)  # type: ignore
 
-    def sync_files(self, files: Sequence[FilePath]):
-        for file in files:
+    def sync_files(self):
+        for file in self._files:
             self._sync(file)
 
     @property
