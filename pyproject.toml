@@ -20,14 +20,15 @@ dependencies = [
     "lightning>=2",
     "tables",
     "torch_geometric",
-    "pandas",
     "more-itertools",
-    "optuna>=3.1",
-    "pydantic",
-    "lightning-cv",
+    "pydantic>=2,<2.1",
+    "lightning-cv[tune]",
     # use my custom fork
     "pydantic-argparse @ git+https://github.com/cody-mar10/pydantic-argparse.git",
 ]
+
+[project.optional-dependencies]
+tune = ["optuna>=3.1", "sqlite-utils"]
 
 [project.scripts]
 pst = "pst:main.main"
