@@ -125,6 +125,8 @@ def cleanup(file: Path):
         with foreign_keys(db):
             table = cast(Table, db[TABLENAME])
             prune_failed_trials(table)
+            conn = cast(Connection, db.conn)
+            conn.commit()
             if is_empty(db):
                 file.unlink()
 
