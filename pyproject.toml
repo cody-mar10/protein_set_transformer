@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ptn-set-transformer"
-version = "0.1.0"
+version = "0.2.0"
 authors = [{ name = "Cody Martin", email = "codycmar10@gmail.com" }]
 description = "Training and inference on protein sets (genomes)"
 readme = "README.md"
@@ -32,7 +32,7 @@ tune = ["optuna>=3.1", "sqlite-utils"]
 
 [project.scripts]
 pst = "pst:main.main"
-chtc-utils = "pst:utils.chtc.job.main"
+chtc-utils = "pst:utils.chtc.main.main"
 
 [project.urls]
 "Homepage" = "https://github.com/cody-mar10/protein_set_transformer"
