@@ -43,16 +43,8 @@ class TrialManager:
         self.master_url = TrialManager.create_url(self.master_file)
         self.master_engine = TrialManager.create_engine(url=self.master_url)
         if self.master_file.exists():
-            # merging existing trial dbs
             self._set_initial_values()
         else:
-            # touching causes problems in multigpu single node setting
-            # with ddp: second proc will think file already
-            # exists and then try to _set_initial_values
-            # but if this is the first run
-            # there is no data to read
-
-            # self.master_file.touch()
             self._reset_values()
 
         self._files = _files or []
@@ -60,7 +52,8 @@ class TrialManager:
     @classmethod
     def with_files(cls, local: FilePath, files: Sequence[FilePath]):
         other_files = None
-        if files:
+        local = Path(local)
+        if files and not local.exists():
             # just choose the first file as the master
             # it will just not contribute anything later
             master_file, *other_files = files
@@ -74,19 +67,22 @@ class TrialManager:
         self.primary_keys = dict()
         self.trial_id_remap = dict()
 
+        for table in TrialManager.TABLES:
+            for col in table.__table__.columns:
+                if col.primary_key:
+                    primary_key = col.name
+                    self.primary_keys[table] = primary_key
+                    break
+            else:
+                raise RuntimeError(f"Table {table.__tablename__} has no primary key")
+
+            self.current_values[primary_key] = 1
+
     def _set_initial_values(self):
         self._reset_values()
         with self.master_session() as session:
             for table in TrialManager.TABLES:
-                for col in table.__table__.columns:
-                    if col.primary_key:
-                        primary_key = col.name
-                        self.primary_keys[table] = primary_key
-                        break
-                else:
-                    raise RuntimeError(
-                        f"Table {table.__tablename__} has no primary key"
-                    )
+                primary_key = self.primary_keys[table]
 
                 last_row = session.scalars(
                     select(table).order_by(-getattr(table, primary_key))
@@ -145,12 +141,13 @@ class TrialManager:
                         )
 
                     new_records.append(record)
-
                 db[tablename].insert_all(new_records)  # type: ignore
 
     def sync_files(self):
         for file in self._files:
             self._sync(file)
+            # this is on a per db basis so needs to be cleared for each file
+            self.trial_id_remap.clear()
 
     @property
     def current_trial_id(self) -> int:
