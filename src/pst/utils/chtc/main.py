@@ -11,7 +11,7 @@ from pst.utils.chtc.job import Args as JobArgs
 
 
 class Args(BaseModel):
-    jobs: Optional[JobArgs] = Field(
+    job: Optional[JobArgs] = Field(
         None, description="create and submit tuning jobs in CHTC"
     )
     cleanup: Optional[CleanupArgs] = Field(
@@ -19,7 +19,7 @@ class Args(BaseModel):
     )
 
 
-def parse_args(args: Optional[list[str]] = None) -> Args:
+def parse_args() -> Args:
     parser = ArgumentParser(
         model=Args,
         description=(
@@ -28,7 +28,7 @@ def parse_args(args: Optional[list[str]] = None) -> Args:
         ),
     )
 
-    return parser.parse_typed_args(args)
+    return parser.parse_typed_args()
 
 
 def main():
