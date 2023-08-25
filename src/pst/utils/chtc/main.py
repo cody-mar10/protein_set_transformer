@@ -34,8 +34,8 @@ def parse_args() -> Args:
 def main():
     args = parse_args()
 
-    if args.jobs:
-        job.main(args.jobs)
+    if args.job:
+        job.main(args.job)
     elif args.cleanup:
         cleanup.main(args.cleanup)
 
