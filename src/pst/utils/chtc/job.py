@@ -1,18 +1,18 @@
-#!/usr/bin/env python3
+from __future__ import annotations
 
 import shlex
 import subprocess
 from pathlib import Path
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ByteSize, Field, ValidationError, field_validator
-from pydantic_argparse import ArgumentParser
+from pydantic import ByteSize, Field, ValidationError, field_validator
+from pydantic_argparse import ArgumentParser, BaseCommand
 
 DEVICES = 1
 DurationOpts = Literal["short", "medium", "long"]
 
 
-class Args(BaseModel):
+class Args(BaseCommand):
     input: Path = Field(..., description="input data .h5 file")
     outdir_base: str = Field(
         ...,
@@ -62,8 +62,9 @@ def submit(submit_file: Path):
     subprocess.run(shlex.split(command))
 
 
-def main():
-    args = parse_args()
+def main(args: Optional[Args] = None):
+    if args is None:
+        args = parse_args()
 
     with args.output.open("w") as fp:
         for i in range(args.jobs):
