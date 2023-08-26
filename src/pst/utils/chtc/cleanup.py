@@ -47,9 +47,11 @@ def standardize_ext(ext: str) -> str:
 @contextmanager
 def Database(file: FilePath):
     database = _Database(file)
+    conn = cast(Connection, database.conn)
     try:
         yield database
     finally:
+        conn.commit()
         database.close()
 
 
@@ -91,9 +93,6 @@ def _update_schema_cascade_delete(db: _Database, table: Table):
     db.execute(create_table)
     db.execute(f"INSERT INTO {table.name} SELECT * FROM {tmp}")
     db[tmp].drop()
-    # for some reason commit is required with sqlite-utils
-    conn = cast(Connection, db.conn)
-    conn.commit()
 
 
 def check_cascade_delete(db: _Database):
@@ -125,8 +124,6 @@ def cleanup(file: Path):
         with foreign_keys(db):
             table = cast(Table, db[TABLENAME])
             prune_failed_trials(table)
-            conn = cast(Connection, db.conn)
-            conn.commit()
             if is_empty(db):
                 file.unlink()
 
@@ -139,6 +136,9 @@ def main(args: Optional[Args] = None):
     if args is None:
         args = parse_args()
 
+    original = args.merged_file
+    args.merged_file = args.merged_file.with_suffix(".tmp")
+
     ext = standardize_ext(args.extension)
 
     # clean up empty files or files with failed trials
@@ -147,11 +147,16 @@ def main(args: Optional[Args] = None):
 
     # merge remaining files into a single db
     remaining_files = list(args.tuning_dir.glob(ext))
+    if original in remaining_files:
+        remaining_files.remove(original)
+        remaining_files.insert(0, original)
     merge(args.merged_file, remaining_files)
 
     # then remove the remaining files and keep only the merged file
     for file in remaining_files:
         file.unlink()
+
+    args.merged_file.rename(original)
 
 
 if __name__ == "__main__":
