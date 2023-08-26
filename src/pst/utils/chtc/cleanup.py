@@ -3,8 +3,9 @@ from __future__ import annotations
 from contextlib import contextmanager
 from pathlib import Path
 from sqlite3 import Connection
-from typing import Optional, cast
+from typing import Any, Optional, cast
 
+from optuna.storages._rdb.models import TrialModel
 from optuna.trial import TrialState
 from pydantic import DirectoryPath, Field
 from pydantic_argparse import ArgumentParser, BaseCommand
@@ -15,6 +16,10 @@ from pst.training.tuning import TrialManager
 
 FilePath = str | Path
 TABLENAME = "trials"
+TRIAL_ID_COLS = {"trial_id", "number"}
+NON_ID_COLS = [
+    col for col in TrialModel.__table__.columns.keys() if col not in TRIAL_ID_COLS
+]
 TRIALTABLES = [
     "trial_values",
     "trial_params",
@@ -45,13 +50,14 @@ def standardize_ext(ext: str) -> str:
 
 
 @contextmanager
-def Database(file: FilePath):
+def Database(file: FilePath, autocommit: bool = True):
     database = _Database(file)
     conn = cast(Connection, database.conn)
     try:
         yield database
     finally:
-        conn.commit()
+        if autocommit:
+            conn.commit()
         database.close()
 
 
@@ -111,8 +117,36 @@ def prune_failed_trials(table: Table):
     table.delete_where("state = :state", params)
 
 
+def _find_duplicates(table: Table, on: list[str]) -> list[dict[str, Any]]:
+    on_cols = ",".join(on)
+    sql_query = f"""
+    SELECT 
+        *
+    FROM 
+        {table.name}
+    GROUP BY 
+        {on_cols}
+    HAVING 
+        COUNT(*) > 1
+    """
+    return [record for record in table.db.query(sql_query)]
+
+
+def prune_duplicates(table: Table):
+    parent_duplicates = _find_duplicates(table, on=NON_ID_COLS)
+
+    # find rows with same values but keep these parent duplicates
+    # by ignoring the pk
+    where = " AND ".join(
+        f"{col} = :{col}" if col in NON_ID_COLS else f"{col} != :{col}"
+        for col in TrialModel.__table__.columns.keys()
+    )
+    for record in parent_duplicates:
+        table.delete_where(where, record)
+
+
 def cleanup(file: Path):
-    with Database(file) as db:
+    with Database(file, autocommit=True) as db:
         if is_empty(db):
             file.unlink()
             return
@@ -130,6 +164,11 @@ def cleanup(file: Path):
 
 def merge(merged_file: Path, files: list[Path]):
     TrialManager.with_files(local=merged_file, files=files).sync_files()
+
+    with Database(merged_file, autocommit=True) as db:
+        with foreign_keys(db):
+            table = cast(Table, db[TABLENAME])
+            prune_duplicates(table)
 
 
 def main(args: Optional[Args] = None):
