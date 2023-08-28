@@ -30,6 +30,7 @@ def tune(config: TrainingMode):
         lcv.callbacks.EarlyStopping(
             patience=config.experiment.patience,
             stopping_threshold=1e-3,  # checks loss < this, min loss is 0.0
+            min_delta=0.05,  # checks loss - prev_loss < this
         ),
     ]
 
@@ -61,20 +62,16 @@ def tune(config: TrainingMode):
     )
 
     ### OPTUNA STUDY
-    study = OptunaIntegration(
-        expt_cfg=config.experiment, default_root_dir=config.trainer.default_root_dir
-    ).study()
+    integration = OptunaIntegration(
+        expt_cfg=config.experiment,
+        default_root_dir=config.trainer.default_root_dir,
+    )
 
     optimize = partial(_optimize, tuner=tuner)
-    optuna_callbacks = [
+    integration.register_callbacks(
         lcv.tuning.callbacks.OptunaHyperparameterLogger(
             root_dir=config.trainer.default_root_dir,
             expt_name=config.experiment.name,
         )
-    ]
-    study.optimize(
-        func=optimize,
-        n_trials=config.experiment.n_trials,
-        callbacks=optuna_callbacks,
-        gc_after_trial=True,
     )
+    integration.optimize(fn=optimize)
