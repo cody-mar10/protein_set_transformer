@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Iterable, Optional
 
+from optuna.exceptions import ExperimentalWarning
 from pydantic import DirectoryPath, Field
 from pydantic_argparse import ArgumentParser, BaseCommand
 
 from pst.training.tuning import StudyManager
 
 FilePath = str | Path
+
+# ignore optuna experimental warnings since StudyManager uses RetyFailedTrialCallback
+# but doesn't matter just for cleanup purposes
+warnings.filterwarnings("ignore", category=ExperimentalWarning)
 
 
 class Args(BaseCommand):
