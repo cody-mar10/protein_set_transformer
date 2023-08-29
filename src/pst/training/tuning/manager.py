@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator, Optional
 
 import optuna
-from optuna.storages import RDBStorage
+from optuna.storages import RDBStorage, RetryFailedTrialCallback
+from optuna.study import Study
 from optuna.trial import FrozenTrial, TrialState
 from sqlite_utils import Database as _Database
 
@@ -25,10 +26,25 @@ class StudyManager:
     ENGINE_KWARGS: dict[str, Any] = dict(connect_args=dict(check_same_thread=False))
     STUDY_NAME = "tuning"
 
-    def __init__(self, storage_file: FilePath, **study_kwargs):
+    def __init__(
+        self,
+        storage_file: FilePath,
+        prune_failed_trials: bool = False,
+        failed_trial_retries: int = 2,
+        **study_kwargs,
+    ):
         self.storage_file = Path(storage_file)
         self.url = StudyManager.create_url(self.storage_file)
+        self.prune_failed_trials = prune_failed_trials
 
+        # TODO: need to handle request for a failed trial
+        # ie, need to get the model, trainer, and tuner states back
+        self._storage = StudyManager.create_storage(
+            self.url,
+            failed_trial_callback=RetryFailedTrialCallback(
+                max_retry=failed_trial_retries
+            ),
+        )
         study_kwargs["load_if_exists"] = True
         study_kwargs["storage"] = self.storage
         study_kwargs["study_name"] = StudyManager.STUDY_NAME
@@ -51,25 +67,25 @@ class StudyManager:
             self._seen.add(uniq_fields)
 
     @staticmethod
-    def _get_study_name(db_file: FilePath) -> str:
-        with Database(db_file) as db:
-            study_names: list[str] = [row["study_name"] for row in db["studies"].rows]
+    def get_all_trials(db_file: FilePath) -> Iterator[FrozenTrial]:
+        storage = StudyManager.create_storage(StudyManager.create_url(db_file))
+        for study in storage.get_all_studies():
+            # have to do this with storage again since stupid is a FrozenStudy
+            # which doesn't have the get_trials method
+            for trial in storage.get_all_trials(
+                study_id=study._study_id, deepcopy=True
+            ):
+                yield trial
 
-        if len(study_names) > 1:
-            raise ValueError(f"Multiple studies found in {db_file}")
-        elif len(study_names) == 0:
-            raise ValueError(f"No studies found in {db_file}")
-        return study_names[0]
-
-    def sync_study(
+    def sync_trials(
         self,
-        other_study: optuna.Study,
-        prune_failed_trials: bool = True,
+        other_study_trials: Iterable[FrozenTrial],
         verbose: bool = False,
+        identifier: Optional[str | FilePath | Study] = None,
     ):
         n_trials = 0
-        for trial in other_study.trials:
-            if prune_failed_trials and trial.state == TrialState.FAIL:
+        for trial in other_study_trials:
+            if self.prune_failed_trials and trial.state == TrialState.FAIL:
                 continue
 
             uniq_fields = StudyManager._get_unique_fields(trial)
@@ -79,41 +95,58 @@ class StudyManager:
             self._seen.add(uniq_fields)
 
         if verbose:
-            print(f"Added {n_trials} trials from {other_study.study_name}")
+            msg = f"Added {n_trials} trials"
+            addon = ""
+            if isinstance(identifier, Study):
+                addon = f" from {identifier.study_name}"
+            else:
+                addon = f" from {identifier}"
+            msg = f"{msg}{addon}"
+            print(msg)
 
-    def sync_file(self, other: FilePath, cleanup: bool = False, **kwargs):
-        study_name = StudyManager._get_study_name(other)
-        other_study = optuna.load_study(
-            study_name=study_name,
-            storage=StudyManager.create_url(other),
-        )
-
-        self.sync_study(other_study, **kwargs)
+    def sync_file(self, other: FilePath, cleanup: bool = False, verbose: bool = False):
+        trials = StudyManager.get_all_trials(other)
+        self.sync_trials(trials, verbose=verbose, identifier=other)
 
         if cleanup:
             other = Path(other)
             other.unlink()
 
-    def sync_files(self, files: Iterable[FilePath], **kwargs):
+    def sync_files(
+        self, files: Iterable[FilePath], cleanup: bool = False, verbose: bool = False
+    ):
         for file in files:
-            self.sync_file(file, **kwargs)
+            self.sync_file(file, cleanup=cleanup, verbose=verbose)
 
-    def sync_studies(self, studies: Iterable[optuna.Study], **kwargs):
+    def sync_study(self, study: Study, verbose: bool = False):
+        self.sync_trials(study.trials, verbose=verbose, identifier=study)
+
+    def sync_studies(self, studies: Iterable[Study], verbose: bool = False):
         for study in studies:
-            self.sync_study(study, **kwargs)
+            self.sync_study(study, verbose=verbose)
 
     @staticmethod
     def create_url(file: FilePath) -> str:
         return f"sqlite:///{file}"
 
+    @staticmethod
+    def create_storage(
+        url: str, engine_kwargs: Optional[dict[str, Any]] = None, **kwargs
+    ) -> RDBStorage:
+        if engine_kwargs is None:
+            engine_kwargs = StudyManager.ENGINE_KWARGS
+        else:
+            engine_kwargs = StudyManager.ENGINE_KWARGS | engine_kwargs
+        return RDBStorage(url=url, engine_kwargs=engine_kwargs, **kwargs)
+
     @property
     def storage(self) -> RDBStorage:
-        return RDBStorage(url=self.url, engine_kwargs=StudyManager.ENGINE_KWARGS)
+        return self._storage
 
     @property
     def study_name(self) -> str:
         return self._study.study_name
 
     @property
-    def study(self) -> optuna.Study:
+    def study(self) -> Study:
         return self._study
