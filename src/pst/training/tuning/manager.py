@@ -95,7 +95,7 @@ class StudyManager:
             self._seen.add(uniq_fields)
 
         if verbose:
-            msg = f"Added {n_trials} trials"
+            msg = f"Added {n_trials} trial{'s' if n_trials > 1 else ''}"
             addon = ""
             if isinstance(identifier, Study):
                 addon = f" from {identifier.study_name}"
