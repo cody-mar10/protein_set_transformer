@@ -54,12 +54,10 @@ class StudyManager:
 
     @staticmethod
     def _get_unique_fields(trial: FrozenTrial) -> tuple:
-        return (
-            trial.datetime_start,
-            trial.datetime_complete,
-            trial.value,
-            tuple(trial.params.items()),
-        )
+        # including the trial value and sampled params is problematic for
+        # hashing/comparing floats -> so just focus on datetime specifically
+        # highly unlikely two independent trials share exact same datetime
+        return (trial.datetime_start, trial.datetime_complete)
 
     def _store_history(self):
         for trial in self._study.get_trials(deepcopy=False):
