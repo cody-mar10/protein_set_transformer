@@ -50,12 +50,7 @@ class OptunaIntegration:
             return study_manager
 
         tuning_dbs = self._config.tuning_dir.glob("*.db")
-        study_manager.sync_files(
-            files=tuning_dbs,
-            prune_failed_trials=True,
-            cleanup=False,
-            verbose=True,
-        )
+        study_manager.sync_files(files=tuning_dbs, cleanup=False, verbose=True)
 
         return study_manager
 
