@@ -19,6 +19,13 @@ class Args(BaseCommand):
     merged_file: Path = Field(
         Path("merged.db"), description="name of file after merging databases"
     )
+    pruned_failed_trials: bool = Field(
+        False,
+        description=(
+            "whether to prune failed trials. Note: stopped trials are stored as "
+            "failed, so these trials can't be resumed."
+        ),
+    )
 
 
 def parse_args() -> Args:
@@ -30,11 +37,9 @@ def standardize_ext(ext: str) -> str:
     return f"*.{ext.lstrip('.')}"
 
 
-def merge(merged_file: Path, files: Iterable[Path]):
-    study_manager = StudyManager(merged_file)
-    study_manager.sync_files(
-        files, prune_failed_trials=True, verbose=True, cleanup=True
-    )
+def merge(merged_file: Path, files: Iterable[Path], prune_failed_trials: bool = False):
+    study_manager = StudyManager(merged_file, prune_failed_trials=prune_failed_trials)
+    study_manager.sync_files(files, verbose=True, cleanup=True)
 
 
 def main(args: Optional[Args] = None):
@@ -48,7 +53,7 @@ def main(args: Optional[Args] = None):
         file for file in args.tuning_dir.glob(ext) if file != args.merged_file
     )
 
-    merge(args.merged_file, other_files)
+    merge(args.merged_file, other_files, prune_failed_trials=args.pruned_failed_trials)
 
 
 if __name__ == "__main__":
