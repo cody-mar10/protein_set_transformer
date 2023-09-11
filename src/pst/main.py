@@ -8,11 +8,13 @@ from pst.training import cv, full
 from pst.training.tuning import tuning
 from pst.utils.cli import Args, parse_args
 from pst.utils.cli.modes import InferenceMode, TrainingMode, TuningMode
+from pst.utils.history import update_config_from_history
 
 _SEED = 111
 
 
 def train_main(args: TrainingMode):
+    args = update_config_from_history(args)
     if args.data.train_on_full:
         full.train_with_all_data(args)
     else:
