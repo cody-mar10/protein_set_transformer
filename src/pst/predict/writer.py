@@ -11,7 +11,8 @@ import torch
 from lightning.pytorch.callbacks import BasePredictionWriter
 from numpy.typing import NDArray
 
-from pst.arch import GenomeDataModule, ProteinSetTransformer
+from pst.arch.data import GenomeDataModule
+from pst.arch.modules import ProteinSetTransformer
 
 
 def sort_key(file: Path) -> int:

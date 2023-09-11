@@ -10,8 +10,8 @@ from torch.nn.parameter import Parameter
 from transformers import get_linear_schedule_with_warmup
 
 from pst._typing import DataBatch, OptionalAttentionOutput
-from pst.model import SetTransformer
 
+from .models import SetTransformer
 from .training.distance import stacked_batch_chamfer_distance
 from .training.loss import AugmentedWeightedTripletLoss, LossConfig
 from .training.sampling import (

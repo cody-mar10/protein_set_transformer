@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import lightning as L
 
-from pst.arch import GenomeDataModule
+from pst.arch.data import GenomeDataModule
 from pst.arch.modules import ProteinSetTransformer as PST
-from pst.utils.cli import TrainingMode
+from pst.utils.cli.modes import TrainingMode
 
 
 def train_with_all_data(config: TrainingMode):
@@ -12,7 +12,7 @@ def train_with_all_data(config: TrainingMode):
         raise RuntimeError(
             "Cannot train with all data if --train-on-full not passed at command line."
         )
-    
+
     datamodule = GenomeDataModule(config.data)
     # update model's in_dim
     if config.model.in_dim == -1:

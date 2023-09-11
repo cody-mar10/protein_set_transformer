@@ -3,9 +3,9 @@ from __future__ import annotations
 import lightning_cv as lcv
 from lightning.fabric.loggers.csv_logs import CSVLogger
 
-from pst.arch import GenomeDataModule
+from pst.arch.data import GenomeDataModule
 from pst.arch.modules import CrossValPST as PST
-from pst.utils.cli import TrainingMode
+from pst.utils.cli.modes import TrainingMode
 
 
 def train_with_cross_validation(config: TrainingMode):

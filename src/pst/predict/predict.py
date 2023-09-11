@@ -4,7 +4,8 @@ from typing import Any
 
 import lightning as L
 
-from pst.arch import GenomeDataModule, ProteinSetTransformer
+from pst.arch.data import GenomeDataModule
+from pst.arch.modules import ProteinSetTransformer
 
 from .writer import PredictionWriter
 
