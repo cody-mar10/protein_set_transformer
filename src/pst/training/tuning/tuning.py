@@ -4,6 +4,11 @@ from functools import partial
 
 import lightning_cv as lcv
 import optuna
+from lightning_cv.callbacks.base import Callback
+from lightning_cv.callbacks.checkpoint import ModelCheckpoint
+from lightning_cv.callbacks.lr_monitor import LearningRateMonitor
+from lightning_cv.callbacks.stopping import EarlyStopping
+from lightning_cv.callbacks.timer import Timer
 
 from pst.arch.data import GenomeDataModule
 from pst.arch.modules import CrossValPST as PST
@@ -23,24 +28,24 @@ def tune(config: TuningMode):
         config.model.in_dim = _peek_feature_dim(config.data.file)
 
     ### CV TRAINER INIT
-    trainer_callbacks: list[lcv.callbacks.Callback] = [
-        lcv.callbacks.ModelCheckpoint(
+    trainer_callbacks: list[Callback] = [
+        ModelCheckpoint(
             save_last=True, save_top_k=config.experiment.save_top_k, every_n_epochs=1
         ),
-        lcv.callbacks.EarlyStopping(
+        EarlyStopping(
             patience=config.experiment.patience,
             stopping_threshold=1e-3,  # checks loss < this, min loss is 0.0
             min_delta=0.05,  # checks loss - prev_loss < this
         ),
-        lcv.callbacks.Timer(
-            duration=config.trainer.max_time,
+        Timer(
+            duration=config.trainer.max_time.value,
             buffer={"minutes": 20},
             interval="immediately",
         ),
     ]
 
     if config.model.optimizer.use_scheduler:
-        trainer_callbacks.append(lcv.callbacks.LearningRateMonitor())
+        trainer_callbacks.append(LearningRateMonitor())
 
     trainer_config = lcv.CrossValidationTrainerConfig(
         loggers=None,  # defaults to CSVLogger THRU TUNER
