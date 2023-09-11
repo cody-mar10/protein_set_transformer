@@ -7,10 +7,6 @@ from pydantic import BaseModel, Field
 
 
 class TuningArgs(BaseModel):
-    config: Optional[Path] = Field(
-        None,
-        description="config toml file to specify which hyperparameters to tune with optuna",  # noqa: E501
-    )
     n_trials: int = Field(1, description="number of tuning trials to run", gt=0)
     prune: bool = Field(
         True, description="whether to allow pruning of unpromising trials"

@@ -63,7 +63,7 @@ def tune(config: TuningMode):
         trainer_config=trainer_config,
         logdir=config.trainer.default_root_dir,
         experiment_name=config.experiment.name,
-        hparam_config_file=config.tuning.config,
+        hparam_config_file=config.experiment.config,
     )
 
     ### OPTUNA STUDY
