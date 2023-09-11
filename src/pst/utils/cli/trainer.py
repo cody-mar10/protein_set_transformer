@@ -1,16 +1,26 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from enum import Enum
 from pathlib import Path
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 
 AcceleratorOpts = Literal["cpu", "gpu", "tpu", "auto"]
 PrecisionOpts = Literal["16-mixed", "bf16-mixed", "32"]
 StrategyOpts = Literal["ddp", "ddp_spawn", "ddp_notebook", "fsdp", "auto"]
 GradClipAlgOpts = Literal["norm", "value"]
-MaxTimeOpts = Literal["short", "medium", "long", None]
+
+
+class MaxTimeOpts(Enum):
+    short = timedelta(hours=12)
+    medium = timedelta(days=1)
+    long = timedelta(weeks=1)
+    none = None
+
+    def __repr__(self) -> str:
+        return self.name
 
 
 class TrainerArgs(BaseModel):
@@ -32,11 +42,11 @@ class TrainerArgs(BaseModel):
     gradient_clip_val: Optional[float] = Field(
         None, description="optional value if clipping gradients"
     )
-    max_time: Optional[timedelta] = Field(
-        None,
+    max_time: MaxTimeOpts = Field(
+        MaxTimeOpts.none,
         description=(
             "maximum allowed training time"
-            "[choices: short=12h, medium=1d, long=7d, None=no limit]"
+            "[choices: short=12h, medium=1d, long=7d, none=no limit]"
         ),
     )
     limit_train_batches: Optional[int | float] = Field(
@@ -55,26 +65,3 @@ class TrainerArgs(BaseModel):
             "(0.0, 1.0] means that fraction of the val data is used)"
         ),
     )
-
-    @validator("max_time", pre=True)
-    def convert_max_time(cls, value: MaxTimeOpts) -> Optional[timedelta]:
-        # CHTC guidelines
-        # add a small buffer to allow clean up
-        buffer = timedelta(minutes=15)
-
-        match value:
-            case "short":
-                limit = timedelta(hours=12) - buffer
-                return limit
-            case "medium":
-                limit = timedelta(days=1) - buffer
-                return limit
-            case "long":
-                limit = timedelta(weeks=1) - buffer
-                return limit
-            case None:
-                return None
-            case _:
-                raise ValueError(
-                    f"--max-time must be one of the following: {MaxTimeOpts}"
-                )
