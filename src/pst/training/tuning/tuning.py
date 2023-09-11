@@ -5,9 +5,9 @@ from functools import partial
 import lightning_cv as lcv
 import optuna
 
-from pst.arch import GenomeDataModule
+from pst.arch.data import GenomeDataModule
 from pst.arch.modules import CrossValPST as PST
-from pst.utils.cli import TrainingMode
+from pst.utils.cli.modes import TuningMode
 
 from .optuna import OptunaIntegration
 from .utils import _peek_feature_dim
@@ -17,7 +17,7 @@ def _optimize(trial: optuna.Trial, tuner: lcv.tuning.Tuner) -> float:
     return tuner.tune(trial=trial)
 
 
-def tune(config: TrainingMode):
+def tune(config: TuningMode):
     # update model's in_dim
     if config.model.in_dim == -1:
         config.model.in_dim = _peek_feature_dim(config.data.file)
@@ -31,6 +31,11 @@ def tune(config: TrainingMode):
             patience=config.experiment.patience,
             stopping_threshold=1e-3,  # checks loss < this, min loss is 0.0
             min_delta=0.05,  # checks loss - prev_loss < this
+        ),
+        lcv.callbacks.Timer(
+            duration=config.trainer.max_time,
+            buffer={"minutes": 20},
+            interval="immediately",
         ),
     ]
 
@@ -58,13 +63,14 @@ def tune(config: TrainingMode):
         trainer_config=trainer_config,
         logdir=config.trainer.default_root_dir,
         experiment_name=config.experiment.name,
-        hparam_config_file=config.experiment.config,
+        hparam_config_file=config.tuning.config,
     )
 
     ### OPTUNA STUDY
     integration = OptunaIntegration(
-        expt_cfg=config.experiment,
+        expt_name=config.experiment.name,
         default_root_dir=config.trainer.default_root_dir,
+        **config.tuning.model_dump(exclude={"config", "parallel"}),
     )
 
     optimize = partial(_optimize, tuner=tuner)

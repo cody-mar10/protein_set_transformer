@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable, Optional, Sequence
 
 import optuna
-
-from pst.utils.cli.experiment import ExperimentArgs
 
 from .manager import StudyManager
 
@@ -20,25 +18,36 @@ class OptunaIntegration:
         "load_if_exists": True,
     }
 
-    def __init__(self, expt_cfg: ExperimentArgs, default_root_dir: Path):
-        self._config = expt_cfg
+    def __init__(
+        self,
+        expt_name: str,
+        default_root_dir: Path,
+        prune: bool = True,
+        tuning_dir: Optional[Path] = None,
+        n_trials: int = 1,
+        pruning_warmup_trials: int = 1,
+        pruning_warmup_steps: int = 3,
+    ):
         self.pruner = (
             optuna.pruners.MedianPruner(
-                n_startup_trials=expt_cfg.pruning_warmup_trials,
-                n_warmup_steps=expt_cfg.pruning_warmup_steps,
+                n_startup_trials=pruning_warmup_trials,
+                n_warmup_steps=pruning_warmup_steps,
             )
-            if expt_cfg.prune
+            if prune
             else optuna.pruners.NopPruner()
         )
         self.root = default_root_dir
         self._study_manager = self._get_study_manager()
+        self.tuning_dir = tuning_dir
+        self.name = expt_name
+        self.n_trials = n_trials
 
         self._callbacks: list[OptunaCallback] = list()
 
     @property
     def local_storage(self):
-        storage_fname = f"{self._config.name}.db"
-        storage_dir = self.root / self._config.name
+        storage_fname = f"{self.name}.db"
+        storage_dir = self.root / self.name
         if not storage_dir.exists():
             storage_dir.mkdir(exist_ok=True, parents=True)
         return storage_dir.joinpath(storage_fname)
@@ -46,10 +55,10 @@ class OptunaIntegration:
     def _get_study_manager(self) -> StudyManager:
         study_kwargs = OptunaIntegration.STUDY_KWARGS | {"pruner": self.pruner}
         study_manager = StudyManager(self.local_storage, **study_kwargs)
-        if self._config.tuning_dir is None:
+        if self.tuning_dir is None:
             return study_manager
 
-        tuning_dbs = self._config.tuning_dir.glob("*.db")
+        tuning_dbs = self.tuning_dir.glob("*.db")
         study_manager.sync_files(files=tuning_dbs, cleanup=False, verbose=True)
 
         return study_manager
@@ -72,8 +81,8 @@ class OptunaIntegration:
 
         self.study.optimize(
             func=fn,
-            n_trials=self._config.n_trials,
+            n_trials=self.n_trials,
             callbacks=callbacks,
             # only need to GC if we're running multiple trials
-            gc_after_trial=self._config.n_trials > 1,
+            gc_after_trial=self.n_trials > 1,
         )
