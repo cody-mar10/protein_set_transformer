@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Optional
 
@@ -8,18 +7,8 @@ import optuna
 from optuna.storages import RDBStorage, RetryFailedTrialCallback
 from optuna.study import Study
 from optuna.trial import FrozenTrial, TrialState
-from sqlite_utils import Database as _Database
 
 FilePath = str | Path
-
-
-@contextmanager
-def Database(file: FilePath):
-    database = _Database(file)
-    try:
-        yield database
-    finally:
-        database.close()
 
 
 class StudyManager:
@@ -68,7 +57,7 @@ class StudyManager:
     def get_all_trials(db_file: FilePath) -> Iterator[FrozenTrial]:
         storage = StudyManager.create_storage(StudyManager.create_url(db_file))
         for study in storage.get_all_studies():
-            # have to do this with storage again since stupid is a FrozenStudy
+            # have to do this with storage again since study is a FrozenStudy
             # which doesn't have the get_trials method
             for trial in storage.get_all_trials(
                 study_id=study._study_id, deepcopy=True
