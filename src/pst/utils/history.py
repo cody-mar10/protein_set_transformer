@@ -8,6 +8,7 @@ import optuna
 from lightning_cv.tuning.config import MappingT, get_mappings
 from pydantic import BaseModel
 
+from pst.training.tuning.manager import StudyManager
 from pst.utils.cli.modes import TrainingMode
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -19,10 +20,8 @@ def load_history(file: Path) -> dict[str, Any]:
         with open(file) as fp:
             history = json.load(fp)["hparams"]
     elif file.suffix == ".db":
-        study = optuna.load_study(
-            study_name="tuning",  # TODO: more robust
-            storage=f"sqlite:///{file}",  # TODO: more robust
-        )
+        url = StudyManager.create_url(file)
+        study = optuna.load_study(study_name=StudyManager.STUDY_NAME, storage=url)
         history = study.best_params
     else:
         raise ValueError(f"unknown history file type: {file}")
