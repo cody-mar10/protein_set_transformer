@@ -8,7 +8,7 @@ from optuna.exceptions import ExperimentalWarning
 from pydantic import DirectoryPath, Field
 from pydantic_argparse import ArgumentParser, BaseCommand
 
-from pst.training.tuning import StudyManager
+from pst.training.tuning.manager import StudyManager
 
 FilePath = str | Path
 
