@@ -22,7 +22,10 @@ def train_with_all_data(config: TrainingMode):
     model = PST(config.model)
 
     checkpoint_callback = ModelCheckpoint(
-        save_last=True, save_top_k=config.experiment.save_top_k, every_n_epochs=1
+        save_last=True,
+        save_top_k=config.experiment.save_top_k,
+        every_n_epochs=1,
+        monitor="val_loss",
     )
 
     # want max time value, not enum
