@@ -38,11 +38,11 @@ class OptunaIntegration:
         )
         self.root = default_root_dir
         self.name = expt_name
-        self._study_manager = self._get_study_manager()
         self.tuning_dir = tuning_dir
         self.n_trials = n_trials
 
         self._callbacks: list[OptunaCallback] = list()
+        self._study_manager = self._get_study_manager()
 
     @property
     def local_storage(self):
