@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import lightning_cv as lcv
 from lightning.fabric.loggers.csv_logs import CSVLogger
+from lightning_cv.callbacks.base import Callback
+from lightning_cv.callbacks.checkpoint import ModelCheckpoint
+from lightning_cv.callbacks.lr_monitor import LearningRateMonitor
 
 from pst.arch.data import GenomeDataModule
 from pst.arch.modules import CrossValPST as PST
@@ -9,14 +12,14 @@ from pst.utils.cli.modes import TrainingMode
 
 
 def train_with_cross_validation(config: TrainingMode):
-    trainer_callbacks: list[lcv.callbacks.Callback] = [
-        lcv.callbacks.ModelCheckpoint(
+    trainer_callbacks: list[Callback] = [
+        ModelCheckpoint(
             save_last=True, save_top_k=config.experiment.save_top_k, every_n_epochs=1
         )
     ]
 
     if config.model.optimizer.use_scheduler:
-        trainer_callbacks.append(lcv.callbacks.LearningRateMonitor())
+        trainer_callbacks.append(LearningRateMonitor())
 
     datamodule = GenomeDataModule(config.data)
     # update model's in_dim
