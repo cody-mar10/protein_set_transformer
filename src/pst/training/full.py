@@ -25,7 +25,7 @@ def train_with_all_data(config: TrainingMode):
         save_last=True,
         save_top_k=config.experiment.save_top_k,
         every_n_epochs=1,
-        monitor="val_loss",
+        monitor="train_loss",
     )
 
     # want max time value, not enum
