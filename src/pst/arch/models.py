@@ -3,8 +3,9 @@ from __future__ import annotations
 import torch
 from torch import nn
 from torch_geometric.nn import GraphNorm
+from torch_geometric.typing import OptTensor
 
-from pst._typing import OptionalAttentionOutput
+from pst._typing import OptGraphAttnOutput
 
 from .layers import MultiheadAttentionConv, MultiheadAttentionPooling
 
@@ -16,7 +17,7 @@ class SetTransformer(nn.Module):
         out_dim: int,
         num_heads: int = 4,
         n_enc_layers: int = 2,
-        multiplier: float = 1.0,
+        n_dec_layers: int = 2,
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
@@ -66,10 +67,7 @@ class SetTransformer(nn.Module):
         # shape: [N, D'] -> [B, D'] where B is the batch size, ie
         # number of graphs/sets
         self._decoder["pool"] = MultiheadAttentionPooling(
-            in_channels=out_dim,
-            heads=num_heads,
-            multiplier=multiplier,
-            dropout=dropout,
+            in_channels=out_dim, heads=num_heads, layers=n_dec_layers, dropout=dropout
         )
         self._decoder["linear"] = nn.Sequential(
             nn.Linear(out_dim, out_dim),
@@ -92,21 +90,30 @@ class SetTransformer(nn.Module):
         x_out: torch.Tensor,
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
+        batch: OptTensor = None,
+        size: OptTensor = None,
         return_attention_weights: bool = False,
-    ) -> OptionalAttentionOutput:
+        standardize: bool = True,
+        strict: bool = True,
+    ) -> OptGraphAttnOutput:
         x_avg = self._decoder["pool"](
             x=x_out,
             edge_index=edge_index,
             ptr=ptr,
+            batch=batch,
+            size=size,
             return_attention_weights=return_attention_weights,
+            standardize=standardize,
+            strict=strict,
         )
+
         if return_attention_weights:
-            x_avg, (forward_edge_index, attn) = x_avg
+            x_avg, attn = x_avg
 
         output = self._decoder["linear"](x_avg)
 
         if return_attention_weights:
-            return output, (forward_edge_index, attn)  # type: ignore
+            return output, attn  # type: ignore
         return output
 
     def forward(
@@ -114,12 +121,21 @@ class SetTransformer(nn.Module):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
+        batch: OptTensor = None,
+        size: OptTensor = None,
         return_attention_weights: bool = False,
-    ) -> OptionalAttentionOutput:
+        standardize: bool = True,
+        strict: bool = True,
+    ) -> OptGraphAttnOutput:
         x_out = self.encode(x=x, edge_index=edge_index)
-        return self.decode(
+        graph_rep = self.decode(
             x_out=x_out,
             edge_index=edge_index,
             ptr=ptr,
+            batch=batch,
+            size=size,
             return_attention_weights=return_attention_weights,
+            standardize=standardize,
+            strict=strict,
         )
+        return graph_rep

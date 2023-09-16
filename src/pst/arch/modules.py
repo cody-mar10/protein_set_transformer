@@ -7,9 +7,10 @@ import torch
 from lightning_cv import BaseModelConfig, CrossValModuleMixin
 from pydantic import BaseModel, Field
 from torch.nn.parameter import Parameter
+from torch_geometric.typing import OptTensor
 from transformers import get_linear_schedule_with_warmup
 
-from pst._typing import DataBatch, OptionalAttentionOutput
+from pst._typing import DataBatch, OptGraphAttnOutput
 
 from .models import SetTransformer
 from .training.distance import stacked_batch_chamfer_distance
@@ -46,15 +47,7 @@ class ModelConfig(BaseModelConfig):
     )
     num_heads: int = Field(4, description="number of attention heads", gt=0)
     n_enc_layers: int = Field(5, description="number of encoder layers", gt=0)
-    multiplier: float = Field(
-        1.0,
-        description=(
-            "multiplicative weight to de-emphasize (< 1.0) or over-emphasize "
-            "(> 1.0) protein weights when decoding a genome representation by "
-            "pooling over all proteins in a genome"
-        ),
-        gt=0.0,
-    )
+    n_dec_layers: int = Field(2, description="number of decoder layers", gt=0, le=5)
     dropout: float = Field(
         0.5, description="dropout proportion during training", ge=0.0, lt=1.0
     )
@@ -153,24 +146,40 @@ class ProteinSetTransformer(L.LightningModule):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
+        batch: OptTensor = None,
+        size: OptTensor = None,
         return_attention_weights: bool = False,
-    ) -> OptionalAttentionOutput:
+        standardize: bool = True,
+        strict: bool = True,
+    ) -> OptGraphAttnOutput:
         output = self.model(
             x=x,
             edge_index=edge_index,
             ptr=ptr,
+            batch=batch,
+            size=size,
             return_attention_weights=return_attention_weights,
+            standardize=standardize,
+            strict=strict,
         )
         return output
 
     def _databatch_forward(
-        self, batch: DataBatch, return_attention_weights: bool = False
-    ) -> OptionalAttentionOutput:
+        self,
+        batch: DataBatch,
+        return_attention_weights: bool = False,
+        standardize: bool = True,
+        strict: bool = True,
+    ) -> OptGraphAttnOutput:
         return self(
             x=batch.x,
             edge_index=batch.edge_index,
             ptr=batch.ptr,
+            batch=batch.batch,
+            size=batch.setsize,
             return_attention_weights=return_attention_weights,
+            standardize=standardize,
+            strict=strict,
         )
 
     def _forward_step(
@@ -179,6 +188,8 @@ class ProteinSetTransformer(L.LightningModule):
         batch_idx: int,
         stage: _STAGE_TYPE,
         augment_data: bool = True,
+        standardize: bool = True,
+        strict: bool = True,
     ) -> torch.Tensor:
         batch_size = batch.setsize.numel()
         setwise_dist, item_flow = stacked_batch_chamfer_distance(
@@ -192,7 +203,12 @@ class ProteinSetTransformer(L.LightningModule):
         # forward pass
         y_anchor = cast(
             torch.Tensor,
-            self._databatch_forward(batch=batch, return_attention_weights=False),
+            self._databatch_forward(
+                batch=batch,
+                return_attention_weights=False,
+                standardize=standardize,
+                strict=strict,
+            ),
         )
 
         # negative sampling
@@ -214,6 +230,8 @@ class ProteinSetTransformer(L.LightningModule):
                 pos_idx=pos_idx,
                 neg_idx=neg_idx,
                 item_flow=item_flow,
+                standardize=standardize,
+                strict=strict,
             )
         else:
             y_aug_pos = None
@@ -241,6 +259,8 @@ class ProteinSetTransformer(L.LightningModule):
         pos_idx: torch.Tensor,
         neg_idx: torch.Tensor,
         item_flow: dict[tuple[int, int], torch.Tensor],
+        standardize: bool = True,
+        strict: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         augmented_batch = point_swap_sampling(
             batch=batch.x,
@@ -254,9 +274,13 @@ class ProteinSetTransformer(L.LightningModule):
             x=augmented_batch,
             edge_index=batch.edge_index,
             ptr=batch.ptr,
+            batch=batch.batch,
+            size=batch.setsize,
             return_attention_weights=False,
+            standardize=standardize,
+            strict=strict,
         )
-        # TODO: fix error with min reduction
+
         y_aug_neg, aug_neg_weights = heuristic_augmented_negative_sampling(
             X_anchor=batch.x,
             X_aug=augmented_batch,
@@ -294,7 +318,7 @@ class ProteinSetTransformer(L.LightningModule):
 
     def predict_step(
         self, batch: DataBatch, batch_idx: int, dataloader_idx: int = 0
-    ) -> Any:
+    ) -> OptGraphAttnOutput:
         return self._databatch_forward(batch=batch)
 
 
