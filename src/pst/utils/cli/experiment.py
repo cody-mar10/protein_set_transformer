@@ -20,7 +20,7 @@ class ExperimentArgs(BaseModel):
     patience: int = Field(
         5, description="early stopping patience, see lightning description", gt=0
     )
-    save_top_k: int = Field(3, description="save the best k models", gt=0)
+    save_top_k: int = Field(1, description="save the best k models", gt=0)
     ### SWA args
     swa: bool = Field(False, description="use stochastic weight averaging")
     swa_epoch_start: int | float = Field(
