@@ -7,19 +7,11 @@ choices = ["small", "medium", "large", "xl", "xxl"]
 
 # this refers to the previous table entry in the hparams arraytable, ie complexity
 [hparams.map]
-small = { num_heads = 4, n_enc_layers = 5 }
-medium = { num_heads = 8, n_enc_layers = 10 }
-large = { num_heads = 16, n_enc_layers = 15 }
-xl = { num_heads = 32, n_enc_layers = 20 }
-xxl = { num_heads = 32, n_enc_layers = 30 }
-
-
-[[hparams]]
-name = "multiplier"
-suggest = "float"
-low = 0.5
-high = 10.0
-log = true
+small = { num_heads = 4, n_enc_layers = 5, n_dec_layers = 1 }
+medium = { num_heads = 8, n_enc_layers = 10, n_dec_layers = 2 }
+large = { num_heads = 16, n_enc_layers = 15, n_dec_layers = 3 }
+xl = { num_heads = 32, n_enc_layers = 20, n_dec_layers = 4 }
+xxl = { num_heads = 32, n_enc_layers = 30, n_dec_layers = 5 }
 
 
 [[hparams]]
@@ -69,26 +61,6 @@ low = 0.1
 high = 10.0
 log = true
 parent = "loss"
-
-# EXPERIMENT hparams
-# [[hparams]]
-# name = "swa_epoch_start"
-# suggest = "float"
-# low = 0.5
-# high = 0.8
-# log = false
-
-# [[hparams]]
-# name = "annealing_epochs"
-# suggest = "int"
-# low = 10
-# high = 100
-# step = 1
-
-# [[hparams]]
-# name = "annealing_strategy"
-# suggest = "categorical"
-# choices = ["linear", "cosine"]
 
 # AUGMENTATION hparams
 [[hparams]]
