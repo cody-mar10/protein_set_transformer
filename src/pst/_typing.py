@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Literal, Protocol
 
 from torch import Tensor
-from torch_geometric.typing import OptTensor
+from torch_geometric.typing import OptTensor, PairTensor
 
 
 # data.py types
@@ -21,8 +21,11 @@ class DataBatch(Protocol):
 EdgeIndexStrategy = Literal["full", "sparse", "chunked"]
 
 # layer.py types
-AttentionOutput = tuple[Tensor, tuple[Tensor, Tensor]]
-OptionalAttentionOutput = Tensor | AttentionOutput
+EdgeAttnOutput = tuple[Tensor, tuple[Tensor, Tensor]]
+OptEdgeAttnOutput = Tensor | EdgeAttnOutput
+
+GraphAttnOutput = PairTensor
+OptGraphAttnOutput = Tensor | GraphAttnOutput
 
 # distance.py types
 FlowType = dict[tuple[int, int], Tensor]
