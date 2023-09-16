@@ -5,7 +5,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 AcceleratorOpts = Literal["cpu", "gpu", "tpu", "auto"]
 PrecisionOpts = Literal["16-mixed", "bf16-mixed", "32"]
@@ -65,3 +65,7 @@ class TrainerArgs(BaseModel):
             "(0.0, 1.0] means that fraction of the val data is used)"
         ),
     )
+
+    @field_validator("max_time", mode="before")
+    def _convert(cls, value: str):
+        return MaxTimeOpts[value]
