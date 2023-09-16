@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 import torch
 import torch.nn.functional as F
@@ -10,7 +10,9 @@ from torch_geometric.nn import GraphNorm, MessagePassing
 from torch_geometric.typing import OptTensor, PairTensor
 from torch_geometric.utils import add_self_loops, segment, softmax
 
-from pst._typing import OptionalAttentionOutput
+from pst._typing import OptEdgeAttnOutput, OptGraphAttnOutput
+
+from .training import utils
 
 
 class MultiheadAttentionConv(MessagePassing):
@@ -92,7 +94,7 @@ class MultiheadAttentionConv(MessagePassing):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         return_attention_weights: bool = False,
-    ) -> OptionalAttentionOutput:
+    ) -> OptEdgeAttnOutput:
         """Forward pass to compute scaled-dot product attention to update each
         node/item representation.
 
@@ -169,7 +171,7 @@ class MultiheadAttentionConv(MessagePassing):
         # Di // H like usual, but matters for projecting to 1 dim
         # during pooling -- similar problem below
         out_dim = aggr_out.size(-1)
-        if initial.size(-1) != aggr_out.size(-1):
+        if initial.size(-1) != out_dim:
             # basically adding all features from initial to aggr_out
             leftover = initial.size(-1) // out_dim
             initial = initial.view(-1, leftover, out_dim).sum(dim=1)
@@ -204,7 +206,7 @@ class MultiheadAttentionPooling(nn.Module):
         self,
         in_channels: int,
         heads: int,
-        multiplier: float = 1.0,  # TODO: this could be trainable?
+        layers: int = 1,
         dropout: float = 0.0,
     ) -> None:
         """Initialize a multihead attention pooling module. This projects the
@@ -214,39 +216,45 @@ class MultiheadAttentionPooling(nn.Module):
         Args:
             in_channels (int): Input embedding dimension.
             heads (int): Number of attention heads.
-            multiplier (float): Score multiplier. Defaults to 1.0. Values > 1.0
-                will emphasize node/item importance more, while values between
-                (0, 1) will de-emphasize importance and lead to more uniform
-                scores like a simple average.
+            layers (int, optional): Number of GNN attention layers to use.
+                Defaults to 1.
             dropout (float, optional): Dropout rate for the attention calculation.
                 Defaults to 0.0.
         """
         super().__init__()
-        self.pooling_attn_layer = MultiheadAttentionConv(
-            in_channels, 1, heads=heads, concat=False, dropout=dropout
-        )
+        if layers < 1:
+            raise ValueError("Must have at least one layer.")
 
-        if multiplier <= 0.0:
-            raise ValueError(
-                f"Passed {multiplier=}. This value should be greater than 0.0"
+        self.layers = nn.ModuleList()
+        kwargs: dict[str, Any] = dict(
+            heads=heads, in_channels=in_channels, dropout=dropout, concat=False
+        )
+        for _ in range(layers - 1):
+            self.layers.append(
+                MultiheadAttentionConv(out_channels=in_channels, **kwargs)
             )
 
-        self.multiplier = multiplier
+        # final layer should project to 1 dim
+        self.layers.append(MultiheadAttentionConv(out_channels=1, **kwargs))
 
     def forward(
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
+        batch: OptTensor = None,
+        size: OptTensor = None,
         return_attention_weights: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+        standardize: bool = True,
+        strict: bool = True,
+    ) -> OptGraphAttnOutput:
         """Compute an attention-based score by projecting the input `x`
-        onto a single dimension. These scores are then converted probabilites
+        onto a single dimension. These scores are then converted to probabilites
         using the softmax function, and then used to perform a weighted
         average along the inputs.
 
         Args:
-            x (torch.Tensor): Input stacked node/item features.
+            x (torch.Tensor): [N, D] Input stacked node/item features.
             edge_index (torch.Tensor): [2, E] LongTensor encoding node/item
                 connectivity. To exactly mirror transformers, this is fully
                 connected for each graph.
@@ -254,32 +262,49 @@ class MultiheadAttentionPooling(nn.Module):
                 in the input `:param:x` stacked features. `ptr[i]` points to
                 the starting index of graph/set i, and `ptr[i+1]` points to
                 the end.
+            batch (torch.Tensor, optional): [N] LongTensor encoding the graph/set
+                each node/item belongs to. Only required if standardizing inputs.
+            size (torch.Tensor, optional): [N] LongTensor encoding the number of
+                nodes/items per graph/set. If not provided, it is calculated from
+                the batch tensor.
             return_attention_weights (bool, optional): Whether to return the
                 attention weights for each node/item when computing the graph/set
                 representation as a weighted average. Defaults to False.
+            standardize (bool, optional): Whether to standardize the attention score
+                before softmax is applied. Useful if there is a large variance in
+                outputs from the attention layer. Defaults to True.
+            strict (bool, optional): Whether to strictly enforce that a batch and
+                size tensor are passed when standardizing. Otherwise, just compute
+                on the fly with the assumption that all nodes/items belong to the
+                same graph/set AND that this is the entire graph/set.
+                Defaults to True.
 
         Returns:
             torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
                 If `:param:return_attention_weights=False`, just returns the
                 weighted average over all nodes in graph (items in set).
-                Shape [batch_size, D]. Otherwise, also returns the attention weights,
-                or the scores that computed the weighted average.
+                Shape [batch_size, D]. Otherwise, also returns the item-wise
+                attention weights that computed the weighted average.
         """
-        attn_score = self.pooling_attn_layer(
-            x, edge_index, return_attention_weights=False
-        )
+        attn_score = x
+        for layer in self.layers:
+            attn_score = layer(attn_score, edge_index, return_attention_weights=False)
 
-        if self.multiplier != 1.0:
-            attn_score = attn_score * self.multiplier
+        if standardize:
+            # standardize score -> this helps substantially by not forcing model
+            # to choose most influential node/item, instead allowing attn to more
+            # than one node/item
+
+            attn_score = utils.standardize(
+                x=attn_score, ptr=ptr, batch=batch, size=size, strict=strict
+            )
 
         # shape: [N, 1]
         weights = softmax(attn_score, ptr=ptr, dim=0)
 
         # x shape: [N, embedding_dim]
         # output shape: [batch_size, embedding_dim]
-        # TODO: model bias? I don't think my original impl does
-        # main goal is just that the weights are learnable
-        weighted_avg = segment(x * weights, ptr, reduce="sum")
+        weighted_avg = segment(x * weights, ptr, reduce="mean")
         if return_attention_weights:
             return weighted_avg, weights
 
