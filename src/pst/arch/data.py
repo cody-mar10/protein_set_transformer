@@ -115,6 +115,16 @@ def create_chunked_graph(
 
 
 class GenomeDataset(Dataset):
+    __h5_fields__ = {"data", "ptr", "sizes", "class_id", "strand"}
+
+    data: torch.Tensor
+    ptr: torch.Tensor
+    sizes: torch.Tensor
+    class_id: torch.Tensor
+    strand: torch.Tensor
+    weights: torch.Tensor
+    edge_indices: list[torch.Tensor]
+
     def __init__(
         self,
         file: FilePath,
@@ -125,10 +135,9 @@ class GenomeDataset(Dataset):
     ) -> None:
         super().__init__()
         with tb.File(file) as fp:
-            self.data: torch.Tensor = torch.from_numpy(fp.root.data[:])
-            self.ptr: torch.Tensor = torch.from_numpy(fp.root.ptr[:])
-            self.sizes: torch.Tensor = torch.from_numpy(fp.root.sizes[:])
-            self.class_id: torch.Tensor = torch.from_numpy(fp.root.class_id[:])
+            for field in GenomeDataset.__h5_fields__:
+                data = getattr(fp.root, field)
+                setattr(self, field, torch.from_numpy(data[:]))
 
         self.weights = self.get_class_weights(log_inverse)
 
@@ -191,19 +200,27 @@ class GenomeDataset(Dataset):
         return self.sizes.numel()
 
     def __getitem__(self, idx: int) -> Data:
+        # idx should be for a single genome
         start = self.ptr[idx]
         stop = self.ptr[idx + 1]
+
+        # node/item level access (ptn)
         x = self.data[start:stop]
+        strand = self.strand[start:stop]
+
+        # graph/set level access (genome)
         edge_index = self.edge_indices[idx]
         size = self.sizes[idx]
         weight = self.weights[idx]
         class_id = self.class_id[idx]
+
         graph = Data(
             x=x,
             edge_index=edge_index,
             setsize=size,
             weight=weight,
             class_id=class_id,
+            strand=strand,
         )
         return graph
 
