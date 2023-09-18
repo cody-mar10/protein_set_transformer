@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Optional
+
 import torch
 from torch import nn
 from torch_geometric.nn import GraphNorm
@@ -91,20 +93,14 @@ class SetTransformer(nn.Module):
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
         batch: OptTensor = None,
-        size: OptTensor = None,
         return_attention_weights: bool = False,
-        standardize: bool = True,
-        strict: bool = True,
     ) -> OptGraphAttnOutput:
         x_avg = self._decoder["pool"](
             x=x_out,
             edge_index=edge_index,
             ptr=ptr,
             batch=batch,
-            size=size,
             return_attention_weights=return_attention_weights,
-            standardize=standardize,
-            strict=strict,
         )
 
         if return_attention_weights:
@@ -121,21 +117,20 @@ class SetTransformer(nn.Module):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
+        sizes: torch.Tensor,
         batch: OptTensor = None,
-        size: OptTensor = None,
+        pos_encoder: Optional[nn.Module] = None,
         return_attention_weights: bool = False,
-        standardize: bool = True,
-        strict: bool = True,
     ) -> OptGraphAttnOutput:
+        if pos_encoder is not None:
+            x = pos_encoder(x=x, sizes=sizes)
+
         x_out = self.encode(x=x, edge_index=edge_index)
         graph_rep = self.decode(
             x_out=x_out,
             edge_index=edge_index,
             ptr=ptr,
             batch=batch,
-            size=size,
             return_attention_weights=return_attention_weights,
-            standardize=standardize,
-            strict=strict,
         )
         return graph_rep
