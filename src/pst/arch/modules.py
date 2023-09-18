@@ -168,8 +168,6 @@ class ProteinSetTransformer(L.LightningModule):
         batch: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> OptGraphAttnOutput:
-        x = self.signed_encoder(x, feature=strand)
-
         output = self.model(
             x=x,
             edge_index=edge_index,
@@ -204,6 +202,9 @@ class ProteinSetTransformer(L.LightningModule):
         stage: _STAGE_TYPE,
         augment_data: bool = True,
     ) -> torch.Tensor:
+        # add strand encoding here so augmented data has strand info already
+        batch.x = self.signed_encoder(batch.x, feature=batch.strand)
+
         batch_size = batch.setsize.numel()
         setwise_dist, item_flow = stacked_batch_chamfer_distance(
             batch=batch.x, ptr=batch.ptr
