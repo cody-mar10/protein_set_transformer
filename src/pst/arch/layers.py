@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
 
 import torch
 import torch.nn.functional as F
+from einops import rearrange
 from torch import nn
 from torch_geometric.nn import GraphNorm, MessagePassing
 from torch_geometric.typing import OptTensor, PairTensor
 from torch_geometric.utils import add_self_loops, segment, softmax
 
 from pst._typing import OptEdgeAttnOutput, OptGraphAttnOutput
-
-from .training import utils
 
 
 class MultiheadAttentionConv(MessagePassing):
@@ -89,6 +88,12 @@ class MultiheadAttentionConv(MessagePassing):
         self.normQ.reset_parameters()
         self.normO.reset_parameters()
 
+    def uncat_heads(self, x: torch.Tensor) -> torch.Tensor:
+        return rearrange(x, "n (h d) -> n h d", h=self.heads, d=self.out_channels)
+
+    def cat_heads(self, x: torch.Tensor) -> torch.Tensor:
+        return rearrange(x, "n h d -> n (h d)")
+
     def forward(
         self,
         x: torch.Tensor,
@@ -113,15 +118,15 @@ class MultiheadAttentionConv(MessagePassing):
                 that contains the adjusted `edge_index` that contains self-loops
                 [2, E'] and the attention weights [E', H].
         """
-        H, D = self.heads, self.out_channels
         x_input = x
 
         # pre-normalization
         x = self.normQ(x)
 
-        query: torch.Tensor = self.linQ(x).view(-1, H, D)
-        key: torch.Tensor = self.linK(x).view(-1, H, D)
-        value: torch.Tensor = self.linV(x).view(-1, H, D)
+        # shape [N, H * D] -> [N, H, D]
+        query: torch.Tensor = self.uncat_heads(self.linQ(x))
+        key: torch.Tensor = self.uncat_heads(self.linK(x))
+        value: torch.Tensor = self.uncat_heads(self.linV(x))
         edge_index, _ = add_self_loops(edge_index)
 
         # propagate order:
@@ -149,19 +154,28 @@ class MultiheadAttentionConv(MessagePassing):
         ptr: OptTensor = None,
         size_i: Optional[int] = None,
     ) -> torch.Tensor:
+        # input shapes: [E, H, D]
+
         # this computes scaled dot-product attention
         # inner term during self-attention
+
+        # shape: [E, H]
         qk = torch.sum(query_i * key_j, -1) / self.scale
+
+        # shape: [E, H]
         alpha = softmax(qk, index=index, ptr=ptr, num_nodes=size_i, dim=0)
+
         # store attn weights
         self._push_alpha(alpha)
-        out = value_j * alpha.view(-1, self.heads, 1)
+
+        # shape: [E, H, D]
+        out = value_j * rearrange(alpha, "e h -> e h 1")
         return out
 
     def update(self, aggr_out: torch.Tensor, initial: torch.Tensor) -> torch.Tensor:
         if self.concat:
             # shape: [-1, H, D] -> [-1, H * D]
-            aggr_out = aggr_out.view(-1, self.eff_out_channels)
+            aggr_out = self.cat_heads(aggr_out)
         else:
             # shape: [-1, H, D] -> [-1, D]
             aggr_out = aggr_out.mean(dim=1)
@@ -174,7 +188,12 @@ class MultiheadAttentionConv(MessagePassing):
         if initial.size(-1) != out_dim:
             # basically adding all features from initial to aggr_out
             leftover = initial.size(-1) // out_dim
-            initial = initial.view(-1, leftover, out_dim).sum(dim=1)
+            initial = rearrange(
+                initial,
+                "n (l d) -> n l d",
+                l=leftover,
+                d=out_dim,
+            ).sum(dim=1)
 
         # residuals before normalization, ie pre-norm
         aggr_out = aggr_out + initial
@@ -191,7 +210,7 @@ class MultiheadAttentionConv(MessagePassing):
     # since the PyG MessagePassing framework doesn't explicitly allow
     # for returning multiple values from the self.propagate method
     def _push_alpha(self, alpha: torch.Tensor):
-        self._alpha = alpha
+        self._alpha = alpha.detach()
 
     def _pop_alpha(self) -> torch.Tensor:
         # assert self._alpha is None
@@ -226,16 +245,27 @@ class MultiheadAttentionPooling(nn.Module):
             raise ValueError("Must have at least one layer.")
 
         self.layers = nn.ModuleList()
-        kwargs: dict[str, Any] = dict(
-            heads=heads, in_channels=in_channels, dropout=dropout, concat=False
-        )
+        kwargs: dict[str, Any] = dict(heads=heads, dropout=dropout, concat=False)
+
+        in_channels = in_channels
+        out_channels = in_channels // 2
         for _ in range(layers - 1):
             self.layers.append(
-                MultiheadAttentionConv(out_channels=in_channels, **kwargs)
+                MultiheadAttentionConv(
+                    in_channels=in_channels, out_channels=out_channels, **kwargs
+                )
             )
+            # slowy reduce size
+            in_channels = out_channels
+            out_channels //= 2
 
         # final layer should project to 1 dim
-        self.layers.append(MultiheadAttentionConv(out_channels=1, **kwargs))
+        self.layers.append(
+            MultiheadAttentionConv(in_channels=in_channels, out_channels=1, **kwargs)
+        )
+
+        # normalize final layer
+        self.norm = GraphNorm(1)
 
     def forward(
         self,
@@ -243,10 +273,7 @@ class MultiheadAttentionPooling(nn.Module):
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
         batch: OptTensor = None,
-        size: OptTensor = None,
         return_attention_weights: bool = False,
-        standardize: bool = True,
-        strict: bool = True,
     ) -> OptGraphAttnOutput:
         """Compute an attention-based score by projecting the input `x`
         onto a single dimension. These scores are then converted to probabilites
@@ -264,20 +291,9 @@ class MultiheadAttentionPooling(nn.Module):
                 the end.
             batch (torch.Tensor, optional): [N] LongTensor encoding the graph/set
                 each node/item belongs to. Only required if standardizing inputs.
-            size (torch.Tensor, optional): [N] LongTensor encoding the number of
-                nodes/items per graph/set. If not provided, it is calculated from
-                the batch tensor.
             return_attention_weights (bool, optional): Whether to return the
                 attention weights for each node/item when computing the graph/set
                 representation as a weighted average. Defaults to False.
-            standardize (bool, optional): Whether to standardize the attention score
-                before softmax is applied. Useful if there is a large variance in
-                outputs from the attention layer. Defaults to True.
-            strict (bool, optional): Whether to strictly enforce that a batch and
-                size tensor are passed when standardizing. Otherwise, just compute
-                on the fly with the assumption that all nodes/items belong to the
-                same graph/set AND that this is the entire graph/set.
-                Defaults to True.
 
         Returns:
             torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
@@ -290,14 +306,10 @@ class MultiheadAttentionPooling(nn.Module):
         for layer in self.layers:
             attn_score = layer(attn_score, edge_index, return_attention_weights=False)
 
-        if standardize:
-            # standardize score -> this helps substantially by not forcing model
-            # to choose most influential node/item, instead allowing attn to more
-            # than one node/item
-
-            attn_score = utils.standardize(
-                x=attn_score, ptr=ptr, batch=batch, size=size, strict=strict
-            )
+        # standardize score -> this helps substantially by not forcing model
+        # to choose most influential node/item, instead allowing attn to more
+        # than one node/item
+        attn_score = self.norm(attn_score, batch)
 
         # shape: [N, 1]
         weights = softmax(attn_score, ptr=ptr, dim=0)
@@ -336,20 +348,48 @@ class FeedForward(nn.Module):
 
 
 class FixedPositionalEncoding(nn.Module):
-    def __init__(self, dim: int, max_size: int) -> None:
-        super().__init__()
-        inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2, dtype=torch.float) / dim))
-        position = torch.arange(0, max_size, dtype=torch.float)
-        sinusoid_inp = torch.einsum("i,j->ij", position, inv_freq)
-        emb = torch.cat((sinusoid_inp.sin(), sinusoid_inp.cos()), dim=-1)
-        self.register_buffer("emb", emb)
-        self.emb: torch.Tensor
+    """Sinusoidal fixed positional encodings.
 
-    def forward(self, x: torch.Tensor, sizes: Iterable[int]) -> torch.Tensor:
+    Encodings are computed on the fly for each batch.
+    """
+
+    def positional_encoding(self, x: torch.Tensor, sizes: torch.Tensor) -> torch.Tensor:
+        dim = x.size(-1)
+        max_size = sizes.amax().item()
+
+        # shape: [dim / 2]
+        exp = torch.arange(0, dim, 2, dtype=torch.float) / dim
+        inv_freq = 1.0 / (10000**exp)
+
+        # shape: [max_size]
+        position = torch.arange(0, max_size, dtype=torch.float)
+
+        # shape: [max_size, dim / 2]
+        sinusoid_inp = torch.einsum("i,j->ij", position, inv_freq)
+
+        # shape: [max_size, dim]
+        enc = torch.cat((sinusoid_inp.sin(), sinusoid_inp.cos()), dim=-1).to(x.device)
+        return enc
+
+    def forward(self, x: torch.Tensor, sizes: torch.Tensor) -> torch.Tensor:
         # get position for each ptn in each genome
-        relpos = torch.cat([torch.arange(size) for size in sizes])
-        encoding = self.emb[relpos].to(device=x.device)
+        relpos = torch.cat([torch.arange(size.item()) for size in sizes])
+        encoding = self.positional_encoding(x, sizes)[relpos]
         return encoding + x
+
+
+class SignedBinaryEncoding(nn.Module):
+    def __init__(self, value: float = 0.5) -> None:
+        super().__init__()
+        self.value = value
+
+    def forward(self, x: torch.Tensor, feature: torch.Tensor) -> torch.Tensor:
+        # feature is a tensor of 1, -1 values representing a sign
+        # shapes:
+        # x: [N, D]
+        # feature: [N] -> need to unsqueeze to [N, 1]
+
+        return x + feature.unsqueeze(-1) * self.value
 
 
 class ResidualMultiheadAttentionConv(MultiheadAttentionConv):
