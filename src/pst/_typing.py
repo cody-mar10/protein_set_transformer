@@ -16,6 +16,7 @@ class DataBatch(Protocol):
     setsize: Tensor
     weight: Tensor
     class_id: Tensor
+    strand: Tensor
 
 
 EdgeIndexStrategy = Literal["full", "sparse", "chunked"]
