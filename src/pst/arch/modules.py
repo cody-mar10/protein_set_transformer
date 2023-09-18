@@ -164,7 +164,6 @@ class ProteinSetTransformer(L.LightningModule):
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
         sizes: torch.Tensor,
-        strand: torch.Tensor,
         batch: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> OptGraphAttnOutput:
@@ -190,7 +189,6 @@ class ProteinSetTransformer(L.LightningModule):
             edge_index=batch.edge_index,
             ptr=batch.ptr,
             sizes=batch.setsize,
-            strand=batch.strand,
             batch=batch.batch,
             return_attention_weights=return_attention_weights,
         )
