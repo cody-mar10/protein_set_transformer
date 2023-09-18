@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Iterator, Literal, cast
+from typing import Any, Iterator, Literal, Optional, cast
 
 import lightning as L
 import torch
@@ -12,6 +12,7 @@ from transformers import get_linear_schedule_with_warmup
 
 from pst._typing import DataBatch, OptGraphAttnOutput
 
+from .layers import FixedPositionalEncoding, SignedBinaryEncoding
 from .models import SetTransformer
 from .training.distance import stacked_batch_chamfer_distance
 from .training.loss import AugmentedWeightedTripletLoss, LossConfig
@@ -51,6 +52,17 @@ class ModelConfig(BaseModelConfig):
     dropout: float = Field(
         0.5, description="dropout proportion during training", ge=0.0, lt=1.0
     )
+    signed_encoding_value: Optional[float] = Field(
+        None,
+        description=(
+            "signed encoding magnitude for distinguishing forward / reverse strands"
+        ),
+        gt=0.0,
+        le=1.0,
+    )
+    positional_encoding: bool = Field(
+        True, description="use sinusoidal fixed positional encodings"
+    )
     compile: bool = Field(False, description="compile model using torch.compile")
     optimizer: OptimizerConfig
     loss: LossConfig
@@ -80,6 +92,9 @@ class ProteinSetTransformer(L.LightningModule):
         super().__init__()
         self.config = config
         self.save_hyperparameters(config.model_dump(exclude={"fabric"}))
+        self._pos_encoder: Optional[torch.nn.Module] = (
+            FixedPositionalEncoding() if config.positional_encoding else None
+        )
         self.model = SetTransformer(
             **self.config.model_dump(
                 include={
@@ -87,6 +102,7 @@ class ProteinSetTransformer(L.LightningModule):
                     "out_dim",
                     "num_heads",
                     "n_enc_layers",
+                    "n_dec_layers",
                     "multiplier",
                     "dropout",
                 }
@@ -100,6 +116,7 @@ class ProteinSetTransformer(L.LightningModule):
         self.optimizer_cfg = config.optimizer
         self.augmentation_cfg = config.augmentation
         self.fabric = config.fabric
+        self.signed_encoder = SignedBinaryEncoding(config.signed_encoding_value or 0.0)
 
     def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
         return self.model.parameters(recurse=recurse)
@@ -146,40 +163,38 @@ class ProteinSetTransformer(L.LightningModule):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
+        sizes: torch.Tensor,
+        strand: torch.Tensor,
         batch: OptTensor = None,
-        size: OptTensor = None,
         return_attention_weights: bool = False,
-        standardize: bool = True,
-        strict: bool = True,
     ) -> OptGraphAttnOutput:
+        x = self.signed_encoder(x, feature=strand)
+
         output = self.model(
             x=x,
             edge_index=edge_index,
             ptr=ptr,
+            sizes=sizes,
             batch=batch,
-            size=size,
+            pos_encoder=self._pos_encoder,
             return_attention_weights=return_attention_weights,
-            standardize=standardize,
-            strict=strict,
         )
         return output
 
     def _databatch_forward(
-        self,
-        batch: DataBatch,
-        return_attention_weights: bool = False,
-        standardize: bool = True,
-        strict: bool = True,
+        self, batch: DataBatch, return_attention_weights: bool = False, **overrides
     ) -> OptGraphAttnOutput:
+        # technically defaults should be used for all of the batch fields
+        # but the only time we need to override is with the augmented x tensor
+        # but this allows for type safety in the augmented forward step now
         return self(
-            x=batch.x,
+            x=overrides.get("x", batch.x),  # allow overriding for augmentation step
             edge_index=batch.edge_index,
             ptr=batch.ptr,
+            sizes=batch.setsize,
+            strand=batch.strand,
             batch=batch.batch,
-            size=batch.setsize,
             return_attention_weights=return_attention_weights,
-            standardize=standardize,
-            strict=strict,
         )
 
     def _forward_step(
@@ -188,8 +203,6 @@ class ProteinSetTransformer(L.LightningModule):
         batch_idx: int,
         stage: _STAGE_TYPE,
         augment_data: bool = True,
-        standardize: bool = True,
-        strict: bool = True,
     ) -> torch.Tensor:
         batch_size = batch.setsize.numel()
         setwise_dist, item_flow = stacked_batch_chamfer_distance(
@@ -206,8 +219,6 @@ class ProteinSetTransformer(L.LightningModule):
             self._databatch_forward(
                 batch=batch,
                 return_attention_weights=False,
-                standardize=standardize,
-                strict=strict,
             ),
         )
 
@@ -230,8 +241,6 @@ class ProteinSetTransformer(L.LightningModule):
                 pos_idx=pos_idx,
                 neg_idx=neg_idx,
                 item_flow=item_flow,
-                standardize=standardize,
-                strict=strict,
             )
         else:
             y_aug_pos = None
@@ -259,8 +268,6 @@ class ProteinSetTransformer(L.LightningModule):
         pos_idx: torch.Tensor,
         neg_idx: torch.Tensor,
         item_flow: dict[tuple[int, int], torch.Tensor],
-        standardize: bool = True,
-        strict: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         augmented_batch = point_swap_sampling(
             batch=batch.x,
@@ -270,15 +277,13 @@ class ProteinSetTransformer(L.LightningModule):
             sample_rate=self.augmentation_cfg.sample_rate,
         )
 
-        y_aug_pos = self(
-            x=augmented_batch,
-            edge_index=batch.edge_index,
-            ptr=batch.ptr,
-            batch=batch.batch,
-            size=batch.setsize,
-            return_attention_weights=False,
-            standardize=standardize,
-            strict=strict,
+        y_aug_pos = cast(
+            torch.Tensor,
+            self._databatch_forward(
+                batch=batch,
+                return_attention_weights=False,
+                x=augmented_batch,
+            ),
         )
 
         y_aug_neg, aug_neg_weights = heuristic_augmented_negative_sampling(
