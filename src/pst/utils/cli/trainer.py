@@ -67,5 +67,7 @@ class TrainerArgs(BaseModel):
     )
 
     @field_validator("max_time", mode="before")
-    def _convert(cls, value: str):
-        return MaxTimeOpts[value]
+    def _convert(cls, value: str | MaxTimeOpts) -> MaxTimeOpts:
+        if isinstance(value, str):
+            return MaxTimeOpts[value]
+        return value
