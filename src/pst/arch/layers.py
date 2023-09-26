@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 import torch
 import torch.nn.functional as F
-from einops import rearrange
+from einops import rearrange, reduce
 from torch import nn
 from torch_geometric.nn import GraphNorm, MessagePassing
 from torch_geometric.typing import OptTensor, PairTensor
@@ -71,11 +71,21 @@ class MultiheadAttentionConv(MessagePassing):
         if concat:
             # aggr_out will have shape: [-1, H * D]
             self.normO = GraphNorm(self.eff_out_channels)
-            self.linO = nn.Linear(self.eff_out_channels, self.eff_out_channels)
+            # self.linO = nn.Linear(self.eff_out_channels, self.eff_out_channels)
+            self.linO = PositionwiseFeedForward(
+                hidden_dim=self.eff_out_channels,
+                out_dim=self.eff_out_channels,
+                dropout=self.dropout,
+            )
         else:
             # aggr_out will have shape: [-1, D]
             self.normO = GraphNorm(self.out_channels)
-            self.linO = nn.Linear(out_channels, out_channels)
+            # self.linO = nn.Linear(out_channels, out_channels)
+            self.linO = PositionwiseFeedForward(
+                hidden_dim=self.out_channels,
+                out_dim=self.out_channels,
+                dropout=self.dropout,
+            )
 
         self.reset_parameters()
 
@@ -89,10 +99,15 @@ class MultiheadAttentionConv(MessagePassing):
         self.normO.reset_parameters()
 
     def uncat_heads(self, x: torch.Tensor) -> torch.Tensor:
-        return rearrange(x, "n (h d) -> n h d", h=self.heads, d=self.out_channels)
+        return rearrange(
+            x,
+            "nodes (heads dim) -> nodes heads dim",
+            heads=self.heads,
+            dim=self.out_channels,
+        )
 
     def cat_heads(self, x: torch.Tensor) -> torch.Tensor:
-        return rearrange(x, "n h d -> n (h d)")
+        return rearrange(x, "nodes heads dim -> nodes (heads dim)")
 
     def forward(
         self,
@@ -169,7 +184,7 @@ class MultiheadAttentionConv(MessagePassing):
         self._push_alpha(alpha)
 
         # shape: [E, H, D]
-        out = value_j * rearrange(alpha, "e h -> e h 1")
+        out = value_j * rearrange(alpha, "edges heads -> edges heads 1")
         return out
 
     def update(self, aggr_out: torch.Tensor, initial: torch.Tensor) -> torch.Tensor:
@@ -178,7 +193,7 @@ class MultiheadAttentionConv(MessagePassing):
             aggr_out = self.cat_heads(aggr_out)
         else:
             # shape: [-1, H, D] -> [-1, D]
-            aggr_out = aggr_out.mean(dim=1)
+            aggr_out = reduce(aggr_out, "nodes heads dim -> nodes dim", "mean")
 
         # initial shape: [-1, Di] != [-1, H * D] necessarily
         # this doesn't matter if you just set the out dim D to be
@@ -190,19 +205,18 @@ class MultiheadAttentionConv(MessagePassing):
             leftover = initial.size(-1) // out_dim
             initial = rearrange(
                 initial,
-                "n (l d) -> n l d",
-                l=leftover,
-                d=out_dim,
-            ).sum(dim=1)
+                "nodes (left dim) -> nodes left dim",
+                left=leftover,
+                dim=out_dim,
+            )
+            initial = reduce(initial, "nodes left dim -> nodes dim", "sum")
 
         # residuals before normalization, ie pre-norm
         aggr_out = aggr_out + initial
         normed_aggr_out = self.normO(aggr_out)
-        aggr_out = aggr_out + F.dropout(
-            F.relu(self.linO(normed_aggr_out)),
-            p=self.dropout,
-            training=self.training,
-        )
+
+        # linO is a 2-layer feedforward network
+        aggr_out = aggr_out + self.linO(normed_aggr_out)
 
         return aggr_out
 
@@ -249,7 +263,7 @@ class MultiheadAttentionPooling(nn.Module):
 
         in_channels = in_channels
         out_channels = in_channels // 2
-        for _ in range(layers - 1):
+        for _ in range(layers):
             self.layers.append(
                 MultiheadAttentionConv(
                     in_channels=in_channels, out_channels=out_channels, **kwargs
@@ -259,13 +273,13 @@ class MultiheadAttentionPooling(nn.Module):
             in_channels = out_channels
             out_channels //= 2
 
-        # final layer should project to 1 dim
-        self.layers.append(
-            MultiheadAttentionConv(in_channels=in_channels, out_channels=1, **kwargs)
-        )
-
         # normalize final layer
-        self.norm = GraphNorm(1)
+        self.norm = GraphNorm(in_channels)
+
+        # feed forward now projects to 1 dim
+        self.lin = PositionwiseFeedForward(
+            hidden_dim=in_channels, out_dim=1, dropout=dropout
+        )
 
     def forward(
         self,
@@ -310,6 +324,7 @@ class MultiheadAttentionPooling(nn.Module):
         # to choose most influential node/item, instead allowing attn to more
         # than one node/item
         attn_score = self.norm(attn_score, batch)
+        attn_score = self.lin(attn_score)
 
         # shape: [N, 1]
         weights = softmax(attn_score, ptr=ptr, dim=0)
@@ -323,7 +338,7 @@ class MultiheadAttentionPooling(nn.Module):
         return weighted_avg
 
 
-class FeedForward(nn.Module):
+class PositionwiseFeedForward(nn.Module):
     def __init__(
         self,
         hidden_dim: int,
@@ -338,12 +353,17 @@ class FeedForward(nn.Module):
         self.dropout = dropout
         self.w2 = nn.Linear(hidden_dim, out_dim)
 
+    def reset_parameters(self):
+        self.w1.reset_parameters()
+        self.w2.reset_parameters()
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h: torch.Tensor
-        h = self.w1(x)
+        # following fairseq impl where no actv after 2nd linear layer
+        h: torch.Tensor = self.w1(x)
         h = self.activation(h)
         h = F.dropout(h, p=self.dropout, training=self.training)
         h = self.w2(h)
+        h = F.dropout(h, p=self.dropout, training=self.training)
         return h
 
 
@@ -374,7 +394,7 @@ class FixedPositionalEncoding(nn.Module):
     def forward(self, x: torch.Tensor, sizes: torch.Tensor) -> torch.Tensor:
         # get position for each ptn in each genome
         relpos = torch.cat([torch.arange(size.item()) for size in sizes])
-        encoding = self.positional_encoding(x, sizes)[relpos]
+        encoding = self.positional_encoding(x, sizes)[relpos].detach()
         return encoding + x
 
 
@@ -388,11 +408,13 @@ class SignedBinaryEncoding(nn.Module):
         # shapes:
         # x: [N, D]
         # feature: [N] -> need to unsqueeze to [N, 1]
+        feature = rearrange(feature, "nodes -> nodes 1")
 
-        return x + feature.unsqueeze(-1) * self.value
+        return x + feature * self.value
 
 
 class ResidualMultiheadAttentionConv(MultiheadAttentionConv):
+    # TODO: this module is not finished
     def forward(
         self,
         pair: PairTensor,
