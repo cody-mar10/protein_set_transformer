@@ -200,16 +200,17 @@ class MultiheadAttentionConv(MessagePassing):
         # Di // H like usual, but matters for projecting to 1 dim
         # during pooling -- similar problem below
         out_dim = aggr_out.size(-1)
-        if initial.size(-1) != out_dim:
+        init_dim = initial.size(-1)
+        if init_dim != out_dim:
             # basically adding all features from initial to aggr_out
-            leftover = initial.size(-1) // out_dim
-            initial = rearrange(
+            leftover = init_dim // out_dim
+            initial = reduce(
                 initial,
-                "nodes (left dim) -> nodes left dim",
+                "nodes (left dim) -> nodes dim",
+                reduction="sum",
                 left=leftover,
                 dim=out_dim,
             )
-            initial = reduce(initial, "nodes left dim -> nodes dim", "sum")
 
         # residuals before normalization, ie pre-norm
         aggr_out = aggr_out + initial
