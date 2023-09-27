@@ -301,7 +301,7 @@ class GenomeDataModule(CrossValidationDataModule):
         # shared / global dataloader kwargs, but they can still be updated
         self.dataloader_kwargs = kwargs
 
-        self.save_hyperparameters(config.dict(include=self._LOGGABLE_HPARAMS))
+        self.save_hyperparameters(config.model_dump(include=self._LOGGABLE_HPARAMS))
 
     # collate_fn
     def _convert_data_indices_to_genome_data_batch(
