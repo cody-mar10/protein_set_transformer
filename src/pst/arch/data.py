@@ -93,7 +93,7 @@ def create_chunked_graph(
     connected_comp = list(chunked(range(num_nodes), n=chunk_size))
     # don't want any connected components / subgraphs that only have 1 node
     if len(connected_comp[-1]) == 1:
-        connected_comp[-2].append(connected_comp[-1][0])
+        connected_comp[-2].extend(connected_comp[-1])
         del connected_comp[-1]
 
     # False if threshold == -1 or >= chunk_size
