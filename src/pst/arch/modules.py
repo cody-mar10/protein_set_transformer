@@ -323,6 +323,9 @@ class ProteinSetTransformer(L.LightningModule):
     def predict_step(
         self, batch: DataBatch, batch_idx: int, dataloader_idx: int = 0
     ) -> OptGraphAttnOutput:
+        # add strand encodings first
+        batch.x = self.signed_encoder(batch.x, feature=batch.strand)
+        # internally, the positional encodings are added later
         return self._databatch_forward(batch=batch)
 
 
