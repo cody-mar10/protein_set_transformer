@@ -9,7 +9,11 @@ from torch_geometric.typing import OptTensor
 
 from pst._typing import OptGraphAttnOutput
 
-from .layers import MultiheadAttentionConv, MultiheadAttentionPooling
+from .layers import (
+    MultiheadAttentionConv,
+    MultiheadAttentionPooling,
+    PositionwiseFeedForward,
+)
 
 
 class SetTransformer(nn.Module):
@@ -71,9 +75,8 @@ class SetTransformer(nn.Module):
         self._decoder["pool"] = MultiheadAttentionPooling(
             in_channels=out_dim, heads=num_heads, layers=n_dec_layers, dropout=dropout
         )
-        self._decoder["linear"] = nn.Sequential(
-            nn.Linear(out_dim, out_dim),
-            nn.Linear(out_dim, out_dim),
+        self._decoder["linear"] = PositionwiseFeedForward(
+            hidden_dim=out_dim, out_dim=out_dim, dropout=dropout
         )
         # final shapes: [B, D'] -> [B, D''], ie output dimension now
         ###################
