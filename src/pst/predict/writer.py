@@ -52,7 +52,7 @@ class PredictionWriter(BasePredictionWriter):
         outdir = self.outdir.joinpath(f"{self.dataset_prefix}_{dataloader_idx}")
         outdir.mkdir(parents=True, exist_ok=True)
         output_file = outdir.joinpath(f"{self.batch_prefix}_{batch_idx}.h5")
-        predictions = predictions.numpy()
+        predictions = predictions.cpu().numpy()
 
         with tb.File(output_file, "w") as fp:
             fp.create_carray(
