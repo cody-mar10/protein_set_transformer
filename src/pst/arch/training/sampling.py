@@ -81,7 +81,7 @@ def negative_sampling(
     else:
         # pos_idx is just aligned already in the case of sampling from point swapped
         # augmented data
-        pos_idx = torch.arange(Y.size(0))
+        pos_idx = torch.arange(Y.size(0)).to(Y.device)
     batch_size = pos_idx.size(0)
     # in case of sampling from real dataset, diag should be 0 due to self-comparison
     # so don't allow self to be chosen as neg sample
@@ -194,6 +194,7 @@ def point_swap_sampling(
     aug_idx = torch.where(mask, aug_idx, default)
 
     augmented_batch = batch[aug_idx]
+    # TODO: optionally return aug_idx for faster augmented negative sampling
     return augmented_batch
 
 
