@@ -5,8 +5,6 @@ from typing import Literal, Optional
 import torch
 from pydantic import BaseModel, Field
 
-from pst._typing import FlowType
-
 from .distance import pairwise_chamfer_distance
 
 NO_NEGATIVES_MODES = Literal["closest_to_positive", "closest_to_anchor"]
@@ -27,9 +25,7 @@ class AugmentationConfig(BaseModel):
     )
 
 
-def positive_sampling(
-    setdist: torch.Tensor, mask_diagonal: bool = True
-) -> torch.Tensor:
+def positive_sampling(setdist: torch.Tensor) -> torch.Tensor:
     """Perform positive sampling using a set-wise distance metric like Chamfer distance.
 
     It is recommended that the set-wise distance be calculated BEFORE a model forward
@@ -39,18 +35,12 @@ def positive_sampling(
 
     Args:
         setdist (torch.Tensor)
-        mask_diagonal (bool): use if the diagonal needs to be masked since that
-            is likely a zero vector. In other words, don't choose self as the
-            positive index. Defaults to True.
 
     Returns:
         torch.Tensor: tensor with the indices of the positive set
     """
-    # choose smallest k distances
-    # the diagonal is likely all 0s, so that will be the smallest values per row
-    k = 2 if mask_diagonal else 1
-    pos_sample_idx: torch.Tensor = setdist.topk(k, dim=-1, largest=False)[1][:, -1]
-    return pos_sample_idx
+    masked = setdist.clone().fill_diagonal_(torch.inf)
+    return masked.argmin(dim=-1)
 
 
 def _semi_hard_negative_sampling(
@@ -169,9 +159,9 @@ class TripletSetSampler:
 
 def point_swap_sampling(
     batch: torch.Tensor,
-    ptr: torch.Tensor,
     pos_idx: torch.Tensor,
-    item_flow: FlowType,
+    item_flow: torch.Tensor,
+    sizes: torch.Tensor,
     sample_rate: float,
 ) -> torch.Tensor:
     """Perform point swap sampling data augmentation.
@@ -185,6 +175,7 @@ def point_swap_sampling(
         item_flow (FlowType): dict mapping pairs of indices (i,j) to the
             closest item index for each item m in set i to the items n
             in set j
+        sizes (torch.Tensor): shape: [batch_size], size of each point set
         sample_rate (float): rate of point swapping, (0.0, 1.0)
 
     Returns:
@@ -193,29 +184,16 @@ def point_swap_sampling(
     if sample_rate <= 0.0 or sample_rate >= 1.0:
         raise ValueError(f"Provided {sample_rate=} must be in the range (0.0, 1.0)")
 
-    # build point swap index that maps k-th item in batch to its l-th neighbor
-    # as defined by randomly sampling among the available flow
-    # for set i and set j comparisons
-    point_swap_indices: list[torch.Tensor] = list()
-    device = pos_idx.device
-    for i, j in enumerate(pos_idx):
-        j = int(j)
+    pos_idx = pos_idx.repeat_interleave(sizes).unsqueeze(1)
+    aug_idx = item_flow.gather(dim=1, index=pos_idx).squeeze()
 
-        # convert relative item indices to global item indices
-        i_offset = ptr[i]
-        j_offset = ptr[j]
+    # sample from uniform [0, 1) distribution to determine whether to swap
+    # True = should swap, False = should not swap
+    mask = torch.rand(aug_idx.size(0), device=aug_idx.device) >= sample_rate
+    default = torch.arange(aug_idx.size(0), device=aug_idx.device)
+    aug_idx = torch.where(mask, aug_idx, default)
 
-        pos_item_idx = item_flow[i, j] + j_offset
-        n_items = pos_item_idx.shape[0]
-        anchor_idx = torch.arange(n_items, device=device) + i_offset
-
-        # sample from uniform [0, 1) distribution
-        choices = torch.rand(n_items, device=device) >= sample_rate
-        point_swap_idx = torch.where(choices, pos_item_idx, anchor_idx)
-        point_swap_indices.append(point_swap_idx)
-
-    point_swap_index = torch.cat(point_swap_indices).to(device=device)
-    augmented_batch = batch[point_swap_index]
+    augmented_batch = batch[aug_idx]
     return augmented_batch
 
 
