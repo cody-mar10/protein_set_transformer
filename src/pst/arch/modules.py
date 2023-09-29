@@ -18,7 +18,6 @@ from .training.distance import stacked_batch_chamfer_distance
 from .training.loss import AugmentedWeightedTripletLoss, LossConfig
 from .training.sampling import (
     AugmentationConfig,
-    heuristic_augmented_negative_sampling,
     negative_sampling,
     point_swap_sampling,
     positive_sampling,
@@ -238,7 +237,7 @@ class ProteinSetTransformer(L.LightningModule):
             y_aug_pos, y_aug_neg, aug_neg_weights = self._augmented_forward_step(
                 batch=batch,
                 pos_idx=pos_idx,
-                neg_idx=neg_idx,
+                y_anchor=y_anchor,
                 item_flow=item_flow,
             )
         else:
@@ -265,14 +264,14 @@ class ProteinSetTransformer(L.LightningModule):
         self,
         batch: DataBatch,
         pos_idx: torch.Tensor,
-        neg_idx: torch.Tensor,
-        item_flow: dict[tuple[int, int], torch.Tensor],
+        y_anchor: torch.Tensor,
+        item_flow: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         augmented_batch = point_swap_sampling(
             batch=batch.x,
-            ptr=batch.ptr,
             pos_idx=pos_idx,
             item_flow=item_flow,
+            sizes=batch.setsize,
             sample_rate=self.augmentation_cfg.sample_rate,
         )
 
@@ -285,15 +284,32 @@ class ProteinSetTransformer(L.LightningModule):
             ),
         )
 
-        y_aug_neg, aug_neg_weights = heuristic_augmented_negative_sampling(
-            X_anchor=batch.x,
-            X_aug=augmented_batch,
-            y_aug=y_aug_pos,
-            neg_idx=neg_idx,
-            ptr=batch.ptr,
-            scale=self.augmentation_cfg.sample_scale,
+        # TODO: should be able to compute negative index much faster now
+        # y_aug_neg, aug_neg_weights = heuristic_augmented_negative_sampling(
+        #     X_anchor=batch.x,
+        #     X_aug=augmented_batch,
+        #     y_aug=y_aug_pos,
+        #     neg_idx=neg_idx,
+        #     ptr=batch.ptr,
+        #     scale=self.augmentation_cfg.sample_scale,
+        # )
+        # TODO: we actually don't need to calculate the distances again
+        # since we've already done that. We should make sbcd return the min_distances
+        # and then just reindex it with the point_swap_sampling indices
+        # sounds more complicated so will implement it later
+        setdist_real_aug, _ = stacked_batch_chamfer_distance(
+            batch=batch.x, ptr=batch.ptr, other=augmented_batch
         )
 
+        aug_neg_idx, aug_neg_weights = negative_sampling(
+            setwise_dist=setdist_real_aug,
+            X=y_anchor,
+            Y=y_aug_pos,
+            scale=self.augmentation_cfg.sample_scale,
+            no_negatives_mode=self.augmentation_cfg.no_negatives_mode,
+        )
+
+        y_aug_neg = y_aug_pos[aug_neg_idx]
         return y_aug_pos, y_aug_neg, aug_neg_weights
 
     def training_step(self, train_batch: DataBatch, batch_idx: int) -> torch.Tensor:
