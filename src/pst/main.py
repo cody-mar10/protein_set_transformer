@@ -3,7 +3,7 @@ from __future__ import annotations
 import lightning as L
 import torch
 
-from pst.predict.predict import Predictor
+from pst.predict import model_inference
 from pst.training import cv, full
 from pst.training.tuning import tuning
 from pst.utils.cli import Args, parse_args
@@ -32,8 +32,7 @@ def test_main(args: Args):
 
 def predict_main(args: InferenceMode):
     L.seed_everything(_SEED)
-    predictor = Predictor(**args.model_dump(include={"predict", "trainer", "data"}))
-    predictor.predict()
+    model_inference(args, False)
 
 
 def _check_cpu_accelerator(config: TrainingMode):
