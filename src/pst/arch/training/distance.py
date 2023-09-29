@@ -1,13 +1,24 @@
 from __future__ import annotations
 
 import torch
+from torch_scatter import segment_mean_csr, segment_min_csr
+
+from pst._typing import OptTensor, PairTensor
 
 
-# this will only get compiled when a CUDA GPU is available
-@torch.compile(mode="max-autotune", disable=not torch.cuda.is_available())
+def _stacked_batch_chamfer_distance(
+    all_pairwise_dist: torch.Tensor, ptr: torch.Tensor
+) -> PairTensor:
+    min_dists, flow_idx = segment_min_csr(all_pairwise_dist, ptr)
+    mean_dist = segment_mean_csr(min_dists.t(), ptr)
+
+    chamfer_dist = mean_dist + mean_dist.t()
+    return chamfer_dist, flow_idx.t()
+
+
 def stacked_batch_chamfer_distance(
-    batch: torch.Tensor, ptr: torch.Tensor
-) -> tuple[torch.Tensor, dict[tuple[int, int], torch.Tensor]]:
+    batch: torch.Tensor, ptr: torch.Tensor, *, other: OptTensor = None
+) -> PairTensor:
     """Compute Chamfer distance for all point sets stacked into a 2D batch
     without padding.
 
@@ -20,56 +31,31 @@ def stacked_batch_chamfer_distance(
             is the end of point set i.
 
     Returns:
-        tuple[torch.Tensor, dict[tuple[int, int], torch.Tensor]]:
-            chamfer distance tensor and the item flow indices for each
-            combination of point sets
+        tuple[torch.Tensor, torch.Tensor]:
+
+            - chamfer distance tensor, shape [batch_size, batch_size]
+            - item flow indices, F, shape [N, batch_size]
+              - Fij points to the item index in `batch` that is closest to
+              the ith them in point set j.
     """
-    all_pairwise_dist = torch.cdist(batch, batch, p=2.0).square().fill_diagonal_(0.0)
-    batch_size = int(ptr.numel() - 1)
-    chamfer_dist = torch.zeros(batch_size, batch_size, device=batch.device)
-
-    # TODO: this could probably just be a single tensor, and then you compute the
-    # offsets as necessary
-    flow_idx: dict[tuple[int, int], torch.Tensor] = dict()
-    for i in range(batch_size):
-        start_x = ptr[i]
-        end_x = ptr[i + 1]
-
-        for j in range(i + 1, batch_size):
-            start_y = ptr[j]
-            end_y = ptr[j + 1]
-
-            block = all_pairwise_dist[start_x:end_x, start_y:end_y]
-
-            x_min: torch.Tensor
-            x_flow: torch.Tensor
-            y_min: torch.Tensor
-            y_flow: torch.Tensor
-            x_min, x_flow = block.min(dim=1)
-            y_min, y_flow = block.min(dim=0)
-
-            x_dist = x_min.mean()
-            y_dist = y_min.mean()
-            dist = x_dist + y_dist
-            chamfer_dist[i, j] = dist
-            chamfer_dist[j, i] = dist
-
-            flow_idx[i, j] = x_flow
-            flow_idx[j, i] = y_flow
-
-    return chamfer_dist, flow_idx
+    if other is None:
+        # chamfer distance for all graphs/sets in the batch
+        all_pairwise_dist = (
+            torch.cdist(batch, batch, p=2.0).square().fill_diagonal_(0.0)
+        )
+    else:
+        # chamfer distance between real and augmented point sets
+        all_pairwise_dist = torch.cdist(batch, other, p=2.0).square()
+    return _stacked_batch_chamfer_distance(all_pairwise_dist, ptr)
 
 
 def pairwise_chamfer_distance(x: torch.Tensor, y: torch.Tensor) -> float:
     dist = torch.cdist(x, y, p=2.0).square()
     x_min: torch.Tensor
     y_min: torch.Tensor
-    x_min = dist.min(dim=1)[0]
-    y_min = dist.min(dim=0)[0]
+    x_min = dist.amin(dim=1)
+    y_min = dist.amin(dim=0)
 
     chamfer_dist = float(x_min.mean() + y_min.mean())
     return chamfer_dist
-
-
-# TODO: heuristic all-against-all chamfer distance as a fn
-# of item-level knn using faiss
+    return chamfer_dist
