@@ -368,6 +368,23 @@ class PositionwiseFeedForward(nn.Module):
         return h
 
 
+class PositionalEmbedding(nn.Module):
+    def __init__(self, dim: int, max_size=2048):
+        self.embedding_dim = dim
+        self.max_size = max_size
+        self._embedding = nn.Embedding(max_size, dim)
+
+    def expand(self, max_size: int):
+        self._embedding = nn.Embedding(max_size, self.embedding_dim)
+
+    def forward(self, sizes: torch.Tensor) -> torch.Tensor:
+        positional_idx = torch.cat([torch.arange(int(size)) for size in sizes]).to(
+            sizes.device
+        )
+        positional_embedding = self._embedding(positional_idx)
+        return positional_embedding
+
+
 class FixedPositionalEncoding(nn.Module):
     """Sinusoidal fixed positional encodings.
 
@@ -397,21 +414,6 @@ class FixedPositionalEncoding(nn.Module):
         relpos = torch.cat([torch.arange(size.item()) for size in sizes])
         encoding = self.positional_encoding(x, sizes)[relpos].detach()
         return encoding + x
-
-
-class SignedBinaryEncoding(nn.Module):
-    def __init__(self, value: float = 0.5) -> None:
-        super().__init__()
-        self.value = value
-
-    def forward(self, x: torch.Tensor, feature: torch.Tensor) -> torch.Tensor:
-        # feature is a tensor of 1, -1 values representing a sign
-        # shapes:
-        # x: [N, D]
-        # feature: [N] -> need to unsqueeze to [N, 1]
-        feature = rearrange(feature, "nodes -> nodes 1")
-
-        return x + feature * self.value
 
 
 class ResidualMultiheadAttentionConv(MultiheadAttentionConv):
