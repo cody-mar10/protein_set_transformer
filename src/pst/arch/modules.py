@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Iterator, Literal, Optional, cast
+from typing import Any, Iterator, Literal, cast
 
 import lightning as L
 import torch
@@ -51,17 +51,6 @@ class ModelConfig(BaseModelConfig):
     n_dec_layers: int = Field(2, description="number of decoder layers", gt=0, le=5)
     dropout: float = Field(
         0.5, description="dropout proportion during training", ge=0.0, lt=1.0
-    )
-    signed_encoding_value: Optional[float] = Field(
-        None,
-        description=(
-            "signed encoding magnitude for distinguishing forward / reverse strands"
-        ),
-        gt=0.0,
-        le=1.0,
-    )
-    positional_encoding: bool = Field(
-        True, description="use sinusoidal fixed positional encodings"
     )
     compile: bool = Field(False, description="compile model using torch.compile")
     optimizer: OptimizerConfig
