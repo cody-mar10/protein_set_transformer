@@ -12,7 +12,8 @@ from transformers import get_linear_schedule_with_warmup
 
 from pst._typing import DataBatch, OptGraphAttnOutput
 
-from .layers import FixedPositionalEncoding, SignedBinaryEncoding
+from .data import GenomeDataset
+from .layers import PositionalEmbedding
 from .models import SetTransformer
 from .training.distance import stacked_batch_chamfer_distance
 from .training.loss import AugmentedWeightedTripletLoss, LossConfig
@@ -89,11 +90,22 @@ class ModelConfig(BaseModelConfig):
 class ProteinSetTransformer(L.LightningModule):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
+        if config.out_dim == -1:
+            config.out_dim = config.in_dim
+
         self.config = config
         self.save_hyperparameters(config.model_dump(exclude={"fabric"}))
-        self._pos_encoder: Optional[torch.nn.Module] = (
-            FixedPositionalEncoding() if config.positional_encoding else None
+
+        # 2048 ptns should be large enough for probably all viruses
+        self.positional_embedding = PositionalEmbedding(
+            dim=config.in_dim, max_size=2048
         )
+
+        # embed +/- gene strand
+        self.strand_embedding = torch.nn.Embedding(
+            num_embeddings=2, embedding_dim=config.in_dim
+        )
+
         self.model = SetTransformer(
             **self.config.model_dump(
                 include={
@@ -115,7 +127,10 @@ class ProteinSetTransformer(L.LightningModule):
         self.optimizer_cfg = config.optimizer
         self.augmentation_cfg = config.augmentation
         self.fabric = config.fabric
-        self.signed_encoder = SignedBinaryEncoding(config.signed_encoding_value or 0.0)
+
+    def check_max_size(self, dataset: GenomeDataset):
+        if dataset.max_size > self.positional_embedding.max_size:
+            self.positional_embedding.expand(dataset.max_size)
 
     def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
         return self.model.parameters(recurse=recurse)
@@ -166,13 +181,16 @@ class ProteinSetTransformer(L.LightningModule):
         batch: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> OptGraphAttnOutput:
+        # add positional embedding here since that can be different with augmented data
+
+        positional_embed = self.positional_embedding(sizes)
+        x = x + positional_embed
+
         output = self.model(
             x=x,
             edge_index=edge_index,
             ptr=ptr,
-            sizes=sizes,
             batch=batch,
-            pos_encoder=self._pos_encoder,
             return_attention_weights=return_attention_weights,
         )
         return output
@@ -200,7 +218,8 @@ class ProteinSetTransformer(L.LightningModule):
         augment_data: bool = True,
     ) -> torch.Tensor:
         # add strand encoding here so augmented data has strand info already
-        batch.x = self.signed_encoder(batch.x, feature=batch.strand)
+        strand_embed = self.strand_embedding(batch.strand)
+        batch.x = batch.x + strand_embed
 
         batch_size = batch.setsize.numel()
         setwise_dist, item_flow = stacked_batch_chamfer_distance(
@@ -293,10 +312,7 @@ class ProteinSetTransformer(L.LightningModule):
         #     ptr=batch.ptr,
         #     scale=self.augmentation_cfg.sample_scale,
         # )
-        # TODO: we actually don't need to calculate the distances again
-        # since we've already done that. We should make sbcd return the min_distances
-        # and then just reindex it with the point_swap_sampling indices
-        # sounds more complicated so will implement it later
+        # TODO: hparam to choose true negative sampling or heuristic
         setdist_real_aug, _ = stacked_batch_chamfer_distance(
             batch=batch.x, ptr=batch.ptr, other=augmented_batch
         )
@@ -340,8 +356,10 @@ class ProteinSetTransformer(L.LightningModule):
         self, batch: DataBatch, batch_idx: int, dataloader_idx: int = 0
     ) -> OptGraphAttnOutput:
         # add strand encodings first
-        batch.x = self.signed_encoder(batch.x, feature=batch.strand)
-        # internally, the positional encodings are added later
+        strand_embed = self.strand_embedding(batch.strand)
+        batch.x = batch.x + strand_embed
+
+        # internally, the positional embeddings are added later
         return self._databatch_forward(batch=batch)
 
 
