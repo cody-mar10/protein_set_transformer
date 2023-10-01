@@ -139,6 +139,10 @@ class GenomeDataset(Dataset):
                 data = getattr(fp.root, field)
                 setattr(self, field, torch.from_numpy(data[:]))
 
+        # convert strand array from [-1, 1] -> [0, 1]
+        # this will be used as an idx in a lut embedding
+        self.strand[self.strand == -1] = 0
+
         self.weights = self.get_class_weights(log_inverse)
 
         self.edge_indices = self.get_edge_indices(edge_strategy, chunk_size, threshold)
@@ -227,6 +231,10 @@ class GenomeDataset(Dataset):
     @property
     def feature_dim(self) -> int:
         return int(self.data.shape[-1])
+
+    @property
+    def max_size(self) -> int:
+        return int(self.sizes.amax())
 
     @staticmethod
     def collate(batch: list[Data]) -> DataBatch:
