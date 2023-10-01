@@ -17,11 +17,15 @@ def train_with_all_data(config: TrainingMode):
         )
 
     datamodule = GenomeDataModule(config.data)
+    
     # update model's in_dim
     if config.model.in_dim == -1:
         config.model.in_dim = datamodule.dataset.feature_dim
 
     model = PST(config.model)
+
+    # update positional embedding max size
+    model.check_max_size(datamodule.dataset)
 
     callbacks: list[Callback] = [
         EarlyStopping(
