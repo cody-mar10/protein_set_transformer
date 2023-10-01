@@ -370,6 +370,8 @@ class PositionwiseFeedForward(nn.Module):
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, dim: int, max_size=2048):
+        super().__init__()
+
         self.embedding_dim = dim
         self.max_size = max_size
         self._embedding = nn.Embedding(max_size, dim)
