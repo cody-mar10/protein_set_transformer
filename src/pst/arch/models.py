@@ -27,8 +27,6 @@ class SetTransformer(nn.Module):
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
-        if out_dim == -1:
-            out_dim = in_dim
 
         # the pyg strategy for attention is for each head to attend to the full
         # length of the input, rather than splitting the input into `head`-sized
@@ -120,14 +118,9 @@ class SetTransformer(nn.Module):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
-        sizes: torch.Tensor,
         batch: OptTensor = None,
-        pos_encoder: Optional[nn.Module] = None,
         return_attention_weights: bool = False,
     ) -> OptGraphAttnOutput:
-        if pos_encoder is not None:
-            x = pos_encoder(x=x, sizes=sizes)
-
         x_out = self.encode(x=x, edge_index=edge_index)
         graph_rep = self.decode(
             x_out=x_out,
