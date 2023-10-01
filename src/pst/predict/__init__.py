@@ -30,6 +30,21 @@ def model_inference(config: InferenceMode, return_predictions: bool = False):
     )
 
     datamodule = GenomeDataModule(data_config)
+
+    expected_max_size = model.positional_embedding.max_size
+    actual_max_size = datamodule.dataset.max_size
+    if actual_max_size > expected_max_size:
+        # TODO: the default behavior for other transformers is to just work with the first
+        # n words that work with the model's max size... that is sort of complicated here
+        # since that would require adjusting the genome's graph representation
+
+        raise RuntimeError(
+            (
+                f"The maximum number of proteins in your dataset is {actual_max_size}, "
+                f"but this model was trained with a max of {expected_max_size} proteins."
+            )
+        )
+
     writer = PredictionWriter(
         outdir=config.predict.outdir,
         datamodule=datamodule,
