@@ -21,13 +21,6 @@ low = 0.0
 high = 0.5
 log = false
 
-[[hparams]]
-name = "signed_encoding_value"
-suggest = "float"
-low = 0.1
-high = 1.0
-log = false
-
 # OPTIMIZER hparams
 [[hparams]]
 name = "lr"
