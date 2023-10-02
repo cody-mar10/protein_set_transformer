@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal, Protocol
 
 from torch import Tensor
 from torch_geometric.typing import OptTensor, PairTensor
+
+FilePath = str | Path
 
 
 # data.py types
@@ -27,6 +30,3 @@ OptEdgeAttnOutput = Tensor | EdgeAttnOutput
 
 GraphAttnOutput = PairTensor
 OptGraphAttnOutput = Tensor | GraphAttnOutput
-
-# distance.py types
-FlowType = dict[tuple[int, int], Tensor]
