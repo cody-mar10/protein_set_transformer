@@ -8,10 +8,9 @@ import torch.nn.functional as F
 from einops import rearrange, reduce
 from torch import nn
 from torch_geometric.nn import GraphNorm, MessagePassing
-from torch_geometric.typing import OptTensor, PairTensor
 from torch_geometric.utils import add_self_loops, segment, softmax
 
-from pst.typing import OptEdgeAttnOutput, OptGraphAttnOutput
+from pst.typing import OptEdgeAttnOutput, OptGraphAttnOutput, OptTensor, PairTensor
 
 
 class MultiheadAttentionConv(MessagePassing):

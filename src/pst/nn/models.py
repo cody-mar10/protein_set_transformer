@@ -3,9 +3,8 @@ from __future__ import annotations
 import torch
 from torch import nn
 from torch_geometric.nn import GraphNorm
-from torch_geometric.typing import OptTensor
 
-from pst.typing import OptGraphAttnOutput
+from pst.typing import OptGraphAttnOutput, OptTensor
 
 from .layers import (
     MultiheadAttentionConv,

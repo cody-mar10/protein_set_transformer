@@ -7,9 +7,8 @@ from typing import Callable
 import torch
 from more_itertools import chunked
 from torch_geometric.data import Data
-from torch_geometric.typing import OptTensor
 
-from pst.typing import EdgeIndexStrategy
+from pst.typing import EdgeIndexStrategy, OptTensor
 
 _DEFAULT_EDGE_STRATEGY = "chunked"
 _DEFAULT_CHUNK_SIZE = 30
