@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import Dataset
 from torch_geometric.data import Batch, Data
 
-from pst.typing import DataBatch, EdgeIndexStrategy, FilePath
+from pst.typing import EdgeIndexStrategy, FilePath, GenomeGraphBatch
 
 from .graph import _DEFAULT_CHUNK_SIZE, _SENTINEL_THRESHOLD, GenomeGraph
 
@@ -94,8 +94,14 @@ class GenomeDataset(Dataset[GenomeGraph]):
 
     def __getitem__(self, idx: int) -> GenomeGraph:
         # idx should be for a single genome
-        start = self.ptr[idx]
-        stop = self.ptr[idx + 1]
+        try:
+            start = self.ptr[idx]
+            stop = self.ptr[idx + 1]
+        except IndexError as e:
+            clsname = self.__class__.__name__
+            raise IndexError(
+                f"{idx=} is out of range for {clsname} with {len(self)} genomes"
+            ) from e
 
         # node/item level access (ptn)
         x = self.data[start:stop]
@@ -127,25 +133,9 @@ class GenomeDataset(Dataset[GenomeGraph]):
         return int(self.sizes.amax())
 
     @staticmethod
-    def collate(batch: list[GraphT]) -> DataBatch:
+    def collate(batch: list[GraphT]) -> GenomeGraphBatch:
         return Batch.from_data_list(batch)  # type: ignore
 
-    def collate_indices(self, idx_batch: list[torch.Tensor]) -> DataBatch:
+    def collate_indices(self, idx_batch: list[torch.Tensor]) -> GenomeGraphBatch:
         batch = [self[int(idx)] for idx in idx_batch]
         return self.collate(batch)
-
-
-class SimpleTensorDataset(Dataset):
-    def __init__(self, tensor: torch.Tensor) -> None:
-        super().__init__()
-        self.data = tensor
-
-    def __len__(self) -> int:
-        return int(self.data.size(0))
-
-    def __getitem__(self, idx: int | list[int]) -> torch.Tensor:
-        return self.data[idx]
-
-    @staticmethod
-    def collate(batch: list[torch.Tensor]) -> torch.Tensor:
-        return torch.stack(batch)
