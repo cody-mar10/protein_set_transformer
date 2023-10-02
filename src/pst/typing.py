@@ -20,6 +20,7 @@ class GenomeGraphBatch(Protocol):
     weight: Tensor
     class_id: Tensor
     strand: Tensor
+    pos: Tensor
 
 
 EdgeIndexStrategy = Literal["full", "sparse", "chunked"]
