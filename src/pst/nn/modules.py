@@ -11,7 +11,7 @@ from torch_geometric.typing import OptTensor
 from transformers import get_linear_schedule_with_warmup
 
 from pst.data.modules import GenomeDataset
-from pst.typing import DataBatch, OptGraphAttnOutput
+from pst.typing import GenomeGraphBatch, OptGraphAttnOutput
 
 from .layers import PositionalEmbedding
 from .models import SetTransformer
@@ -185,7 +185,10 @@ class ProteinSetTransformer(L.LightningModule):
         return output
 
     def _databatch_forward(
-        self, batch: DataBatch, return_attention_weights: bool = False, **overrides
+        self,
+        batch: GenomeGraphBatch,
+        return_attention_weights: bool = False,
+        **overrides,
     ) -> OptGraphAttnOutput:
         # technically defaults should be used for all of the batch fields
         # but the only time we need to override is with the augmented x tensor
@@ -194,14 +197,14 @@ class ProteinSetTransformer(L.LightningModule):
             x=overrides.get("x", batch.x),  # allow overriding for augmentation step
             edge_index=batch.edge_index,
             ptr=batch.ptr,
-            sizes=batch.setsize,
+            sizes=batch.num_proteins,
             batch=batch.batch,
             return_attention_weights=return_attention_weights,
         )
 
     def _forward_step(
         self,
-        batch: DataBatch,
+        batch: GenomeGraphBatch,
         batch_idx: int,
         stage: _STAGE_TYPE,
         augment_data: bool = True,
@@ -210,7 +213,7 @@ class ProteinSetTransformer(L.LightningModule):
         strand_embed = self.strand_embedding(batch.strand)
         batch.x = batch.x + strand_embed
 
-        batch_size = batch.setsize.numel()
+        batch_size = batch.num_proteins.numel()
         setwise_dist, item_flow = stacked_batch_chamfer_distance(
             batch=batch.x, ptr=batch.ptr
         )
@@ -270,7 +273,7 @@ class ProteinSetTransformer(L.LightningModule):
 
     def _augmented_forward_step(
         self,
-        batch: DataBatch,
+        batch: GenomeGraphBatch,
         pos_idx: torch.Tensor,
         y_anchor: torch.Tensor,
         item_flow: torch.Tensor,
@@ -279,7 +282,7 @@ class ProteinSetTransformer(L.LightningModule):
             batch=batch.x,
             pos_idx=pos_idx,
             item_flow=item_flow,
-            sizes=batch.setsize,
+            sizes=batch.num_proteins,
             sample_rate=self.augmentation_cfg.sample_rate,
         )
 
@@ -317,7 +320,9 @@ class ProteinSetTransformer(L.LightningModule):
         y_aug_neg = y_aug_pos[aug_neg_idx]
         return y_aug_pos, y_aug_neg, aug_neg_weights
 
-    def training_step(self, train_batch: DataBatch, batch_idx: int) -> torch.Tensor:
+    def training_step(
+        self, train_batch: GenomeGraphBatch, batch_idx: int
+    ) -> torch.Tensor:
         return self._forward_step(
             batch=train_batch,
             batch_idx=batch_idx,
@@ -325,7 +330,9 @@ class ProteinSetTransformer(L.LightningModule):
             augment_data=True,
         )
 
-    def validation_step(self, val_batch: DataBatch, batch_idx: int) -> torch.Tensor:
+    def validation_step(
+        self, val_batch: GenomeGraphBatch, batch_idx: int
+    ) -> torch.Tensor:
         return self._forward_step(
             batch=val_batch,
             batch_idx=batch_idx,
@@ -333,7 +340,7 @@ class ProteinSetTransformer(L.LightningModule):
             augment_data=False,
         )
 
-    def test_step(self, test_batch: DataBatch, batch_idx: int) -> torch.Tensor:
+    def test_step(self, test_batch: GenomeGraphBatch, batch_idx: int) -> torch.Tensor:
         return self._forward_step(
             batch=test_batch,
             batch_idx=batch_idx,
@@ -342,7 +349,7 @@ class ProteinSetTransformer(L.LightningModule):
         )
 
     def predict_step(
-        self, batch: DataBatch, batch_idx: int, dataloader_idx: int = 0
+        self, batch: GenomeGraphBatch, batch_idx: int, dataloader_idx: int = 0
     ) -> OptGraphAttnOutput:
         # add strand encodings first
         strand_embed = self.strand_embedding(batch.strand)
@@ -365,8 +372,10 @@ class CrossValPST(CrossValModuleMixin, ProteinSetTransformer):
         self.fabric: L.Fabric
         CrossValModuleMixin.__init__(self, config=config)
 
-    def test_step(self, test_batch: DataBatch, batch_idx: int):
+    def test_step(self, test_batch: GenomeGraphBatch, batch_idx: int):
         raise RuntimeError(self.__error_msg__.format(stage="testing"))
 
-    def predict_step(self, batch: DataBatch, batch_idx: int, dataloader_idx: int = 0):
+    def predict_step(
+        self, batch: GenomeGraphBatch, batch_idx: int, dataloader_idx: int = 0
+    ):
         raise RuntimeError(self.__error_msg__.format(stage="inference"))
