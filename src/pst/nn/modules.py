@@ -10,9 +10,9 @@ from torch.nn.parameter import Parameter
 from torch_geometric.typing import OptTensor
 from transformers import get_linear_schedule_with_warmup
 
-from pst._typing import DataBatch, OptGraphAttnOutput
+from pst.data.modules import GenomeDataset
+from pst.typing import DataBatch, OptGraphAttnOutput
 
-from .data import GenomeDataset
 from .layers import PositionalEmbedding
 from .models import SetTransformer
 from .training.distance import stacked_batch_chamfer_distance

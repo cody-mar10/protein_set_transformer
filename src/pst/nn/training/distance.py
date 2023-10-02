@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 from torch_scatter import segment_mean_csr, segment_min_csr
 
-from pst._typing import OptTensor, PairTensor
+from pst.typing import OptTensor, PairTensor
 
 
 def _stacked_batch_chamfer_distance(
@@ -16,6 +16,8 @@ def _stacked_batch_chamfer_distance(
     return chamfer_dist, flow_idx.t()
 
 
+# TODO: allow returning the min_distances instead of the chamfer distance
+# will be useful for speeding up augmented negative sampling
 def stacked_batch_chamfer_distance(
     batch: torch.Tensor, ptr: torch.Tensor, *, other: OptTensor = None
 ) -> PairTensor:

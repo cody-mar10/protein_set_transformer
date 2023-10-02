@@ -5,7 +5,7 @@ from torch import nn
 from torch_geometric.nn import GraphNorm
 from torch_geometric.typing import OptTensor
 
-from pst._typing import OptGraphAttnOutput
+from pst.typing import OptGraphAttnOutput
 
 from .layers import (
     MultiheadAttentionConv,

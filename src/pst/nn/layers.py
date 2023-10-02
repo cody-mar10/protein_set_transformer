@@ -11,7 +11,7 @@ from torch_geometric.nn import GraphNorm, MessagePassing
 from torch_geometric.typing import OptTensor, PairTensor
 from torch_geometric.utils import add_self_loops, segment, softmax
 
-from pst._typing import OptEdgeAttnOutput, OptGraphAttnOutput
+from pst.typing import OptEdgeAttnOutput, OptGraphAttnOutput
 
 
 class MultiheadAttentionConv(MessagePassing):
