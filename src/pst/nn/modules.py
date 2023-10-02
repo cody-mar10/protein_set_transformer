@@ -15,9 +15,9 @@ from pst.typing import DataBatch, OptGraphAttnOutput
 
 from .layers import PositionalEmbedding
 from .models import SetTransformer
-from .training.distance import stacked_batch_chamfer_distance
-from .training.loss import AugmentedWeightedTripletLoss, LossConfig
-from .training.sampling import (
+from .utils.distance import stacked_batch_chamfer_distance
+from .utils.loss import AugmentedWeightedTripletLoss, LossConfig
+from .utils.sampling import (
     AugmentationConfig,
     negative_sampling,
     point_swap_sampling,
