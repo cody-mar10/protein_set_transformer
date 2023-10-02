@@ -379,12 +379,8 @@ class PositionalEmbedding(nn.Module):
     def expand(self, max_size: int):
         self._embedding = nn.Embedding(max_size, self.embedding_dim)
 
-    def forward(self, sizes: torch.Tensor) -> torch.Tensor:
-        positional_idx = torch.cat([torch.arange(int(size)) for size in sizes]).to(
-            sizes.device
-        )
-        positional_embedding = self._embedding(positional_idx)
-        return positional_embedding
+    def forward(self, positional_idx: torch.Tensor) -> torch.Tensor:
+        return self._embedding(positional_idx)
 
 
 class FixedPositionalEncoding(nn.Module):
@@ -411,11 +407,11 @@ class FixedPositionalEncoding(nn.Module):
         enc = torch.cat((sinusoid_inp.sin(), sinusoid_inp.cos()), dim=-1).to(x.device)
         return enc
 
-    def forward(self, x: torch.Tensor, sizes: torch.Tensor) -> torch.Tensor:
-        # get position for each ptn in each genome
-        relpos = torch.cat([torch.arange(size.item()) for size in sizes])
-        encoding = self.positional_encoding(x, sizes)[relpos].detach()
-        return encoding + x
+    def forward(
+        self, x: torch.Tensor, sizes: torch.Tensor, positional_idx: torch.Tensor
+    ) -> torch.Tensor:
+        encoding = self.positional_encoding(x, sizes)
+        return encoding[positional_idx]
 
 
 class ResidualMultiheadAttentionConv(MultiheadAttentionConv):
