@@ -10,13 +10,13 @@ FilePath = str | Path
 
 
 # data.py types
-class DataBatch(Protocol):
+class GenomeGraphBatch(Protocol):
     x: Tensor
     y: OptTensor
     edge_index: Tensor
     batch: Tensor
     ptr: Tensor
-    setsize: Tensor
+    num_proteins: Tensor
     weight: Tensor
     class_id: Tensor
     strand: Tensor
