@@ -166,13 +166,13 @@ class ProteinSetTransformer(L.LightningModule):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
-        sizes: torch.Tensor,
+        positional_idx: torch.Tensor,
         batch: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> OptGraphAttnOutput:
         # add positional embedding here since that can be different with augmented data
 
-        positional_embed = self.positional_embedding(sizes)
+        positional_embed = self.positional_embedding(positional_idx.squeeze())
         x = x + positional_embed
 
         output = self.model(
@@ -197,7 +197,7 @@ class ProteinSetTransformer(L.LightningModule):
             x=overrides.get("x", batch.x),  # allow overriding for augmentation step
             edge_index=batch.edge_index,
             ptr=batch.ptr,
-            sizes=batch.num_proteins,
+            positional_idx=batch.pos,
             batch=batch.batch,
             return_attention_weights=return_attention_weights,
         )
