@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pydantic_argparse
 
-from pst.arch.data import DataConfig
-from pst.arch.modules import ModelConfig
+from pst.data.modules import DataConfig
+from pst.nn.modules import ModelConfig
 
 from .experiment import ExperimentArgs
 from .predict import PredictArgs

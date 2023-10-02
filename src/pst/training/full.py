@@ -3,8 +3,8 @@ from __future__ import annotations
 import lightning as L
 from lightning.pytorch.callbacks import Callback, EarlyStopping, ModelCheckpoint
 
-from pst.arch.data import GenomeDataModule
-from pst.arch.modules import ProteinSetTransformer as PST
+from pst.data.modules import GenomeDataModule
+from pst.nn.modules import ProteinSetTransformer as PST
 from pst.utils.cli.modes import TrainingMode
 
 # TODO early stopp
@@ -17,7 +17,7 @@ def train_with_all_data(config: TrainingMode):
         )
 
     datamodule = GenomeDataModule(config.data)
-    
+
     # update model's in_dim
     if config.model.in_dim == -1:
         config.model.in_dim = datamodule.dataset.feature_dim

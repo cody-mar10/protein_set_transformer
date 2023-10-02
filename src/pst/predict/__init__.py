@@ -5,9 +5,9 @@ from typing import Any
 import lightning as L
 import torch
 
-from pst.arch.data import DataConfig, GenomeDataModule
-from pst.arch.modules import ModelConfig
-from pst.arch.modules import ProteinSetTransformer as PST
+from pst.data.modules import DataConfig, GenomeDataModule
+from pst.nn.modules import ModelConfig
+from pst.nn.modules import ProteinSetTransformer as PST
 from pst.utils.cli.modes import InferenceMode
 
 from .writer import PredictionWriter

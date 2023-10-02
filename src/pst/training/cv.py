@@ -6,8 +6,8 @@ from lightning_cv.callbacks.base import Callback
 from lightning_cv.callbacks.checkpoint import ModelCheckpoint
 from lightning_cv.callbacks.lr_monitor import LearningRateMonitor
 
-from pst.arch.data import GenomeDataModule
-from pst.arch.modules import CrossValPST as PST
+from pst.data.modules import GenomeDataModule
+from pst.nn.modules import CrossValPST as PST
 from pst.utils.cli.modes import TrainingMode
 
 
@@ -46,6 +46,8 @@ def train_with_cross_validation(config: TrainingMode):
         config=trainer_config,
     )
 
+    # TODO: need to figure out how to update positional embedding max size if needed
+    # simplest solution is to just pass that as an arg to the model thru the config...
     trainer.train_with_cross_validation(
         datamodule=datamodule,
         model_config=config.model,

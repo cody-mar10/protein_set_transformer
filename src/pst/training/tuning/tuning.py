@@ -10,8 +10,8 @@ from lightning_cv.callbacks.lr_monitor import LearningRateMonitor
 from lightning_cv.callbacks.stopping import EarlyStopping
 from lightning_cv.callbacks.timer import Timer
 
-from pst.arch.data import GenomeDataModule
-from pst.arch.modules import CrossValPST as PST
+from pst.data.modules import GenomeDataModule
+from pst.nn.modules import CrossValPST as PST
 from pst.utils.cli.modes import TuningMode
 
 from .optuna import OptunaIntegration
