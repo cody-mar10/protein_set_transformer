@@ -7,11 +7,10 @@ import torch
 from lightning_cv import BaseModelConfig, CrossValModuleMixin
 from pydantic import BaseModel, Field
 from torch.nn.parameter import Parameter
-from torch_geometric.typing import OptTensor
 from transformers import get_linear_schedule_with_warmup
 
 from pst.data.modules import GenomeDataset
-from pst.typing import GenomeGraphBatch, OptGraphAttnOutput
+from pst.typing import GenomeGraphBatch, OptGraphAttnOutput, OptTensor
 
 from .layers import PositionalEmbedding
 from .models import SetTransformer
