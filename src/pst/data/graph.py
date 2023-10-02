@@ -11,6 +11,7 @@ from torch_geometric.typing import OptTensor
 
 from pst.typing import EdgeIndexStrategy
 
+_DEFAULT_EDGE_STRATEGY = "chunked"
 _DEFAULT_CHUNK_SIZE = 30
 _SENTINEL_THRESHOLD = -1
 _DEFAULT_THRESHOLD = 30
@@ -23,10 +24,10 @@ class GenomeGraph(Data):
     edge_index: torch.Tensor
     y: OptTensor
     pos: OptTensor
-    setsize: torch.Tensor
-    class_id: torch.Tensor
+    num_proteins: int
+    class_id: int
     strand: torch.Tensor
-    weights: torch.Tensor
+    weight: float
 
     def __init__(
         self,
@@ -39,7 +40,7 @@ class GenomeGraph(Data):
         edge_attr: OptTensor = None,
         y: OptTensor = None,
         pos: OptTensor = None,
-        edge_strategy: EdgeIndexStrategy = "chunked",
+        edge_strategy: EdgeIndexStrategy = _DEFAULT_EDGE_STRATEGY,
         chunk_size: int = _DEFAULT_CHUNK_SIZE,
         threshold: int = _SENTINEL_THRESHOLD,
         **kwargs,
@@ -52,10 +53,26 @@ class GenomeGraph(Data):
         # this will set all attrs for this subclass
         super().__init__(x, edge_index, edge_attr, y, pos, **kwargs)
 
-        if self.edge_index is None:
-            self.edge_index = GenomeGraph.create_edge_index(
-                self.x.size(0), edge_strategy, chunk_size, threshold
-            )
+        self._edge_strategy: EdgeIndexStrategy = edge_strategy
+        self._chunk_size = chunk_size
+        self._threshold = threshold
+
+        # can't do this with pyg Batch dynamic inheritance
+        # if self.edge_index is None:
+        #     self.edge_index = GenomeGraph.create_edge_index(
+        #         self.x.size(0), edge_strategy, chunk_size, threshold
+        #     )
+
+    def set_edge_index(self, *, override: bool = False):
+        if not override and self.edge_index is not None:
+            return
+
+        self.edge_index = self.create_edge_index(
+            num_nodes=self.num_proteins,
+            edge_strategy=self._edge_strategy,
+            chunk_size=self._chunk_size,
+            threshold=self._threshold,
+        )
 
     @staticmethod
     def create_fully_connected_graph(num_nodes: int) -> torch.Tensor:
