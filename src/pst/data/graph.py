@@ -23,7 +23,7 @@ class GenomeGraph(Data):
     x: torch.Tensor
     edge_index: torch.Tensor
     y: OptTensor
-    pos: OptTensor
+    pos: torch.Tensor
     num_proteins: int
     class_id: int
     strand: torch.Tensor
@@ -36,10 +36,10 @@ class GenomeGraph(Data):
         strand: torch.Tensor,
         weight: float,
         num_proteins: int,
+        pos: torch.Tensor,
         edge_index: OptTensor = None,
         edge_attr: OptTensor = None,
         y: OptTensor = None,
-        pos: OptTensor = None,
         edge_strategy: EdgeIndexStrategy = _DEFAULT_EDGE_STRATEGY,
         chunk_size: int = _DEFAULT_CHUNK_SIZE,
         threshold: int = _SENTINEL_THRESHOLD,

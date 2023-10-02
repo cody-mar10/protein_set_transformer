@@ -114,18 +114,21 @@ class GenomeDataset(Dataset[GenomeGraph]):
 
         # graph/set level access (genome)
         edge_index = self.edge_indices[idx]
-        num_proteins = self.sizes[idx]
-        weight = self.weights[idx]
-        class_id = self.class_id[idx]
+        num_proteins = int(self.sizes[idx])
+        weight = self.weights[idx].item()
+        class_id = int(self.class_id[idx])
+        # shape: [N, 1]
+        pos = torch.arange(num_proteins).unsqueeze(-1).to(x.device)
 
         # the edge index will already be created so no need to pass edge creation info
         graph = GenomeGraph(
             x=x,
             edge_index=edge_index,
-            num_proteins=int(num_proteins),
-            weight=weight.item(),
-            class_id=int(class_id),
+            num_proteins=num_proteins,
+            weight=weight,
+            class_id=class_id,
             strand=strand,
+            pos=pos,
         )
         return graph
 
@@ -138,7 +141,7 @@ class GenomeDataset(Dataset[GenomeGraph]):
         return int(self.sizes.amax())
 
     @staticmethod
-    def collate(batch: list[GraphT]) -> GenomeGraphBatch:
+    def collate(batch: list[GenomeGraph]) -> GenomeGraphBatch:
         return Batch.from_data_list(batch)  # type: ignore
 
     def collate_indices(self, idx_batch: list[torch.Tensor]) -> GenomeGraphBatch:
