@@ -9,7 +9,12 @@ from torch_geometric.data import Batch, Data
 
 from pst.typing import EdgeIndexStrategy, FilePath, GenomeGraphBatch
 
-from .graph import _DEFAULT_CHUNK_SIZE, _SENTINEL_THRESHOLD, GenomeGraph
+from .graph import (
+    _DEFAULT_CHUNK_SIZE,
+    _DEFAULT_EDGE_STRATEGY,
+    _SENTINEL_THRESHOLD,
+    GenomeGraph,
+)
 
 GraphT = TypeVar("GraphT", bound=Data)
 
@@ -30,7 +35,7 @@ class GenomeDataset(Dataset[GenomeGraph]):
     def __init__(
         self,
         file: FilePath,
-        edge_strategy: EdgeIndexStrategy,
+        edge_strategy: EdgeIndexStrategy = _DEFAULT_EDGE_STRATEGY,
         chunk_size: int = _DEFAULT_CHUNK_SIZE,
         threshold: int = _SENTINEL_THRESHOLD,
         log_inverse: bool = True,
