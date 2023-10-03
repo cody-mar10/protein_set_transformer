@@ -72,7 +72,7 @@ class MultiheadAttentionConv(MessagePassing):
             self.normO = GraphNorm(self.eff_out_channels)
             # self.linO = nn.Linear(self.eff_out_channels, self.eff_out_channels)
             self.linO = PositionwiseFeedForward(
-                hidden_dim=self.eff_out_channels,
+                in_dim=self.eff_out_channels,
                 out_dim=self.eff_out_channels,
                 dropout=self.dropout,
             )
@@ -81,7 +81,7 @@ class MultiheadAttentionConv(MessagePassing):
             self.normO = GraphNorm(self.out_channels)
             # self.linO = nn.Linear(out_channels, out_channels)
             self.linO = PositionwiseFeedForward(
-                hidden_dim=self.out_channels,
+                in_dim=self.out_channels,
                 out_dim=self.out_channels,
                 dropout=self.dropout,
             )
@@ -278,7 +278,7 @@ class MultiheadAttentionPooling(nn.Module):
 
         # feed forward now projects to 1 dim
         self.lin = PositionwiseFeedForward(
-            hidden_dim=in_channels, out_dim=1, dropout=dropout
+            in_dim=in_channels, out_dim=1, dropout=dropout
         )
 
     def forward(
@@ -341,17 +341,17 @@ class MultiheadAttentionPooling(nn.Module):
 class PositionwiseFeedForward(nn.Module):
     def __init__(
         self,
-        hidden_dim: int,
+        in_dim: int,
         out_dim: int,
         activation: type[nn.Module] = nn.GELU,
         dropout: float = 0.0,
         **actv_kwargs,
     ) -> None:
         super().__init__()
-        self.w1 = nn.Linear(hidden_dim, hidden_dim)
+        self.w1 = nn.Linear(in_dim, in_dim)
         self.activation = activation(**actv_kwargs)
         self.dropout = dropout
-        self.w2 = nn.Linear(hidden_dim, out_dim)
+        self.w2 = nn.Linear(in_dim, out_dim)
 
     def reset_parameters(self):
         self.w1.reset_parameters()
