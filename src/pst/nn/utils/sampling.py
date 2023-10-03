@@ -5,6 +5,8 @@ from typing import Literal, Optional
 import torch
 from pydantic import BaseModel, Field
 
+from pst.typing import PairTensor
+
 from .distance import pairwise_chamfer_distance
 
 NO_NEGATIVES_MODES = Literal["closest_to_positive", "closest_to_anchor"]
@@ -163,7 +165,7 @@ def point_swap_sampling(
     item_flow: torch.Tensor,
     sizes: torch.Tensor,
     sample_rate: float,
-) -> torch.Tensor:
+) -> PairTensor:
     """Perform point swap sampling data augmentation.
 
     Args:
@@ -179,7 +181,8 @@ def point_swap_sampling(
         sample_rate (float): rate of point swapping, (0.0, 1.0)
 
     Returns:
-        torch.Tensor: _description_
+        PairTensor: augmented batch and the indices of the nodes that were
+            swapped around
     """
     if sample_rate <= 0.0 or sample_rate >= 1.0:
         raise ValueError(f"Provided {sample_rate=} must be in the range (0.0, 1.0)")
@@ -194,8 +197,7 @@ def point_swap_sampling(
     aug_idx = torch.where(mask, aug_idx, default)
 
     augmented_batch = batch[aug_idx]
-    # TODO: optionally return aug_idx for faster augmented negative sampling
-    return augmented_batch
+    return augmented_batch, aug_idx
 
 
 def heuristic_augmented_negative_sampling(
