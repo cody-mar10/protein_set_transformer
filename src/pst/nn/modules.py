@@ -12,7 +12,7 @@ from transformers import get_linear_schedule_with_warmup
 from pst.data.modules import GenomeDataset
 from pst.typing import GenomeGraphBatch, OptGraphAttnOutput, OptTensor
 
-from .layers import PositionalEmbedding
+from .layers import PositionalEmbedding, PositionwiseFeedForward
 from .models import SetTransformer
 from .utils.distance import stacked_batch_chamfer_distance
 from .utils.loss import AugmentedWeightedTripletLoss, LossConfig
@@ -94,6 +94,14 @@ class ProteinSetTransformer(L.LightningModule):
             num_embeddings=2, embedding_dim=config.in_dim
         )
 
+        # plm embeddings, positional embeddings, and strand embeddings
+        # will be concatenated together and then projected back to the original dim
+        self.proj = PositionwiseFeedForward(
+            in_dim=config.in_dim * 3,
+            out_dim=config.in_dim,
+            dropout=config.dropout,
+        )
+
         self.model = SetTransformer(
             **self.config.model_dump(
                 include={
@@ -165,15 +173,9 @@ class ProteinSetTransformer(L.LightningModule):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
-        positional_idx: torch.Tensor,
         batch: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> OptGraphAttnOutput:
-        # add positional embedding here since that can be different with augmented data
-
-        positional_embed = self.positional_embedding(positional_idx.squeeze())
-        x = x + positional_embed
-
         output = self.model(
             x=x,
             edge_index=edge_index,
@@ -187,16 +189,15 @@ class ProteinSetTransformer(L.LightningModule):
         self,
         batch: GenomeGraphBatch,
         return_attention_weights: bool = False,
-        **overrides,
+        x: OptTensor = None,
     ) -> OptGraphAttnOutput:
-        # technically defaults should be used for all of the batch fields
-        # but the only time we need to override is with the augmented x tensor
-        # but this allows for type safety in the augmented forward step now
+        if x is None:
+            x = batch.x
+
         return self(
-            x=overrides.get("x", batch.x),  # allow overriding for augmentation step
+            x=x,
             edge_index=batch.edge_index,
             ptr=batch.ptr,
-            positional_idx=batch.pos,
             batch=batch.batch,
             return_attention_weights=return_attention_weights,
         )
@@ -208,10 +209,17 @@ class ProteinSetTransformer(L.LightningModule):
         stage: _STAGE_TYPE,
         augment_data: bool = True,
     ) -> torch.Tensor:
+        # TODO: strand and pos embeddings are dominating signal
+        # this is especially bad here since the chamfer distance and triplet sampling will
+        # be heavily influenced by the strand embeddings
+        # I want the plm embeddings to be the dominant signal
+
         # add strand encoding here so augmented data has strand info already
         strand_embed = self.strand_embedding(batch.strand)
-        batch.x = batch.x + strand_embed
+        positional_embed = self.positional_embedding(batch.pos.squeeze())
 
+        # calculate chamfer distance only based on the plm embeddings
+        # want to maximize that signal over strand and positional embeddings
         batch_size = batch.num_proteins.numel()
         setwise_dist, item_flow = stacked_batch_chamfer_distance(
             batch=batch.x, ptr=batch.ptr
@@ -221,12 +229,27 @@ class ProteinSetTransformer(L.LightningModule):
         # positive mining
         pos_idx = positive_sampling(setwise_dist)
 
+        # adding positional and strand embeddings lead to those dominating the plm signal
+        # we can concatenate them here then use a linear layer to project down back to
+        # the original feature dim and force the model to directly learn which of these
+        # are most important
+
+        # NOTE: we do not adjust the original data at batch.x
+        # this lets the augmented data adjust the positional and strand embeddings
+        # independently of the original data
+        x = self._incorporate_positional_and_strand_embeddings(
+            x=batch.x,
+            positional_embed=positional_embed,
+            strand_embed=strand_embed,
+        )
+
         # forward pass
         y_anchor = cast(
             torch.Tensor,
             self._databatch_forward(
                 batch=batch,
                 return_attention_weights=False,
+                x=x,
             ),
         )
 
@@ -249,6 +272,7 @@ class ProteinSetTransformer(L.LightningModule):
                 pos_idx=pos_idx,
                 y_anchor=y_anchor,
                 item_flow=item_flow,
+                positional_embed=positional_embed,
             )
         else:
             y_aug_pos = None
@@ -276,8 +300,9 @@ class ProteinSetTransformer(L.LightningModule):
         pos_idx: torch.Tensor,
         y_anchor: torch.Tensor,
         item_flow: torch.Tensor,
+        positional_embed: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        augmented_batch = point_swap_sampling(
+        augmented_batch, aug_idx = point_swap_sampling(
             batch=batch.x,
             pos_idx=pos_idx,
             item_flow=item_flow,
@@ -285,25 +310,29 @@ class ProteinSetTransformer(L.LightningModule):
             sample_rate=self.augmentation_cfg.sample_rate,
         )
 
+        # let strand use original indices strands
+        strand = batch.strand[aug_idx]
+        strand_embed = self.strand_embedding(strand)
+
+        # however instead of changing the positional idx, just keep the same
+        # this is basically attempting to mirror same protein encoded in a diff position
+        x_aug = self._incorporate_positional_and_strand_embeddings(
+            x=augmented_batch,
+            positional_embed=positional_embed,
+            strand_embed=strand_embed,
+        )
+
         y_aug_pos = cast(
             torch.Tensor,
             self._databatch_forward(
                 batch=batch,
                 return_attention_weights=False,
-                x=augmented_batch,
+                x=x_aug,
             ),
         )
 
-        # TODO: should be able to compute negative index much faster now
-        # y_aug_neg, aug_neg_weights = heuristic_augmented_negative_sampling(
-        #     X_anchor=batch.x,
-        #     X_aug=augmented_batch,
-        #     y_aug=y_aug_pos,
-        #     neg_idx=neg_idx,
-        #     ptr=batch.ptr,
-        #     scale=self.augmentation_cfg.sample_scale,
-        # )
         # TODO: hparam to choose true negative sampling or heuristic
+        # NOTE: computing chamfer distance without positional or strand info
         setdist_real_aug, _ = stacked_batch_chamfer_distance(
             batch=batch.x, ptr=batch.ptr, other=augmented_batch
         )
@@ -318,6 +347,15 @@ class ProteinSetTransformer(L.LightningModule):
 
         y_aug_neg = y_aug_pos[aug_neg_idx]
         return y_aug_pos, y_aug_neg, aug_neg_weights
+
+    def _incorporate_positional_and_strand_embeddings(
+        self,
+        x: torch.Tensor,
+        positional_embed: torch.Tensor,
+        strand_embed: torch.Tensor,
+    ) -> torch.Tensor:
+        x_cat = torch.cat((x, positional_embed, strand_embed), dim=-1)
+        return self.proj(x_cat)
 
     def training_step(
         self, train_batch: GenomeGraphBatch, batch_idx: int
@@ -350,12 +388,17 @@ class ProteinSetTransformer(L.LightningModule):
     def predict_step(
         self, batch: GenomeGraphBatch, batch_idx: int, dataloader_idx: int = 0
     ) -> OptGraphAttnOutput:
-        # add strand encodings first
         strand_embed = self.strand_embedding(batch.strand)
-        batch.x = batch.x + strand_embed
+        positional_embed = self.positional_embedding(batch.pos.squeeze())
+
+        x_with_pos_and_strand = self._incorporate_positional_and_strand_embeddings(
+            x=batch.x,
+            positional_embed=positional_embed,
+            strand_embed=strand_embed,
+        )
 
         # internally, the positional embeddings are added later
-        return self._databatch_forward(batch=batch)
+        return self._databatch_forward(batch=batch, x=x_with_pos_and_strand)
 
 
 class CrossValPST(CrossValModuleMixin, ProteinSetTransformer):
