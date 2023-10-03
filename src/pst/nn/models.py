@@ -71,13 +71,14 @@ class SetTransformer(nn.Module):
             in_channels=out_dim, heads=num_heads, layers=n_dec_layers, dropout=dropout
         )
         self._decoder["linear"] = PositionwiseFeedForward(
-            hidden_dim=out_dim, out_dim=out_dim, dropout=dropout
+            in_dim=out_dim, out_dim=out_dim, dropout=dropout
         )
         # final shapes: [B, D'] -> [B, D''], ie output dimension now
         ###################
 
     def encode(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         # x: [N, D] -> [N, D']
+        layer: MultiheadAttentionConv
         for layer in self._encoder["layers"]:  # type: ignore
             x = layer(x=x, edge_index=edge_index, return_attention_weights=False)
 
