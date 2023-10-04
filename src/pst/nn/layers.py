@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-import math
-from typing import Any, Optional
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
-from einops import rearrange, reduce
+from einops import einsum, rearrange, reduce, repeat
 from torch import nn
 from torch_geometric.nn import GraphNorm, MessagePassing
 from torch_geometric.utils import add_self_loops, segment, softmax
 
 from pst.typing import OptEdgeAttnOutput, OptGraphAttnOutput, OptTensor, PairTensor
+
+from .utils.attention import attention_scale, cat_heads, uncat_heads
 
 
 class MultiheadAttentionConv(MessagePassing):
@@ -58,32 +59,29 @@ class MultiheadAttentionConv(MessagePassing):
         self.heads = heads
         self.eff_out_channels = heads * out_channels
         self.concat = concat
-        self.scale = math.sqrt(self.out_channels)
+        self.scale = attention_scale(out_channels)
         self.dropout = dropout
         self._alpha = None
 
         self.linQ = nn.Linear(in_channels, self.eff_out_channels)
         self.linK = nn.Linear(in_channels, self.eff_out_channels)
         self.linV = nn.Linear(in_channels, self.eff_out_channels)
+
         self.normQ = GraphNorm(in_channels)
+        self.normK = GraphNorm(in_channels)
+        self.normV = GraphNorm(in_channels)
 
         if concat:
             # aggr_out will have shape: [-1, H * D]
             self.normO = GraphNorm(self.eff_out_channels)
-            # self.linO = nn.Linear(self.eff_out_channels, self.eff_out_channels)
-            self.linO = PositionwiseFeedForward(
-                in_dim=self.eff_out_channels,
-                out_dim=self.eff_out_channels,
-                dropout=self.dropout,
+            self.linO = nn.Linear(
+                in_features=self.eff_out_channels, out_features=self.eff_out_channels
             )
         else:
             # aggr_out will have shape: [-1, D]
             self.normO = GraphNorm(self.out_channels)
-            # self.linO = nn.Linear(out_channels, out_channels)
-            self.linO = PositionwiseFeedForward(
-                in_dim=self.out_channels,
-                out_dim=self.out_channels,
-                dropout=self.dropout,
+            self.linO = nn.Linear(
+                in_features=self.out_channels, out_features=self.out_channels
             )
 
         self.reset_parameters()
@@ -95,33 +93,33 @@ class MultiheadAttentionConv(MessagePassing):
         self.linV.reset_parameters()
         self.linO.reset_parameters()
         self.normQ.reset_parameters()
+        self.normK.reset_parameters()
+        self.normV.reset_parameters()
         self.normO.reset_parameters()
 
     def uncat_heads(self, x: torch.Tensor) -> torch.Tensor:
-        return rearrange(
-            x,
-            "nodes (heads dim) -> nodes heads dim",
-            heads=self.heads,
-            dim=self.out_channels,
-        )
+        return uncat_heads(x, heads=self.heads)
 
     def cat_heads(self, x: torch.Tensor) -> torch.Tensor:
-        return rearrange(x, "nodes heads dim -> nodes (heads dim)")
+        return cat_heads(x)
 
     def forward(
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
+        batch: torch.Tensor,
         return_attention_weights: bool = False,
     ) -> OptEdgeAttnOutput:
         """Forward pass to compute scaled-dot product attention to update each
-        node/item representation.
+        node/item representation. This only supports self-attention.
 
         Args:
             x (torch.Tensor): Stacked node/item feature tensor [N, D]
             edge_index (torch.Tensor): [2, E] LongTensor encoding node/item
                 connectivity. To exactly mirror transformers, this is fully
                 connected for each graph.
+            batch (torch.Tensor): [N] LongTensor encoding the graph/set each node/item
+                belongs to.
             return_attention_weights (bool, optional): Whether to return the
                 attention weights and edge index. Defaults to False.
 
@@ -135,12 +133,14 @@ class MultiheadAttentionConv(MessagePassing):
         x_input = x
 
         # pre-normalization
-        x = self.normQ(x)
+        query: torch.Tensor = self.normQ(x, batch)
+        key: torch.Tensor = self.normK(x, batch)
+        value: torch.Tensor = self.normV(x, batch)
 
         # shape [N, H * D] -> [N, H, D]
-        query: torch.Tensor = self.uncat_heads(self.linQ(x))
-        key: torch.Tensor = self.uncat_heads(self.linK(x))
-        value: torch.Tensor = self.uncat_heads(self.linV(x))
+        query: torch.Tensor = self.uncat_heads(self.linQ(query))
+        key: torch.Tensor = self.uncat_heads(self.linK(key))
+        value: torch.Tensor = self.uncat_heads(self.linV(value))
         edge_index, _ = add_self_loops(edge_index)
 
         # propagate order:
@@ -148,7 +148,12 @@ class MultiheadAttentionConv(MessagePassing):
         # 2. self.aggregrate
         # 3. self.update
         out = self.propagate(
-            edge_index=edge_index, initial=x_input, query=query, key=key, value=value
+            edge_index=edge_index,
+            initial=x_input,
+            query=query,
+            key=key,
+            value=value,
+            batch=batch,
         )
 
         # get attn weights
@@ -168,13 +173,13 @@ class MultiheadAttentionConv(MessagePassing):
         ptr: OptTensor = None,
         size_i: Optional[int] = None,
     ) -> torch.Tensor:
-        # input shapes: [E, H, D]
-
         # this computes scaled dot-product attention
         # inner term during self-attention
-
-        # shape: [E, H]
-        qk = torch.sum(query_i * key_j, -1) / self.scale
+        qk = reduce(
+            query_i * key_j / self.scale,
+            "edges heads dim -> edges heads",
+            "sum",
+        )
 
         # shape: [E, H]
         alpha = softmax(qk, index=index, ptr=ptr, num_nodes=size_i, dim=0)
@@ -186,12 +191,14 @@ class MultiheadAttentionConv(MessagePassing):
         out = value_j * rearrange(alpha, "edges heads -> edges heads 1")
         return out
 
-    def update(self, aggr_out: torch.Tensor, initial: torch.Tensor) -> torch.Tensor:
+    def update(
+        self, aggr_out: torch.Tensor, initial: torch.Tensor, batch: torch.Tensor
+    ) -> torch.Tensor:
         if self.concat:
-            # shape: [-1, H, D] -> [-1, H * D]
+            # shape: [N, H, D] -> [N, H * D]
             aggr_out = self.cat_heads(aggr_out)
         else:
-            # shape: [-1, H, D] -> [-1, D]
+            # shape: [N, H, D] -> [N, D]
             aggr_out = reduce(aggr_out, "nodes heads dim -> nodes dim", "mean")
 
         # initial shape: [-1, Di] != [-1, H * D] necessarily
@@ -213,10 +220,15 @@ class MultiheadAttentionConv(MessagePassing):
 
         # residuals before normalization, ie pre-norm
         aggr_out = aggr_out + initial
-        normed_aggr_out = self.normO(aggr_out)
+        normed_aggr_out = self.normO(aggr_out, batch)
+        normed_aggr_out = F.dropout(
+            F.gelu(self.linO(normed_aggr_out)),
+            p=self.dropout,
+            training=self.training,
+        )
 
         # linO is a 2-layer feedforward network
-        aggr_out = aggr_out + self.linO(normed_aggr_out)
+        aggr_out = aggr_out + normed_aggr_out
 
         return aggr_out
 
@@ -227,7 +239,6 @@ class MultiheadAttentionConv(MessagePassing):
         self._alpha = alpha.detach()
 
     def _pop_alpha(self) -> torch.Tensor:
-        # assert self._alpha is None
         alpha: torch.Tensor = self._alpha  # type: ignore
         self._alpha = None
         return alpha
@@ -237,9 +248,8 @@ class MultiheadAttentionConv(MessagePassing):
 class MultiheadAttentionPooling(nn.Module):
     def __init__(
         self,
-        in_channels: int,
+        feature_dim: int,
         heads: int,
-        layers: int = 1,
         dropout: float = 0.0,
     ) -> None:
         """Initialize a multihead attention pooling module. This projects the
@@ -247,46 +257,63 @@ class MultiheadAttentionPooling(nn.Module):
         perform a weighted average.
 
         Args:
-            in_channels (int): Input embedding dimension.
+            feature_dim (int): Input embedding dimension.
             heads (int): Number of attention heads.
-            layers (int, optional): Number of GNN attention layers to use.
-                Defaults to 1.
             dropout (float, optional): Dropout rate for the attention calculation.
                 Defaults to 0.0.
         """
+        dim_per_head, remainder = divmod(feature_dim, heads)
+        if remainder != 0:
+            raise ValueError(f"{feature_dim=} must be divisible by {heads=}")
+
         super().__init__()
-        if layers < 1:
-            raise ValueError("Must have at least one layer.")
+        # this setup will closely mirror the PoolingMultiheadAttention
+        # operation from the SetTransformer paper
+        # we can use a variant of scaled dot product attention here
+        # instead of relying on the edgewise attention with a graph transformer
 
-        self.layers = nn.ModuleList()
-        kwargs: dict[str, Any] = dict(heads=heads, dropout=dropout, concat=False)
+        # will project all nodes onto this seed vector
+        self.seed = nn.Parameter(torch.empty((feature_dim,)))
 
-        in_channels = in_channels
-        out_channels = in_channels // 2
-        for _ in range(layers):
-            self.layers.append(
-                MultiheadAttentionConv(
-                    in_channels=in_channels, out_channels=out_channels, **kwargs
-                )
-            )
-            # slowy reduce size
-            in_channels = out_channels
-            out_channels //= 2
+        self.dim_per_head = dim_per_head
+        self.scale = attention_scale(self.dim_per_head)
 
-        # normalize final layer
-        self.norm = GraphNorm(in_channels)
+        # we don't change the feature dim of any inputs
+        # we just let each attention head attend to a subset of the input
+        self.linQ = nn.Linear(self.dim_per_head, self.dim_per_head)
+        self.linK = nn.Linear(self.dim_per_head, self.dim_per_head)
+        self.linV = nn.Linear(self.dim_per_head, self.dim_per_head)
+        self.linO = nn.Linear(feature_dim, feature_dim)
 
-        # feed forward now projects to 1 dim
-        self.lin = PositionwiseFeedForward(
-            in_dim=in_channels, out_dim=1, dropout=dropout
-        )
+        self.normQ = GraphNorm(feature_dim)
+        self.normK = GraphNorm(feature_dim)
+        self.normV = GraphNorm(feature_dim)
+        self.normO = GraphNorm(feature_dim)
+
+        self.feature_dim = feature_dim
+        self.dropout = dropout
+        self.heads = heads
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.xavier_normal_(self.seed.unsqueeze(0))
+
+        self.linQ.reset_parameters()
+        self.linK.reset_parameters()
+        self.linV.reset_parameters()
+        self.linO.reset_parameters()
+
+        self.normQ.reset_parameters()
+        self.normK.reset_parameters()
+        self.normV.reset_parameters()
+        self.normO.reset_parameters()
 
     def forward(
         self,
         x: torch.Tensor,
-        edge_index: torch.Tensor,
         ptr: torch.Tensor,
-        batch: OptTensor = None,
+        batch: torch.Tensor,
         return_attention_weights: bool = False,
     ) -> OptGraphAttnOutput:
         """Compute an attention-based score by projecting the input `x`
@@ -296,15 +323,12 @@ class MultiheadAttentionPooling(nn.Module):
 
         Args:
             x (torch.Tensor): [N, D] Input stacked node/item features.
-            edge_index (torch.Tensor): [2, E] LongTensor encoding node/item
-                connectivity. To exactly mirror transformers, this is fully
-                connected for each graph.
             ptr (torch.Tensor): Points to the start/stop of each graph/set
                 in the input `:param:x` stacked features. `ptr[i]` points to
                 the starting index of graph/set i, and `ptr[i+1]` points to
                 the end.
-            batch (torch.Tensor, optional): [N] LongTensor encoding the graph/set
-                each node/item belongs to. Only required if standardizing inputs.
+            batch (torch.Tensor): [N] LongTensor encoding the graph/set each node/item
+                belongs to.
             return_attention_weights (bool, optional): Whether to return the
                 attention weights for each node/item when computing the graph/set
                 representation as a weighted average. Defaults to False.
@@ -316,26 +340,93 @@ class MultiheadAttentionPooling(nn.Module):
                 Shape [batch_size, D]. Otherwise, also returns the item-wise
                 attention weights that computed the weighted average.
         """
-        attn_score = x
-        for layer in self.layers:
-            attn_score = layer(attn_score, edge_index, return_attention_weights=False)
+        # all calculations happen at the node level until the final reduction
 
-        # standardize score -> this helps substantially by not forcing model
-        # to choose most influential node/item, instead allowing attn to more
-        # than one node/item
-        attn_score = self.norm(attn_score, batch)
-        attn_score = self.lin(attn_score)
+        # shape: [N, D]
+        x_input = x
 
-        # shape: [N, 1]
-        weights = softmax(attn_score, ptr=ptr, dim=0)
+        # expand to shape [D] -> [N, D]
+        # this would normally be handled internally during matmuls
+        # but want this to normalize the each graph separately
+        Q = repeat(self.seed, "dim -> nodes dim", nodes=x.size(0))
 
-        # x shape: [N, embedding_dim]
-        # output shape: [batch_size, embedding_dim]
-        weighted_avg = segment(x * weights, ptr, reduce="mean")
+        # normalize inputs
+        Q = self.normQ(Q, batch)
+        K = self.normK(x, batch)
+        V = self.normV(x, batch)
+
+        # reshape inputs
+        Q = self.uncat_heads(Q)
+        K = self.uncat_heads(K)
+        V = self.uncat_heads(V)
+
+        Q = self.linQ(Q)
+        K = self.linK(K)
+        V = self.linV(V)
+
+        # weighted V shape: [N, D]
+        weighted_V, attn = self.scaled_dot_product_attention(
+            Q=Q,
+            K=K,
+            V=V,
+            ptr=ptr,
+            return_attention_weights=return_attention_weights,
+        )
+
+        # residual connection
+        weighted_V = weighted_V + x_input
+        norm_weighted_V = self.normO(weighted_V, batch)
+
+        norm_weighted_V = F.dropout(
+            F.gelu(self.linO(norm_weighted_V)),
+            p=self.dropout,
+            training=self.training,
+        )
+
+        # residual connection, shape: [N, D]
+        res_V = weighted_V + norm_weighted_V
+
+        # shape: [N, D] -> [batch_size, D]
+        weighted_graph_avg = segment(res_V, ptr=ptr, reduce="mean")
+
+        return weighted_graph_avg, attn
+
+    def uncat_heads(self, x: torch.Tensor) -> torch.Tensor:
+        return uncat_heads(x, heads=self.heads)
+
+    def cat_heads(self, x: torch.Tensor) -> torch.Tensor:
+        return cat_heads(x)
+
+    def scaled_dot_product_attention(
+        self,
+        Q: torch.Tensor,
+        K: torch.Tensor,
+        V: torch.Tensor,
+        ptr: torch.Tensor,
+        return_attention_weights: bool = False,
+    ) -> OptGraphAttnOutput:
+        # internally this unsqueezes both tensors:
+        # [N, H, D, 1] x [N, H, D, 1]^T -> [N, H, D, D]
+        # then [N, H, D, D] -> [N, H] by summing over the last 2 dims
+        # thus, this represents H scores per node
+        attn_weight = einsum(
+            Q, K, "nodes heads dim1, nodes heads dim2 -> nodes heads"
+        ).div(self.scale)
+
+        # sparsely evaluated softmax that normalizes each attn head per graph
+        # thus each attn head is weighting the importance of each node in the graph
+        attn_weight = softmax(attn_weight, ptr=ptr, dim=0)
+
+        # we can't do the typical matmul again since the weights
+        # correspond to each node per graph in a stacked batch
+        weighted_V = V * attn_weight.unsqueeze(-1)
+
+        # shape: [N, H, D'] -> [N, D]
+        weighted_V = self.cat_heads(weighted_V)
+
         if return_attention_weights:
-            return weighted_avg, weights
-
-        return weighted_avg
+            return weighted_V, attn_weight
+        return weighted_V, None
 
 
 class PositionwiseFeedForward(nn.Module):
