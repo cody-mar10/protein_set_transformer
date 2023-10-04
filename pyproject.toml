@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ptn-set-transformer"
-version = "0.6.1"
+version = "0.7.0"
 authors = [{ name = "Cody Martin", email = "codycmar10@gmail.com" }]
 description = "Training and inference on protein sets (genomes)"
 readme = "README.md"
