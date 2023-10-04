@@ -400,7 +400,9 @@ class ProteinSetTransformer(L.LightningModule):
         )
 
         # internally, the positional embeddings are added later
-        return self._databatch_forward(batch=batch, x=x_with_pos_and_strand)
+        return self._databatch_forward(
+            batch=batch, x=x_with_pos_and_strand, return_attention_weights=True
+        )
 
 
 class CrossValPST(CrossValModuleMixin, ProteinSetTransformer):
