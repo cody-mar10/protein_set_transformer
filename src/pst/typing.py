@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import Literal, Protocol
 
 from torch import Tensor
-from torch_geometric.typing import OptTensor, PairTensor
+from torch_geometric.typing import PairTensor  # noqa
+from torch_geometric.typing import OptTensor
 
 FilePath = str | Path
 
@@ -29,5 +30,4 @@ EdgeIndexStrategy = Literal["full", "sparse", "chunked"]
 EdgeAttnOutput = tuple[Tensor, tuple[Tensor, Tensor]]
 OptEdgeAttnOutput = Tensor | EdgeAttnOutput
 
-GraphAttnOutput = PairTensor
-OptGraphAttnOutput = Tensor | GraphAttnOutput
+OptGraphAttnOutput = tuple[Tensor, OptTensor]
