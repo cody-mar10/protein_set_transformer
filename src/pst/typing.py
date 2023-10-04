@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, Protocol
 
+from numpy import float32
+from numpy.typing import NDArray
 from torch import Tensor
 from torch_geometric.typing import PairTensor  # noqa
 from torch_geometric.typing import OptTensor
@@ -31,3 +33,5 @@ EdgeAttnOutput = tuple[Tensor, tuple[Tensor, Tensor]]
 OptEdgeAttnOutput = Tensor | EdgeAttnOutput
 
 OptGraphAttnOutput = tuple[Tensor, OptTensor]
+
+NumpyFloat32 = NDArray[float32]
