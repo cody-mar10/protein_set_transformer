@@ -55,7 +55,6 @@ class ModelConfig(BaseModelConfig):
         ),
         gt=1,
         le=8,
-        multiple_of=2,
     )
     dropout: float = Field(
         0.5, description="dropout proportion during training", ge=0.0, lt=1.0
