@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from torch_geometric.nn import GraphNorm
 
-from pst.typing import OptGraphAttnOutput, OptTensor
+from pst.typing import OptGraphAttnOutput
 
 from .layers import (
     MultiheadAttentionConv,
@@ -20,7 +20,6 @@ class SetTransformer(nn.Module):
         out_dim: int,
         num_heads: int = 4,
         n_enc_layers: int = 2,
-        n_dec_layers: int = 2,
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
@@ -68,7 +67,7 @@ class SetTransformer(nn.Module):
         # shape: [N, D'] -> [B, D'] where B is the batch size, ie
         # number of graphs/sets
         self._decoder["pool"] = MultiheadAttentionPooling(
-            in_channels=out_dim, heads=num_heads, layers=n_dec_layers, dropout=dropout
+            feature_dim=out_dim, heads=num_heads, dropout=dropout
         )
         self._decoder["linear"] = PositionwiseFeedForward(
             in_dim=out_dim, out_dim=out_dim, dropout=dropout
@@ -76,55 +75,51 @@ class SetTransformer(nn.Module):
         # final shapes: [B, D'] -> [B, D''], ie output dimension now
         ###################
 
-    def encode(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def encode(
+        self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor
+    ) -> torch.Tensor:
         # x: [N, D] -> [N, D']
         layer: MultiheadAttentionConv
         for layer in self._encoder["layers"]:  # type: ignore
-            x = layer(x=x, edge_index=edge_index, return_attention_weights=False)
+            x = layer(
+                x=x, edge_index=edge_index, batch=batch, return_attention_weights=False
+            )
 
-        x = self._encoder["norm"](x)
+        x = self._encoder["norm"](x, batch)
 
         return x
 
     def decode(
         self,
         x_out: torch.Tensor,
-        edge_index: torch.Tensor,
         ptr: torch.Tensor,
-        batch: OptTensor = None,
+        batch: torch.Tensor,
         return_attention_weights: bool = False,
     ) -> OptGraphAttnOutput:
-        x_avg = self._decoder["pool"](
+        x_avg, attn = self._decoder["pool"](
             x=x_out,
-            edge_index=edge_index,
             ptr=ptr,
             batch=batch,
             return_attention_weights=return_attention_weights,
         )
 
-        if return_attention_weights:
-            x_avg, attn = x_avg
-
         output = self._decoder["linear"](x_avg)
 
-        if return_attention_weights:
-            return output, attn  # type: ignore
-        return output
+        return output, attn
 
     def forward(
         self,
         x: torch.Tensor,
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
-        batch: OptTensor = None,
+        batch: torch.Tensor,
         return_attention_weights: bool = False,
     ) -> OptGraphAttnOutput:
-        x_out = self.encode(x=x, edge_index=edge_index)
-        graph_rep = self.decode(
+        x_out = self.encode(x=x, edge_index=edge_index, batch=batch)
+        graph_rep, attn = self.decode(
             x_out=x_out,
-            edge_index=edge_index,
             ptr=ptr,
             batch=batch,
             return_attention_weights=return_attention_weights,
         )
-        return graph_rep
+        return graph_rep, attn
