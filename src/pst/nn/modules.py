@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Iterator, Literal, cast
+from typing import Any, Iterator, Literal
 
 import lightning as L
 import torch
@@ -47,7 +47,16 @@ class ModelConfig(BaseModelConfig):
     )
     num_heads: int = Field(4, description="number of attention heads", gt=0)
     n_enc_layers: int = Field(5, description="number of encoder layers", gt=0)
-    n_dec_layers: int = Field(2, description="number of decoder layers", gt=0, le=5)
+    embed_scale: int = Field(
+        4,
+        description=(
+            "scale factor for positional and strand embeddings. These embeddings will be "
+            "of size in_dim/n, ie higher number means smaller embeddings."
+        ),
+        gt=1,
+        le=8,
+        multiple_of=2,
+    )
     dropout: float = Field(
         0.5, description="dropout proportion during training", ge=0.0, lt=1.0
     )
@@ -85,19 +94,20 @@ class ProteinSetTransformer(L.LightningModule):
         self.save_hyperparameters(config.model_dump(exclude={"fabric"}))
 
         # 2048 ptns should be large enough for probably all viruses
+        embedding_dim = config.in_dim // config.embed_scale
         self.positional_embedding = PositionalEmbedding(
-            dim=config.in_dim, max_size=2048
+            dim=embedding_dim, max_size=2048
         )
 
         # embed +/- gene strand
         self.strand_embedding = torch.nn.Embedding(
-            num_embeddings=2, embedding_dim=config.in_dim
+            num_embeddings=2, embedding_dim=embedding_dim
         )
 
         # plm embeddings, positional embeddings, and strand embeddings
         # will be concatenated together and then projected back to the original dim
         self.proj = PositionwiseFeedForward(
-            in_dim=config.in_dim * 3,
+            in_dim=config.in_dim + 2 * embedding_dim,
             out_dim=config.in_dim,
             dropout=config.dropout,
         )
@@ -109,8 +119,6 @@ class ProteinSetTransformer(L.LightningModule):
                     "out_dim",
                     "num_heads",
                     "n_enc_layers",
-                    "n_dec_layers",
-                    "multiplier",
                     "dropout",
                 }
             )
@@ -244,13 +252,10 @@ class ProteinSetTransformer(L.LightningModule):
         )
 
         # forward pass
-        y_anchor = cast(
-            torch.Tensor,
-            self._databatch_forward(
-                batch=batch,
-                return_attention_weights=False,
-                x=x,
-            ),
+        y_anchor, _ = self._databatch_forward(
+            batch=batch,
+            return_attention_weights=False,
+            x=x,
         )
 
         # negative sampling
@@ -322,13 +327,10 @@ class ProteinSetTransformer(L.LightningModule):
             strand_embed=strand_embed,
         )
 
-        y_aug_pos = cast(
-            torch.Tensor,
-            self._databatch_forward(
-                batch=batch,
-                return_attention_weights=False,
-                x=x_aug,
-            ),
+        y_aug_pos, _ = self._databatch_forward(
+            batch=batch,
+            return_attention_weights=False,
+            x=x_aug,
         )
 
         # TODO: hparam to choose true negative sampling or heuristic
