@@ -53,7 +53,7 @@ class ModelConfig(BaseModelConfig):
             "scale factor for positional and strand embeddings. These embeddings will be "
             "of size in_dim/n, ie higher number means smaller embeddings."
         ),
-        gt=1,
+        ge=1,
         le=8,
     )
     dropout: float = Field(
