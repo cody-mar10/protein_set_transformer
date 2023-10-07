@@ -37,10 +37,10 @@ class TrainerArgs(BaseModel):
     precision: PrecisionOpts = Field("16-mixed", description="floating point precision")
     strategy: StrategyOpts = Field("ddp", description="parallelized training strategy")
     gradient_clip_algorithm: Optional[GradClipAlgOpts] = Field(
-        None, description="optional gradient clipping procedure"
+        "norm", description="optional gradient clipping procedure"
     )
     gradient_clip_val: Optional[float] = Field(
-        None, description="optional value if clipping gradients"
+        0.5, description="optional value if clipping gradients"
     )
     max_time: MaxTimeOpts = Field(
         MaxTimeOpts.none,
