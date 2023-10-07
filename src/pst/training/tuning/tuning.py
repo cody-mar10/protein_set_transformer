@@ -55,7 +55,15 @@ def tune(config: TuningMode):
         checkpoint_dir=config.trainer.default_root_dir,
         # everything else is the same name
         **config.trainer.model_dump(
-            include={"accelerator", "strategy", "devices", "precision", "max_epochs"}
+            include={
+                "accelerator",
+                "strategy",
+                "devices",
+                "precision",
+                "max_epochs",
+                "gradient_clipping_algorithm",
+                "gradient_clip_val",
+            }
         ),
     )
 
