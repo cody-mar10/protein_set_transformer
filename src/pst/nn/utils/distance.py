@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+from einops import reduce
 from torch_scatter import segment_mean_csr, segment_min_csr
 
 from pst.typing import OptTensor, PairTensor
@@ -53,11 +54,8 @@ def stacked_batch_chamfer_distance(
 
 def pairwise_chamfer_distance(x: torch.Tensor, y: torch.Tensor) -> float:
     dist = torch.cdist(x, y, p=2.0).square()
-    x_min: torch.Tensor
-    y_min: torch.Tensor
-    x_min = dist.amin(dim=1)
-    y_min = dist.amin(dim=0)
+    x_min = reduce(dist, "x y -> x", "min")
+    y_min = reduce(dist, "x y -> y", "min")
 
     chamfer_dist = float(x_min.mean() + y_min.mean())
-    return chamfer_dist
     return chamfer_dist

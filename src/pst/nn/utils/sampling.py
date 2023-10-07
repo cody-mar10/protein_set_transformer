@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 import torch
+from einops import rearrange, reduce
 from pydantic import BaseModel, Field
 
 from pst.typing import PairTensor
@@ -53,13 +54,17 @@ def _semi_hard_negative_sampling(
 
     # mask positive idx from being selected -- avoids comparisons with 0
     mask = dist_from_pos.new_full(size=(batch_size, 1), fill_value=torch.inf)
-    dist_from_pos = dist_from_pos.scatter(dim=-1, index=pos_idx.unsqueeze(1), src=mask)
+    dist_from_pos = dist_from_pos.scatter(dim=-1, index=pos_idx, src=mask)
     # mask closer than positive idx
     # this is only for when there are actually are negative choices
     # that are greater than the positive idx
     # in other cases when looking for negatives that are closer than the positive
     # just take the absolute value of the dist_from_pos tensor first
-    dist_from_pos = torch.where(dist_from_pos <= 0.0, torch.inf, dist_from_pos)
+    dist_from_pos = torch.where(
+        dist_from_pos <= 0.0,
+        torch.inf,
+        dist_from_pos,
+    )
     neg_idx = dist_from_pos.argmin(dim=-1)
     return neg_idx
 
@@ -84,7 +89,10 @@ def negative_sampling(
         # pos_idx is just aligned already in the case of sampling from point swapped
         # augmented data
         pos_idx = torch.arange(Y.size(0)).to(Y.device)
+
     batch_size = pos_idx.size(0)
+    pos_idx = rearrange(pos_idx, "batch -> batch 1")
+
     # in case of sampling from real dataset, diag should be 0 due to self-comparison
     # so don't allow self to be chosen as neg sample
     # for pnt swap, generally diagonal should be the smallest, so chose another
@@ -92,15 +100,15 @@ def negative_sampling(
 
     # don't allow points closer than the pos sample be chosen
     # this also has the effect of removing self-comparisons
-    pos_dists = embed_dist.gather(dim=-1, index=pos_idx.unsqueeze(1))  # type: ignore
+    pos_dists = embed_dist.gather(dim=-1, index=pos_idx)  # type: ignore
 
     gt_pos = embed_dist > pos_dists
-    has_neg_choices = torch.sum(gt_pos, dim=-1).bool()
+    has_neg_choices = reduce(gt_pos, "batch1 batch2 -> batch1", "sum").bool()
     dist_from_pos = embed_dist - pos_dists
 
     # semi-hardish negative mining
     if has_neg_choices.all():
-        # neg example is the one that is the next farther after
+        # neg example is the one that is the next farther after the pos sample
         # dist = 0.0 is pos_idx, dist < 0.0 is closer than pos,
         # but we want just farther than pos
         neg_idx = _semi_hard_negative_sampling(

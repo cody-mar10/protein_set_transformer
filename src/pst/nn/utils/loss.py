@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+import einops
 import torch
 import torch.nn as nn
 from pydantic import BaseModel, Field
@@ -11,11 +12,20 @@ class LossConfig(BaseModel):
     margin: float = Field(0.1, description="triplet loss margin", gt=0.0)
 
 
+def average(x: torch.Tensor) -> torch.Tensor:
+    return einops.reduce(x, "batch -> ", "mean")
+
+
 class WeightedTripletLoss(nn.Module):
     def __init__(self, margin: float) -> None:
         super(WeightedTripletLoss, self).__init__()
         self.margin = margin
         self.loss_minimum = torch.tensor(0.0)
+
+    @staticmethod
+    def squared_distance(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        squared_diff = torch.pow(x - y, 2)
+        return einops.reduce(squared_diff, "batch dim -> batch", "sum")
 
     def forward(
         self,
@@ -30,22 +40,20 @@ class WeightedTripletLoss(nn.Module):
             # no actual weights
             class_weights = y_self.new_ones(y_self.size(0))
 
-        positive_dist = torch.pow(y_self - y_pos, 2).sum(dim=-1)
-        negative_dist = torch.pow(y_self - y_neg, 2).sum(dim=-1).mul(weights)
+        positive_dist = self.squared_distance(y_self, y_pos)
+        negative_dist = self.squared_distance(y_self, y_neg).mul(weights)
+
+        dist = positive_dist - negative_dist + self.margin
 
         # minimum dist is 0 for the perfect case
         # class weights also rescale contribution to loss for a weighted average
         # weights are 1.0 for most common class, and all rarer classes are > 1.0
         # this has the effect of amplifying bad performance for rare classes
-        dist = (
-            torch.maximum(
-                positive_dist - negative_dist + self.margin, self.loss_minimum
-            )
-            * class_weights
-        )
+        triplet_loss = dist.maximum(self.loss_minimum) * class_weights
+
         if reduce:
-            return torch.mean(dist, dim=0)
-        return dist
+            return average(triplet_loss)
+        return triplet_loss
 
 
 class AugmentedWeightedTripletLoss(nn.Module):
@@ -85,5 +93,5 @@ class AugmentedWeightedTripletLoss(nn.Module):
                 class_weights=class_weights,
             )
             loss += augmented_loss
-            return loss.mean(dim=0) / 2
-        return loss.mean(dim=0)
+            return average(loss) / 2
+        return average(loss)
