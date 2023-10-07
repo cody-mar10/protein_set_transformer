@@ -4,7 +4,7 @@ from typing import Optional
 
 import torch
 import torch.nn.functional as F
-from einops import einsum, rearrange, reduce, repeat
+from einops import einsum, rearrange, reduce
 from torch import nn
 from torch_geometric.nn import GraphNorm, MessagePassing
 from torch_geometric.utils import add_self_loops, segment, softmax
@@ -67,9 +67,7 @@ class MultiheadAttentionConv(MessagePassing):
         self.linK = nn.Linear(in_channels, self.eff_out_channels)
         self.linV = nn.Linear(in_channels, self.eff_out_channels)
 
-        self.normQ = GraphNorm(in_channels)
-        self.normK = GraphNorm(in_channels)
-        self.normV = GraphNorm(in_channels)
+        self.norm_input = GraphNorm(in_channels)
 
         if concat:
             # aggr_out will have shape: [-1, H * D]
@@ -92,9 +90,7 @@ class MultiheadAttentionConv(MessagePassing):
         self.linK.reset_parameters()
         self.linV.reset_parameters()
         self.linO.reset_parameters()
-        self.normQ.reset_parameters()
-        self.normK.reset_parameters()
-        self.normV.reset_parameters()
+        self.norm_input.reset_parameters()
         self.normO.reset_parameters()
 
     def uncat_heads(self, x: torch.Tensor) -> torch.Tensor:
@@ -133,14 +129,12 @@ class MultiheadAttentionConv(MessagePassing):
         x_input = x
 
         # pre-normalization
-        query: torch.Tensor = self.normQ(x, batch)
-        key: torch.Tensor = self.normK(x, batch)
-        value: torch.Tensor = self.normV(x, batch)
+        x = self.norm_input(x, batch)
 
         # shape [N, H * D] -> [N, H, D]
-        query: torch.Tensor = self.uncat_heads(self.linQ(query))
-        key: torch.Tensor = self.uncat_heads(self.linK(key))
-        value: torch.Tensor = self.uncat_heads(self.linV(value))
+        query = self.uncat_heads(self.linQ(x))
+        key = self.uncat_heads(self.linK(x))
+        value = self.uncat_heads(self.linV(x))
         edge_index, _ = add_self_loops(edge_index)
 
         # propagate order:
@@ -280,14 +274,12 @@ class MultiheadAttentionPooling(nn.Module):
 
         # we don't change the feature dim of any inputs
         # we just let each attention head attend to a subset of the input
-        self.linQ = nn.Linear(self.dim_per_head, self.dim_per_head)
-        self.linK = nn.Linear(self.dim_per_head, self.dim_per_head)
-        self.linV = nn.Linear(self.dim_per_head, self.dim_per_head)
+        self.linQ = nn.Linear(feature_dim, feature_dim)
+        self.linK = nn.Linear(feature_dim, feature_dim)
+        self.linV = nn.Linear(feature_dim, feature_dim)
         self.linO = nn.Linear(feature_dim, feature_dim)
 
-        self.normQ = GraphNorm(feature_dim)
-        self.normK = GraphNorm(feature_dim)
-        self.normV = GraphNorm(feature_dim)
+        self.normKV = GraphNorm(feature_dim)
         self.normO = GraphNorm(feature_dim)
 
         self.feature_dim = feature_dim
@@ -303,10 +295,7 @@ class MultiheadAttentionPooling(nn.Module):
         self.linK.reset_parameters()
         self.linV.reset_parameters()
         self.linO.reset_parameters()
-
-        self.normQ.reset_parameters()
-        self.normK.reset_parameters()
-        self.normV.reset_parameters()
+        self.normKV.reset_parameters()
         self.normO.reset_parameters()
 
     def forward(
@@ -345,24 +334,19 @@ class MultiheadAttentionPooling(nn.Module):
         # shape: [N, D]
         x_input = x
 
-        # expand to shape [D] -> [N, D]
-        # this would normally be handled internally during matmuls
-        # but want this to normalize the each graph separately
-        Q = repeat(self.seed, "dim -> nodes dim", nodes=x.size(0))
-
         # normalize inputs
-        Q = self.normQ(Q, batch)
-        K = self.normK(x, batch)
-        V = self.normV(x, batch)
+        K: torch.Tensor = self.normKV(x, batch)
+        V = K
+
+        # apply linear weights first
+        Q = self.linQ(self.seed)
+        K = self.linK(K)
+        V = self.linV(V)
 
         # reshape inputs
         Q = self.uncat_heads(Q)
         K = self.uncat_heads(K)
         V = self.uncat_heads(V)
-
-        Q = self.linQ(Q)
-        K = self.linK(K)
-        V = self.linV(V)
 
         # weighted V shape: [N, D]
         weighted_V, attn = self.scaled_dot_product_attention(
@@ -410,7 +394,7 @@ class MultiheadAttentionPooling(nn.Module):
         # then [N, H, D, D] -> [N, H] by summing over the last 2 dims
         # thus, this represents H scores per node
         attn_weight = einsum(
-            Q, K, "nodes heads dim1, nodes heads dim2 -> nodes heads"
+            Q, K, "heads dim1, nodes heads dim2 -> nodes heads"
         ).div(self.scale)
 
         # sparsely evaluated softmax that normalizes each attn head per graph
