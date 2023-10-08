@@ -9,6 +9,7 @@ from lightning_cv.callbacks.checkpoint import ModelCheckpoint
 from lightning_cv.callbacks.lr_monitor import LearningRateMonitor
 from lightning_cv.callbacks.stopping import EarlyStopping
 from lightning_cv.callbacks.timer import Timer
+from torch.autograd.anomaly_mode import set_detect_anomaly
 
 from pst.data.modules import GenomeDataModule
 from pst.nn.modules import CrossValPST as PST
@@ -97,4 +98,6 @@ def tune(config: TuningMode):
             expt_name=config.experiment.name,
         )
     )
-    integration.optimize(fn=optimize)
+
+    with set_detect_anomaly(config.experiment.debug):
+        integration.optimize(fn=optimize)
