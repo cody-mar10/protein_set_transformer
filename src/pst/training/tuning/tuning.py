@@ -14,6 +14,7 @@ from pst.data.modules import GenomeDataModule
 from pst.nn.modules import CrossValPST as PST
 from pst.utils.cli.modes import TuningMode
 
+from ..debug import debugify
 from .optuna import OptunaIntegration
 from .utils import _peek_feature_dim
 
@@ -66,6 +67,9 @@ def tune(config: TuningMode):
             }
         ),
     )
+
+    if config.experiment.debug:
+        debugify(trainer_config, config.trainer)
 
     ### CV TUNER INIT
     tuner = lcv.tuning.Tuner(

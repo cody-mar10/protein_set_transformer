@@ -45,3 +45,4 @@ class ExperimentArgs(BaseModel):
     from_json: Optional[Path] = Field(
         None, description="load hyperparameters from json file"
     )
+    debug: bool = Field(False, description="debug mode to check gradients")
