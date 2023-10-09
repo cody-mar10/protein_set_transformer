@@ -26,6 +26,13 @@ low = 0.0
 high = 0.5
 log = false
 
+[[hparams]]
+name = "layer_dropout"
+suggest = "float"
+low = 0.0
+high = 0.2
+log = false
+
 # OPTIMIZER hparams
 [[hparams]]
 name = "lr"
