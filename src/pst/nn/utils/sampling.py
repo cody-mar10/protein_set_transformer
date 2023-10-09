@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import Optional
 
 import torch
@@ -8,8 +7,6 @@ from einops import rearrange, reduce
 
 from pst.nn.utils.distance import pairwise_chamfer_distance
 from pst.typing import NO_NEGATIVES_MODES, PairTensor
-
-logger = logging.getLogger(__name__)
 
 
 def positive_sampling(setdist: torch.Tensor) -> torch.Tensor:
@@ -99,11 +96,6 @@ def negative_sampling(
             dist_from_pos=dist_from_pos, pos_idx=pos_idx, batch_size=batch_size
         )
     else:
-        logger.warning(
-            "Some graphs do not have a negative choice that is just farther than the "
-            "positive sample."
-        )
-
         neg_idx = pos_idx.new_full((batch_size,), fill_value=-1)
         has_neg_idx = has_neg_choices.nonzero(as_tuple=True)[0]
         no_neg_idx = has_neg_choices.logical_not().nonzero(as_tuple=True)[0]
