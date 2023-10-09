@@ -41,7 +41,6 @@ def get_callbacks(
     if early_stopping:
         callbacks.append(
             EarlyStopping(
-                monitor="val_loss",
                 patience=config.experiment.patience,
                 verbose=True,
                 mode="min",
