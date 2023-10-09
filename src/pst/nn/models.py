@@ -4,24 +4,25 @@ import torch
 from torch import nn
 from torch_geometric.nn import GraphNorm
 
-from pst.typing import OptGraphAttnOutput
-
-from .layers import (
+from pst.nn.layer_drop import LayerDropModuleList
+from pst.nn.layers import (
     MultiheadAttentionConv,
     MultiheadAttentionPooling,
     PositionwiseFeedForward,
 )
+from pst.typing import OptGraphAttnOutput
 
 
-class SetTransformer(nn.Module):
+class SetTransformerEncoder(nn.Module):
     def __init__(
         self,
         in_dim: int,
         out_dim: int,
-        num_heads: int = 4,
-        n_enc_layers: int = 2,
-        dropout: float = 0.0,
-    ) -> None:
+        num_heads: int,
+        n_layers: int,
+        dropout: float,
+        layer_dropout: float = 0.0,
+    ):
         super().__init__()
 
         # the pyg strategy for attention is for each head to attend to the full
@@ -33,11 +34,9 @@ class SetTransformer(nn.Module):
         if remainder != 0:
             raise ValueError(f"{out_dim=} must be divisible by {num_heads=}")
 
-        ##### ENCODER #####
-        self._encoder = nn.ModuleDict()
-        encoder_layers = nn.ModuleList()
+        self.layers = LayerDropModuleList(layer_dropout)
         start_dim = in_dim
-        for _ in range(n_enc_layers):
+        for _ in range(n_layers):
             layer = MultiheadAttentionConv(
                 in_channels=start_dim,
                 out_channels=hidden_dim,
@@ -45,49 +44,97 @@ class SetTransformer(nn.Module):
                 concat=True,
                 dropout=dropout,
             )
-            encoder_layers.append(layer)
+            self.layers.append(layer)
             start_dim = out_dim
 
-        self._encoder["layers"] = encoder_layers
+        self.final_norm = GraphNorm(in_channels=out_dim)
 
-        # TODO: only add if doing pre-normalization
-        self._encoder["norm"] = GraphNorm(
-            in_channels=out_dim,
-        )
-        # before encoding: [N, D]
-        # where N is the total number of items in each set
-        # or the total nodes in all graphs
-        # D is the original embedding dim
-        # after encoder: [N, D']
-        # D' is the hidden dim
-        ###################
-
-        ##### DECODER #####
-        self._decoder = nn.ModuleDict()
-        # shape: [N, D'] -> [B, D'] where B is the batch size, ie
-        # number of graphs/sets
-        self._decoder["pool"] = MultiheadAttentionPooling(
-            feature_dim=out_dim, heads=num_heads, dropout=dropout
-        )
-        self._decoder["linear"] = PositionwiseFeedForward(
-            in_dim=out_dim, out_dim=out_dim, dropout=dropout
-        )
-        # final shapes: [B, D'] -> [B, D''], ie output dimension now
-        ###################
-
-    def encode(
-        self, x: torch.Tensor, edge_index: torch.Tensor, batch: torch.Tensor
+    def forward(
+        self,
+        x: torch.Tensor,
+        edge_index: torch.Tensor,
+        batch: torch.Tensor,
+        return_attention_weights: bool = False,
     ) -> torch.Tensor:
-        # x: [N, D] -> [N, D']
-        layer: MultiheadAttentionConv
-        for layer in self._encoder["layers"]:  # type: ignore
+        for layer in self.layers:
+            # TODO: what if returning attn weights
             x = layer(
-                x=x, edge_index=edge_index, batch=batch, return_attention_weights=False
+                x=x,
+                edge_index=edge_index,
+                batch=batch,
+                return_attention_weights=return_attention_weights,
             )
 
-        x = self._encoder["norm"](x, batch)
-
+        x = self.final_norm(x, batch)
         return x
+
+
+class SetTransformerDecoder(nn.Module):
+    def __init__(self, hidden_dim: int, num_heads: int, dropout: float):
+        super().__init__()
+        self.pool = MultiheadAttentionPooling(
+            feature_dim=hidden_dim, heads=num_heads, dropout=dropout
+        )
+
+        self.linear = PositionwiseFeedForward(
+            in_dim=hidden_dim, out_dim=hidden_dim, dropout=dropout
+        )
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        ptr: torch.Tensor,
+        batch: torch.Tensor,
+        return_attention_weights: bool = False,
+    ) -> OptGraphAttnOutput:
+        pooled_x, attn = self.pool(
+            x=x,
+            ptr=ptr,
+            batch=batch,
+            return_attention_weights=return_attention_weights,
+        )
+        output = self.linear(pooled_x)
+        return output, attn
+
+
+class SetTransformer(nn.Module):
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int,
+        num_heads: int,
+        n_enc_layers: int,
+        dropout: float,
+        layer_dropout: float,
+    ) -> None:
+        super().__init__()
+        self.encoder = SetTransformerEncoder(
+            in_dim=in_dim,
+            out_dim=out_dim,
+            num_heads=num_heads,
+            n_layers=n_enc_layers,
+            dropout=dropout,
+            layer_dropout=layer_dropout,
+        )
+
+        self.decoder = SetTransformerDecoder(
+            hidden_dim=out_dim, num_heads=num_heads, dropout=dropout
+        )
+
+    def encode(
+        self,
+        x: torch.Tensor,
+        edge_index: torch.Tensor,
+        batch: torch.Tensor,
+        return_attention_weights: bool = False,
+    ) -> torch.Tensor:
+        # x: [N, D] -> [N, D']
+        return self.encoder(
+            x=x,
+            edge_index=edge_index,
+            batch=batch,
+            return_attention_weights=return_attention_weights,
+        )
 
     def decode(
         self,
@@ -96,16 +143,13 @@ class SetTransformer(nn.Module):
         batch: torch.Tensor,
         return_attention_weights: bool = False,
     ) -> OptGraphAttnOutput:
-        x_avg, attn = self._decoder["pool"](
+        # shape: [N, D'] -> [B, D']
+        return self.decoder(
             x=x_out,
             ptr=ptr,
             batch=batch,
             return_attention_weights=return_attention_weights,
         )
-
-        output = self._decoder["linear"](x_avg)
-
-        return output, attn
 
     def forward(
         self,
@@ -115,7 +159,13 @@ class SetTransformer(nn.Module):
         batch: torch.Tensor,
         return_attention_weights: bool = False,
     ) -> OptGraphAttnOutput:
-        x_out = self.encode(x=x, edge_index=edge_index, batch=batch)
+        x_out = self.encode(
+            x=x,
+            edge_index=edge_index,
+            batch=batch,
+            return_attention_weights=False,
+        )
+
         graph_rep, attn = self.decode(
             x_out=x_out,
             ptr=ptr,
