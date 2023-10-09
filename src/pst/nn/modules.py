@@ -4,83 +4,24 @@ from typing import Any, Iterator, Literal
 
 import lightning as L
 import torch
-from lightning_cv import BaseModelConfig, CrossValModuleMixin
-from pydantic import BaseModel, Field
+from lightning_cv import CrossValModuleMixin
 from torch.nn.parameter import Parameter
 from transformers import get_linear_schedule_with_warmup
 
 from pst.data.modules import GenomeDataset
-from pst.typing import GenomeGraphBatch, OptGraphAttnOutput, OptTensor
-
-from .layers import PositionalEmbedding, PositionwiseFeedForward
-from .models import SetTransformer
-from .utils.distance import stacked_batch_chamfer_distance
-from .utils.loss import AugmentedWeightedTripletLoss, LossConfig
-from .utils.sampling import (
-    AugmentationConfig,
+from pst.nn.config import ModelConfig
+from pst.nn.layers import PositionalEmbedding, PositionwiseFeedForward
+from pst.nn.models import SetTransformer, SetTransformerDecoder, SetTransformerEncoder
+from pst.nn.utils.distance import stacked_batch_chamfer_distance
+from pst.nn.utils.loss import AugmentedWeightedTripletLoss
+from pst.nn.utils.sampling import (
     negative_sampling,
     point_swap_sampling,
     positive_sampling,
 )
+from pst.typing import GenomeGraphBatch, OptGraphAttnOutput, OptTensor
 
 _STAGE_TYPE = Literal["train", "val", "test"]
-
-
-class OptimizerConfig(BaseModel):
-    lr: float = Field(1e-3, description="learning rate", ge=1e-5, le=1e-1)
-    weight_decay: float = Field(
-        0.0, description="optimizer weight decay", ge=0.0, le=1e-1
-    )
-    betas: tuple[float, float] = Field((0.9, 0.999), description="optimizer betas")
-    warmup_steps: int = Field(0, description="number of warmup steps", ge=0)
-    use_scheduler: bool = Field(
-        False, description="whether or not to use a linearly decaying scheduler"
-    )
-
-
-class ModelConfig(BaseModelConfig):
-    in_dim: int = Field(
-        -1, description="input dimension, default is to use the dataset dimension"
-    )
-    out_dim: int = Field(
-        -1, description="output dimension, default is to use the input dimension"
-    )
-    num_heads: int = Field(4, description="number of attention heads", gt=0)
-    n_enc_layers: int = Field(5, description="number of encoder layers", gt=0)
-    embed_scale: int = Field(
-        4,
-        description=(
-            "scale factor for positional and strand embeddings. These embeddings will be "
-            "of size in_dim/n, ie higher number means smaller embeddings."
-        ),
-        ge=1,
-        le=8,
-    )
-    dropout: float = Field(
-        0.5, description="dropout proportion during training", ge=0.0, lt=1.0
-    )
-    compile: bool = Field(False, description="compile model using torch.compile")
-    optimizer: OptimizerConfig
-    loss: LossConfig
-    augmentation: AugmentationConfig
-
-    @classmethod
-    def default(cls):
-        schema = dict()
-        for key, field in cls.model_fields.items():
-            if isinstance(field.annotation, type):
-                if isinstance(field.annotation, BaseModel) or issubclass(
-                    field.annotation, BaseModel
-                ):
-                    # field is a pydantic model
-                    # NOTE: does not handle any nesting below this...
-                    value = field.annotation.model_construct()
-                else:
-                    value = field.get_default()
-
-                schema[key] = value
-
-        return cls.model_validate(schema)
 
 
 class ProteinSetTransformer(L.LightningModule):
@@ -119,12 +60,13 @@ class ProteinSetTransformer(L.LightningModule):
                     "num_heads",
                     "n_enc_layers",
                     "dropout",
+                    "layer_dropout",
                 }
             )
         )
 
         if self.config.compile:
-            self.model = torch.compile(self.model)
+            self.model: SetTransformer = torch.compile(self.model)  # type: ignore
 
         self.criterion = AugmentedWeightedTripletLoss(**config.loss.model_dump())
         self.optimizer_cfg = config.optimizer
@@ -137,6 +79,14 @@ class ProteinSetTransformer(L.LightningModule):
 
     def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
         return self.model.parameters(recurse=recurse)
+
+    @property
+    def encoder(self) -> SetTransformerEncoder:
+        return self.model.encoder
+
+    @property
+    def decoder(self) -> SetTransformerDecoder:
+        return self.model.decoder
 
     def configure_optimizers(self) -> dict[str, Any]:
         optimizer = torch.optim.AdamW(
