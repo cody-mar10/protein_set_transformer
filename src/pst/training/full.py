@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-import lightning as L
-from lightning.pytorch.callbacks import Callback, EarlyStopping, ModelCheckpoint
+import logging
 
 from pst.data.modules import GenomeDataModule
 from pst.nn.modules import ProteinSetTransformer as PST
+from pst.training.utils.dim import check_feature_dim
+from pst.training.utils.lightning import init_lightning_trainer
 from pst.utils.cli.modes import TrainingMode
 
-# TODO early stopp
+logger = logging.getLogger(__name__)
 
 
 def train_with_all_data(config: TrainingMode):
@@ -16,42 +17,14 @@ def train_with_all_data(config: TrainingMode):
             "Cannot train with all data if --train-on-full not passed at command line."
         )
 
+    logger.info("Training a single model with all available data.")
+
     datamodule = GenomeDataModule(config.data)
-
-    # update model's in_dim
-    if config.model.in_dim == -1:
-        config.model.in_dim = datamodule.dataset.feature_dim
-
+    check_feature_dim(config)
     model = PST(config.model)
 
     # update positional embedding max size
     model.check_max_size(datamodule.dataset)
 
-    callbacks: list[Callback] = [
-        EarlyStopping(
-            monitor="train_loss",
-            patience=config.experiment.patience,
-            verbose=True,
-            mode="min",
-            check_finite=True,
-            strict=True,
-            stopping_threshold=1e-3,
-            min_delta=0.05,
-        ),
-        ModelCheckpoint(
-            filename="{epoch}_{train_loss:.3f}",
-            save_last=True,
-            save_top_k=config.experiment.save_top_k,
-            every_n_epochs=1,
-            monitor="train_loss",
-            mode="min",
-        ),
-    ]
-
-    trainer = L.Trainer(
-        # want max time value, not enum
-        max_time=config.trainer.max_time.value,
-        callbacks=callbacks,
-        **config.trainer.model_dump(exclude={"max_time"}),
-    )
+    trainer = init_lightning_trainer(config, checkpoint=True, early_stopping=True)
     trainer.fit(model=model, datamodule=datamodule)
