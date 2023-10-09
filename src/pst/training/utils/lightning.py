@@ -55,7 +55,7 @@ def init_lightning_trainer(
         config, checkpoint=checkpoint, early_stopping=early_stopping
     )
 
-    if config.experiment.debug:
+    if config.experiment.log_gradients:
         callbacks.append(LGradientLogger())
 
     trainer = L.Trainer(
@@ -63,6 +63,6 @@ def init_lightning_trainer(
         max_time=config.trainer.max_time.value,
         callbacks=callbacks,
         **config.trainer.model_dump(exclude={"max_time"}),
-        detect_anomaly=config.experiment.debug,
+        detect_anomaly=config.experiment.detect_anomaly,
     )
     return trainer

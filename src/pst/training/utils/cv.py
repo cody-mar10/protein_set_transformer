@@ -1,3 +1,4 @@
+import logging
 from typing import Optional
 
 from lightning.fabric.loggers.csv_logs import CSVLogger
@@ -19,6 +20,8 @@ from pst.training.utils.constants import (
 )
 from pst.utils.cli.modes import TrainingMode
 from pst.utils.cli.trainer import TrainerArgs
+
+log = logging.getLogger(__name__)
 
 
 def get_callbacks(
@@ -119,7 +122,11 @@ def init_trainer_config(
         logger,
     )
 
-    if config.experiment.debug:
+    if config.experiment.log_gradients:
+        log.warning(
+            "Logging gradients is on, and will be written to disk, which may take up a "
+            "lot of space."
+        )
         debugify(trainer_config, config.trainer)
 
     return trainer_config

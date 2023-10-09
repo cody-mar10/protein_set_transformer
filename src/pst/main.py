@@ -68,12 +68,11 @@ def main():
             "Must pass either 'train', 'tune', or 'predict' as running mode."
         )
 
-    with set_detect_anomaly(config.experiment.debug):
-        if config.experiment.debug:
+    with set_detect_anomaly(config.experiment.detect_anomaly):
+        if config.experiment.detect_anomaly:
             logger.warning(
-                "Debug mode is on. This will be slow since the autograd engine has to "
-                "check for gradient anomalies. Additionally, the gradients will be "
-                "written to disk, which may take up a lot of space."
+                "Anomaly detection mode is on. This will be slow since the autograd "
+                "engine has to check for gradient anomalies."
             )
 
         fn(config)  # type: ignore
