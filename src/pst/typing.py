@@ -11,6 +11,8 @@ from torch_geometric.typing import OptTensor
 
 FilePath = str | Path
 
+NO_NEGATIVES_MODES = Literal["closest_to_positive", "closest_to_anchor"]
+
 
 # data.py types
 class GenomeGraphBatch(Protocol):
