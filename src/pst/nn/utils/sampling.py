@@ -1,31 +1,15 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+import logging
+from typing import Optional
 
 import torch
 from einops import rearrange, reduce
-from pydantic import BaseModel, Field
 
-from pst.typing import PairTensor
+from pst.nn.utils.distance import pairwise_chamfer_distance
+from pst.typing import NO_NEGATIVES_MODES, PairTensor
 
-from .distance import pairwise_chamfer_distance
-
-NO_NEGATIVES_MODES = Literal["closest_to_positive", "closest_to_anchor"]
-
-
-class AugmentationConfig(BaseModel):
-    sample_scale: float = Field(
-        7.0,
-        description="exponential decay scale factor for weighting negative samples during loss",  # noqa: E501
-        gt=0.0,
-    )
-    sample_rate: float = Field(
-        0.5, description="PointSwap sampler swapping rate", gt=0.0, lt=1.0
-    )
-    no_negatives_mode: NO_NEGATIVES_MODES = Field(
-        "closest_to_positive",
-        description="mode to handle event of no semihard negative sample existing",
-    )
+logger = logging.getLogger(__name__)
 
 
 def positive_sampling(setdist: torch.Tensor) -> torch.Tensor:
@@ -115,6 +99,11 @@ def negative_sampling(
             dist_from_pos=dist_from_pos, pos_idx=pos_idx, batch_size=batch_size
         )
     else:
+        logger.warning(
+            "Some graphs do not have a negative choice that is just farther than the "
+            "positive sample."
+        )
+
         neg_idx = pos_idx.new_full((batch_size,), fill_value=-1)
         has_neg_idx = has_neg_choices.nonzero(as_tuple=True)[0]
         no_neg_idx = has_neg_choices.logical_not().nonzero(as_tuple=True)[0]
@@ -156,15 +145,6 @@ def negative_sampling(
     neg_weight = torch.exp(-neg_setwise_dists / denom)
 
     return neg_idx, neg_weight
-
-
-class TripletSetSampler:
-    """PointSet sampler for data augmentation during trainer. Samples positive examples
-    from the original data vector space and samples negative examples from the
-    embedding space of the model. This allows for online triplet sampling.
-    """
-
-    pass
 
 
 def point_swap_sampling(

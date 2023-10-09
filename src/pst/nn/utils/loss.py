@@ -5,11 +5,6 @@ from typing import Optional
 import einops
 import torch
 import torch.nn as nn
-from pydantic import BaseModel, Field
-
-
-class LossConfig(BaseModel):
-    margin: float = Field(0.1, description="triplet loss margin", gt=0.0)
 
 
 def average(x: torch.Tensor) -> torch.Tensor:
