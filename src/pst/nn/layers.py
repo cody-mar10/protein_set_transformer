@@ -3,14 +3,13 @@ from __future__ import annotations
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
 from einops import einsum, rearrange, reduce
 from torch import nn
 from torch_geometric.nn import GraphNorm, MessagePassing
 from torch_geometric.utils import add_self_loops, segment, softmax
 
 from pst.nn.utils.attention import attention_scale, cat_heads, uncat_heads
-from pst.typing import OptEdgeAttnOutput, OptGraphAttnOutput, OptTensor, PairTensor
+from pst.typing import OptEdgeAttnOutput, OptGraphAttnOutput, OptTensor
 
 
 class MultiheadAttentionConv(MessagePassing):
@@ -22,9 +21,6 @@ class MultiheadAttentionConv(MessagePassing):
 
     _alpha: OptTensor
 
-    # TODO: add option to change normalization strategy <- actually don't think it
-    # matters that much
-    # the major bottleneck was with chamfer dist calc
     def __init__(
         self,
         in_channels: int,
@@ -53,13 +49,17 @@ class MultiheadAttentionConv(MessagePassing):
         """
         # this setup mirrors exactly how attention would be computed normally
         super().__init__(aggr="add", node_dim=0, **kwargs)
+
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.heads = heads
         self.eff_out_channels = heads * out_channels
         self.concat = concat
         self.scale = attention_scale(out_channels)
-        self.dropout = dropout
+
+        self.dropout = nn.Dropout(p=dropout)
+        self.actv = nn.GELU()
+
         self._alpha = None
 
         self.linQ = nn.Linear(in_channels, self.eff_out_channels)
@@ -70,16 +70,18 @@ class MultiheadAttentionConv(MessagePassing):
 
         if concat:
             # aggr_out will have shape: [-1, H * D]
-            self.normO = GraphNorm(self.eff_out_channels)
-            self.linO = nn.Linear(
-                in_features=self.eff_out_channels, out_features=self.eff_out_channels
-            )
+            output_dim = self.eff_out_channels
         else:
             # aggr_out will have shape: [-1, D]
-            self.normO = GraphNorm(self.out_channels)
-            self.linO = nn.Linear(
-                in_features=self.out_channels, out_features=self.out_channels
-            )
+            output_dim = self.out_channels
+
+        self.normO = GraphNorm(output_dim)
+        self.linO = PositionwiseFeedForward(
+            in_dim=output_dim,
+            out_dim=output_dim,
+            activation=nn.GELU,
+            dropout=dropout,
+        )
 
         self.reset_parameters()
 
@@ -128,7 +130,7 @@ class MultiheadAttentionConv(MessagePassing):
         x_input = x
 
         # pre-normalization
-        x = self.norm_input(x, batch)
+        x = self.normalize(x, self.norm_input, batch)
 
         # shape [N, H * D] -> [N, H, D]
         query = self.uncat_heads(self.linQ(x))
@@ -187,43 +189,55 @@ class MultiheadAttentionConv(MessagePassing):
     def update(
         self, aggr_out: torch.Tensor, initial: torch.Tensor, batch: torch.Tensor
     ) -> torch.Tensor:
+        aggr_out = self.reduce_attn_output(aggr_out)
+        initial = self.match_attn_output_size(initial, aggr_out)
+
+        # residuals before normalization, ie pre-norm
+        aggr_out = aggr_out + initial
+        normed_aggr_out: torch.Tensor = self.normalize(aggr_out, self.normO, batch)
+
+        # linO is a 2-layer feed forward network
+        normed_aggr_out = self.linO(normed_aggr_out)
+
+        aggr_out = aggr_out + normed_aggr_out
+
+        return aggr_out
+
+    def reduce_attn_output(self, aggr_out: torch.Tensor) -> torch.Tensor:
         if self.concat:
             # shape: [N, H, D] -> [N, H * D]
-            aggr_out = self.cat_heads(aggr_out)
-        else:
-            # shape: [N, H, D] -> [N, D]
-            aggr_out = reduce(aggr_out, "nodes heads dim -> nodes dim", "mean")
+            return self.cat_heads(aggr_out)
 
-        # initial shape: [-1, Di] != [-1, H * D] necessarily
+        # shape: [N, H, D] -> [N, D]
+        return reduce(aggr_out, "nodes heads dim -> nodes dim", "mean")
+
+    def match_attn_output_size(
+        self, x: torch.Tensor, aggr_out: torch.Tensor
+    ) -> torch.Tensor:
+        # initial x shape: [-1, Di] != [-1, H * D] necessarily
         # this doesn't matter if you just set the out dim D to be
         # Di // H like usual, but matters for projecting to 1 dim
         # during pooling -- similar problem below
         out_dim = aggr_out.size(-1)
-        init_dim = initial.size(-1)
+        init_dim = x.size(-1)
         if init_dim != out_dim:
             # basically adding all features from initial to aggr_out
             leftover = init_dim // out_dim
-            initial = reduce(
-                initial,
+            x = reduce(
+                x,
                 "nodes (left dim) -> nodes dim",
                 reduction="sum",
                 left=leftover,
                 dim=out_dim,
             )
 
-        # residuals before normalization, ie pre-norm
-        aggr_out = aggr_out + initial
-        normed_aggr_out = self.normO(aggr_out, batch)
-        normed_aggr_out = F.dropout(
-            F.gelu(self.linO(normed_aggr_out)),
-            p=self.dropout,
-            training=self.training,
-        )
+        return x
 
-        # linO is a 2-layer feedforward network
-        aggr_out = aggr_out + normed_aggr_out
-
-        return aggr_out
+    def normalize(
+        self, x: torch.Tensor, layer: GraphNorm, batch: torch.Tensor
+    ) -> torch.Tensor:
+        # always ensure that the batch/graph id tensor is passed to normalize per graph
+        return layer(x, batch)
 
     # these two methods are convenience methods to pass around the attn weights
     # since the PyG MessagePassing framework doesn't explicitly allow
@@ -237,7 +251,6 @@ class MultiheadAttentionConv(MessagePassing):
         return alpha
 
 
-# Modeled based off the SAGPooling operation
 class MultiheadAttentionPooling(nn.Module):
     def __init__(
         self,
@@ -266,7 +279,7 @@ class MultiheadAttentionPooling(nn.Module):
         # instead of relying on the edgewise attention with a graph transformer
 
         # will project all nodes onto this seed vector
-        self.seed = nn.Parameter(torch.empty((feature_dim,)))
+        self.seed = nn.Parameter(torch.empty((1, feature_dim)))
 
         self.dim_per_head = dim_per_head
         self.scale = attention_scale(self.dim_per_head)
@@ -276,7 +289,12 @@ class MultiheadAttentionPooling(nn.Module):
         self.linQ = nn.Linear(feature_dim, feature_dim)
         self.linK = nn.Linear(feature_dim, feature_dim)
         self.linV = nn.Linear(feature_dim, feature_dim)
-        self.linO = nn.Linear(feature_dim, feature_dim)
+        self.linO = PositionwiseFeedForward(
+            in_dim=feature_dim,
+            out_dim=feature_dim,
+            activation=nn.GELU,
+            dropout=dropout,
+        )
 
         self.normKV = GraphNorm(feature_dim)
         self.normO = GraphNorm(feature_dim)
@@ -288,7 +306,7 @@ class MultiheadAttentionPooling(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        nn.init.xavier_normal_(self.seed.unsqueeze(0))
+        nn.init.xavier_normal_(self.seed)
 
         self.linQ.reset_parameters()
         self.linK.reset_parameters()
@@ -334,11 +352,11 @@ class MultiheadAttentionPooling(nn.Module):
         x_input = x
 
         # normalize inputs
-        K: torch.Tensor = self.normKV(x, batch)
-        V = K
+        K: torch.Tensor = self.normalize(x, self.normKV, batch)
+        V: torch.Tensor = K
 
         # apply linear weights first
-        Q = self.linQ(self.seed)
+        Q: torch.Tensor = self.linQ(self.seed)
         K = self.linK(K)
         V = self.linV(V)
 
@@ -358,13 +376,8 @@ class MultiheadAttentionPooling(nn.Module):
 
         # residual connection
         weighted_V = weighted_V + x_input
-        norm_weighted_V = self.normO(weighted_V, batch)
-
-        norm_weighted_V = F.dropout(
-            F.gelu(self.linO(norm_weighted_V)),
-            p=self.dropout,
-            training=self.training,
-        )
+        norm_weighted_V: torch.Tensor = self.normalize(weighted_V, self.normO, batch)
+        norm_weighted_V = self.linO(norm_weighted_V)
 
         # residual connection, shape: [N, D]
         res_V = weighted_V + norm_weighted_V
@@ -389,12 +402,12 @@ class MultiheadAttentionPooling(nn.Module):
         return_attention_weights: bool = False,
     ) -> OptGraphAttnOutput:
         # internally this unsqueezes both tensors:
-        # [N, H, D, 1] x [N, H, D, 1]^T -> [N, H, D, D]
+        # [1, H, D, 1] x [N, H, D, 1]^T -> [N, H, D, D]
         # then [N, H, D, D] -> [N, H] by summing over the last 2 dims
         # thus, this represents H scores per node
-        attn_weight = einsum(Q, K, "heads dim1, nodes heads dim2 -> nodes heads").div(
-            self.scale
-        )
+        attn_weight = einsum(
+            Q, K, "unit heads dim1, nodes heads dim2 -> nodes heads"
+        ).div(self.scale)
 
         # sparsely evaluated softmax that normalizes each attn head per graph
         # thus each attn head is weighting the importance of each node in the graph
@@ -411,6 +424,12 @@ class MultiheadAttentionPooling(nn.Module):
             return weighted_V, attn_weight
         return weighted_V, None
 
+    def normalize(
+        self, x: torch.Tensor, layer: GraphNorm, batch: torch.Tensor
+    ) -> torch.Tensor:
+        # always ensure that the batch/graph id tensor is passed to normalize per graph
+        return layer(x, batch)
+
 
 class PositionwiseFeedForward(nn.Module):
     def __init__(
@@ -422,22 +441,22 @@ class PositionwiseFeedForward(nn.Module):
         **actv_kwargs,
     ) -> None:
         super().__init__()
-        self.w1 = nn.Linear(in_dim, in_dim)
-        self.activation = activation(**actv_kwargs)
-        self.dropout = dropout
-        self.w2 = nn.Linear(in_dim, out_dim)
+        self.layers = nn.Sequential(
+            nn.Linear(in_dim, in_dim),
+            activation(**actv_kwargs),
+            nn.Dropout(p=dropout),
+            nn.Linear(in_dim, out_dim),
+            nn.Dropout(p=dropout),
+        )
+        self.reset_parameters()
 
     def reset_parameters(self):
-        self.w1.reset_parameters()
-        self.w2.reset_parameters()
+        for layer in self.layers:
+            if hasattr(layer, "reset_parameters"):
+                getattr(layer, "reset_parameters")()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # following fairseq impl where no actv after 2nd linear layer
-        h: torch.Tensor = self.w1(x)
-        h = self.activation(h)
-        h = F.dropout(h, p=self.dropout, training=self.training)
-        h = self.w2(h)
-        h = F.dropout(h, p=self.dropout, training=self.training)
+        h: torch.Tensor = self.layers(x)
         return h
 
 
@@ -485,46 +504,3 @@ class FixedPositionalEncoding(nn.Module):
     ) -> torch.Tensor:
         encoding = self.positional_encoding(x, sizes)
         return encoding[positional_idx]
-
-
-class ResidualMultiheadAttentionConv(MultiheadAttentionConv):
-    # TODO: this module is not finished
-    def forward(
-        self,
-        pair: PairTensor,
-        edge_index: torch.Tensor,
-        return_attention_weights: bool = False,
-    ) -> torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
-        H, D = self.heads, self.out_channels
-        # x takes the post-norm route, while xres accumulates pre-norm residuals
-        # shapes: [N, D]
-        x, xres = pair
-
-        query: torch.Tensor = self.linQ(x).view(-1, H, D)
-        key: torch.Tensor = self.linK(x).view(-1, H, D)
-        value: torch.Tensor = self.linV(x).view(-1, H, D)
-        edge_index, _ = add_self_loops(edge_index)
-
-        # propagate order:
-        # 1. self.message
-        # 2. self.aggregrate
-        # 3. self.update
-        out = self.propagate(edge_index=edge_index, query=query, key=key, value=value)
-
-        # get attn weights
-        alpha = self._pop_alpha()
-
-        if return_attention_weights:
-            return out, (edge_index, alpha)
-
-        return out
-
-    def update(self, aggr_out: torch.Tensor) -> torch.Tensor:
-        if self.concat:
-            # shape: [-1, H, D] -> [-1, H * D]
-            aggr_out = aggr_out.view(-1, self.eff_out_channels)
-        else:
-            # shape: [-1, H, D] -> [-1, D]
-            aggr_out = aggr_out.mean(dim=1)
-
-        return aggr_out
