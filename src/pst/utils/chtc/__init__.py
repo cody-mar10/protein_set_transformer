@@ -1,1 +1,1 @@
-from . import main
+from pst.utils.chtc import main

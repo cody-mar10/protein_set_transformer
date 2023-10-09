@@ -5,7 +5,7 @@ from typing import Optional
 import pydantic_argparse
 from pydantic import BaseModel, Field
 
-from .modes import InferenceMode, TrainingMode, TuningMode
+from pst.utils.cli.modes import InferenceMode, TrainingMode, TuningMode
 
 
 class Args(BaseModel):

@@ -7,14 +7,13 @@ import torch
 from torch.utils.data import Dataset
 from torch_geometric.data import Batch, Data
 
-from pst.typing import EdgeIndexStrategy, FilePath, GenomeGraphBatch
-
-from .graph import (
+from pst.data.graph import (
     _DEFAULT_CHUNK_SIZE,
     _DEFAULT_EDGE_STRATEGY,
     _SENTINEL_THRESHOLD,
     GenomeGraph,
 )
+from pst.typing import EdgeIndexStrategy, FilePath, GenomeGraphBatch
 
 GraphT = TypeVar("GraphT", bound=Data)
 

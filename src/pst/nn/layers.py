@@ -9,9 +9,8 @@ from torch import nn
 from torch_geometric.nn import GraphNorm, MessagePassing
 from torch_geometric.utils import add_self_loops, segment, softmax
 
+from pst.nn.utils.attention import attention_scale, cat_heads, uncat_heads
 from pst.typing import OptEdgeAttnOutput, OptGraphAttnOutput, OptTensor, PairTensor
-
-from .utils.attention import attention_scale, cat_heads, uncat_heads
 
 
 class MultiheadAttentionConv(MessagePassing):
@@ -393,9 +392,9 @@ class MultiheadAttentionPooling(nn.Module):
         # [N, H, D, 1] x [N, H, D, 1]^T -> [N, H, D, D]
         # then [N, H, D, D] -> [N, H] by summing over the last 2 dims
         # thus, this represents H scores per node
-        attn_weight = einsum(
-            Q, K, "heads dim1, nodes heads dim2 -> nodes heads"
-        ).div(self.scale)
+        attn_weight = einsum(Q, K, "heads dim1, nodes heads dim2 -> nodes heads").div(
+            self.scale
+        )
 
         # sparsely evaluated softmax that normalizes each attn head per graph
         # thus each attn head is weighting the importance of each node in the graph

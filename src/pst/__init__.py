@@ -1,1 +1,1 @@
-from . import data, nn, predict, training, utils
+from pst import data, nn, predict, training, utils

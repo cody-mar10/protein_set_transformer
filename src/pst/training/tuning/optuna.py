@@ -5,7 +5,7 @@ from typing import Callable, Iterable, Optional, Sequence
 
 import optuna
 
-from .manager import StudyManager
+from pst.training.tuning.manager import StudyManager
 
 OptunaCallback = Callable[[optuna.Study, optuna.trial.FrozenTrial], None]
 ObjectiveFuncType = Callable[[optuna.Trial], float | Sequence[float]]

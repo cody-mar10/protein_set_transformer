@@ -8,9 +8,8 @@ from lightning_cv.split import ImbalancedLeaveOneGroupOut
 from pydantic import BaseModel, Field
 from torch.utils.data import DataLoader
 
+from pst.data.dataset import GenomeDataset
 from pst.typing import EdgeIndexStrategy
-
-from .dataset import GenomeDataset
 
 
 class DataConfig(BaseModel):
