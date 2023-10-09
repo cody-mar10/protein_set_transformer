@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Iterator, Literal
+from typing import Any, Literal
 
 import lightning as L
 import torch
 from lightning_cv import CrossValModuleMixin
-from torch.nn.parameter import Parameter
 from transformers import get_linear_schedule_with_warmup
 
 from pst.data.modules import GenomeDataset
@@ -76,9 +75,6 @@ class ProteinSetTransformer(L.LightningModule):
     def check_max_size(self, dataset: GenomeDataset):
         if dataset.max_size > self.positional_embedding.max_size:
             self.positional_embedding.expand(dataset.max_size)
-
-    def parameters(self, recurse: bool = True) -> Iterator[Parameter]:
-        return self.model.parameters(recurse=recurse)
 
     @property
     def encoder(self) -> SetTransformerEncoder:
@@ -166,12 +162,6 @@ class ProteinSetTransformer(L.LightningModule):
         stage: _STAGE_TYPE,
         augment_data: bool = True,
     ) -> torch.Tensor:
-        # TODO: strand and pos embeddings are dominating signal
-        # this is especially bad here since the chamfer distance and triplet sampling will
-        # be heavily influenced by the strand embeddings
-        # I want the plm embeddings to be the dominant signal
-
-        # add strand encoding here so augmented data has strand info already
         strand_embed = self.strand_embedding(batch.strand)
         positional_embed = self.positional_embedding(batch.pos.squeeze())
 
@@ -187,7 +177,7 @@ class ProteinSetTransformer(L.LightningModule):
         pos_idx = positive_sampling(setwise_dist)
 
         # adding positional and strand embeddings lead to those dominating the plm signal
-        # we can concatenate them here then use a linear layer to project down back to
+        # we can concatenate them here, then use a linear layer to project down back to
         # the original feature dim and force the model to directly learn which of these
         # are most important
 
