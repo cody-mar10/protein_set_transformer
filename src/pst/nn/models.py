@@ -34,6 +34,10 @@ class SetTransformerEncoder(nn.Module):
         if remainder != 0:
             raise ValueError(f"{out_dim=} must be divisible by {num_heads=}")
 
+        self.in_dim = in_dim
+        self.out_dim = out_dim
+        self.num_heads = num_heads
+
         self.layers = LayerDropModuleList(layer_dropout)
         start_dim = in_dim
         for _ in range(n_layers):
