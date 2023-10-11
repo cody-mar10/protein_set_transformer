@@ -63,6 +63,13 @@ class ModelConfig(BaseModelConfig):
     layer_dropout: float = Field(
         0.0, description="dropout proportion for entire layers", ge=0.0, lt=1.0
     )
+    proj_cat: bool = Field(
+        False,
+        description=(
+            "whether to project the concatenated pLM, positional, and strand embeddings "
+            "back to the original dimensionality"
+        ),
+    )
     compile: bool = Field(False, description="compile model using torch.compile")
     optimizer: OptimizerConfig
     loss: LossConfig
