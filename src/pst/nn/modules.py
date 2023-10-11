@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Literal
 
 import lightning as L
@@ -29,11 +30,12 @@ class ProteinSetTransformer(L.LightningModule):
         if config.out_dim == -1:
             config.out_dim = config.in_dim
 
-        self.config = config
+        self.config = deepcopy(config)
         self.save_hyperparameters(config.model_dump(exclude={"fabric"}))
 
-        # 2048 ptns should be large enough for probably all viruses
         embedding_dim = config.in_dim // config.embed_scale
+
+        # 2048 ptns should be large enough for probably all viruses
         self.positional_embedding = PositionalEmbedding(
             dim=embedding_dim, max_size=2048
         )
@@ -43,13 +45,22 @@ class ProteinSetTransformer(L.LightningModule):
             num_embeddings=2, embedding_dim=embedding_dim
         )
 
-        # plm embeddings, positional embeddings, and strand embeddings
-        # will be concatenated together and then projected back to the original dim
-        self.proj = PositionwiseFeedForward(
-            in_dim=config.in_dim + 2 * embedding_dim,
-            out_dim=config.in_dim,
-            dropout=config.dropout,
-        )
+        if config.proj_cat:
+            # plm embeddings, positional embeddings, and strand embeddings
+            # will be concatenated together and then projected back to the original dim
+            self.proj = PositionwiseFeedForward(
+                in_dim=config.in_dim + 2 * embedding_dim,
+                out_dim=config.in_dim,
+                dropout=config.dropout,
+            )
+        else:
+            # since we aren't projecting back to the original dim, we need to
+            # change the input and output dimensions of the model
+            self.config.in_dim += 2 * embedding_dim
+
+            # TODO: we don't always have to change this but this will require changes
+            # to MultiheadAttentionConv
+            self.config.out_dim = self.config.in_dim
 
         self.model = SetTransformer(
             **self.config.model_dump(
@@ -254,7 +265,7 @@ class ProteinSetTransformer(L.LightningModule):
             sample_rate=self.augmentation_cfg.sample_rate,
         )
 
-        # let strand use original indices strands
+        # let strand use original strand for each ptn
         strand = batch.strand[aug_idx]
         strand_embed = self.strand_embedding(strand)
 
@@ -272,7 +283,6 @@ class ProteinSetTransformer(L.LightningModule):
             x=x_aug,
         )
 
-        # TODO: hparam to choose true negative sampling or heuristic
         # NOTE: computing chamfer distance without positional or strand info
         setdist_real_aug, _ = stacked_batch_chamfer_distance(
             batch=batch.x, ptr=batch.ptr, other=augmented_batch
@@ -296,7 +306,9 @@ class ProteinSetTransformer(L.LightningModule):
         strand_embed: torch.Tensor,
     ) -> torch.Tensor:
         x_cat = torch.cat((x, positional_embed, strand_embed), dim=-1)
-        return self.proj(x_cat)
+        if self.config.proj_cat:
+            return self.proj(x_cat)
+        return x_cat
 
     def training_step(
         self, train_batch: GenomeGraphBatch, batch_idx: int
