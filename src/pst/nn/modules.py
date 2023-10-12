@@ -10,7 +10,7 @@ from transformers import get_linear_schedule_with_warmup
 
 from pst.data.modules import GenomeDataset
 from pst.nn.config import ModelConfig
-from pst.nn.layers import PositionalEmbedding, PositionwiseFeedForward
+from pst.nn.layers import PositionalEmbedding
 from pst.nn.models import SetTransformer, SetTransformerDecoder, SetTransformerEncoder
 from pst.nn.utils.distance import stacked_batch_chamfer_distance
 from pst.nn.utils.loss import AugmentedWeightedTripletLoss
@@ -45,21 +45,14 @@ class ProteinSetTransformer(L.LightningModule):
             num_embeddings=2, embedding_dim=embedding_dim
         )
 
-        if config.proj_cat:
+        self.config.in_dim += 2 * embedding_dim
+
+        if not config.proj_cat:
             # plm embeddings, positional embeddings, and strand embeddings
             # will be concatenated together and then projected back to the original dim
-            self.proj = PositionwiseFeedForward(
-                in_dim=config.in_dim + 2 * embedding_dim,
-                out_dim=config.in_dim,
-                dropout=config.dropout,
-            )
-        else:
-            # since we aren't projecting back to the original dim, we need to
-            # change the input and output dimensions of the model
-            self.config.in_dim += 2 * embedding_dim
-
-            # TODO: we don't always have to change this but this will require changes
-            # to MultiheadAttentionConv
+            # by the first attention layer, BUT if we don't want that
+            # then the output dimension will be equal to the original feature dim
+            # plus the dim for both the positional and strand embeddings
             self.config.out_dim = self.config.in_dim
 
         self.model = SetTransformer(
@@ -195,7 +188,7 @@ class ProteinSetTransformer(L.LightningModule):
         # NOTE: we do not adjust the original data at batch.x
         # this lets the augmented data adjust the positional and strand embeddings
         # independently of the original data
-        x = self._incorporate_positional_and_strand_embeddings(
+        x = self._concatenate_embeddings(
             x=batch.x,
             positional_embed=positional_embed,
             strand_embed=strand_embed,
@@ -271,7 +264,7 @@ class ProteinSetTransformer(L.LightningModule):
 
         # however instead of changing the positional idx, just keep the same
         # this is basically attempting to mirror same protein encoded in a diff position
-        x_aug = self._incorporate_positional_and_strand_embeddings(
+        x_aug = self._concatenate_embeddings(
             x=augmented_batch,
             positional_embed=positional_embed,
             strand_embed=strand_embed,
@@ -299,15 +292,13 @@ class ProteinSetTransformer(L.LightningModule):
         y_aug_neg = y_aug_pos[aug_neg_idx]
         return y_aug_pos, y_aug_neg, aug_neg_weights
 
-    def _incorporate_positional_and_strand_embeddings(
+    def _concatenate_embeddings(
         self,
         x: torch.Tensor,
         positional_embed: torch.Tensor,
         strand_embed: torch.Tensor,
     ) -> torch.Tensor:
         x_cat = torch.cat((x, positional_embed, strand_embed), dim=-1)
-        if self.config.proj_cat:
-            return self.proj(x_cat)
         return x_cat
 
     def training_step(
@@ -344,7 +335,7 @@ class ProteinSetTransformer(L.LightningModule):
         strand_embed = self.strand_embedding(batch.strand)
         positional_embed = self.positional_embedding(batch.pos.squeeze())
 
-        x_with_pos_and_strand = self._incorporate_positional_and_strand_embeddings(
+        x_with_pos_and_strand = self._concatenate_embeddings(
             x=batch.x,
             positional_embed=positional_embed,
             strand_embed=strand_embed,
