@@ -47,8 +47,8 @@ def tune(config: TuningMode):
 
     ### OPTUNA STUDY
     integration = OptunaIntegration(
-        expt_name=config.experiment.name,
-        default_root_dir=config.trainer.default_root_dir,
+        expt_name=tuner.experiment_name,
+        default_root_dir=tuner.logdir,
         **config.tuning.model_dump(
             exclude={"config", "parallel"},
         ),
