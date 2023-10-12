@@ -36,7 +36,7 @@ def test_main(args: Args):
 
 def predict_main(args: InferenceMode):
     L.seed_everything(_SEED)
-    model_inference(args, False)
+    model_inference(args, True, True, False)
 
 
 def _check_cpu_accelerator(config: TrainingMode):
