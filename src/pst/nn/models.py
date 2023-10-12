@@ -24,16 +24,6 @@ class SetTransformerEncoder(nn.Module):
         layer_dropout: float = 0.0,
     ):
         super().__init__()
-
-        # the pyg strategy for attention is for each head to attend to the full
-        # length of the input, rather than splitting the input into `head`-sized
-        # chunks. The memory reqs can be bypassed by projecting to a smaller
-        # dim that is desired out_dim // heads, and then concatenated the heads
-        # back together.
-        hidden_dim, remainder = divmod(out_dim, num_heads)
-        if remainder != 0:
-            raise ValueError(f"{out_dim=} must be divisible by {num_heads=}")
-
         self.in_dim = in_dim
         self.out_dim = out_dim
         self.num_heads = num_heads
@@ -43,9 +33,8 @@ class SetTransformerEncoder(nn.Module):
         for _ in range(n_layers):
             layer = MultiheadAttentionConv(
                 in_channels=start_dim,
-                out_channels=hidden_dim,
+                out_channels=out_dim,
                 heads=num_heads,
-                concat=True,
                 dropout=dropout,
             )
             self.layers.append(layer)
