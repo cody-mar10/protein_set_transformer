@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import re
+import sys
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Optional, cast
@@ -36,15 +36,23 @@ def model_inference(
             "At least one of node_embeddings and graph_embeddings must be True"
         )
 
+    if config.trainer.accelerator == "auto":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    elif config.trainer.accelerator == "gpu":
+        device = torch.device("cuda")
+    else:
+        device = torch.device(config.trainer.accelerator)
+
     ckpt: dict[str, Any] = torch.load(
         config.predict.checkpoint,
-        map_location="cuda" if torch.cuda.is_available() else "cpu",
+        map_location=device,
     )
 
     model_config = ModelConfig.model_validate(ckpt["hyper_parameters"])
 
     model = PST(model_config)
     model.load_state_dict(ckpt["state_dict"])
+    model = model.to(device)
 
     data_config = DataConfig.model_construct(
         file=config.data.file,
@@ -153,7 +161,7 @@ def _model_inference_node_embeddings(
         )
 
         batch: GenomeGraphBatch
-        for batch in tqdm(dataloader):
+        for batch in tqdm(dataloader, file=sys.stdout):
             batch = batch.to(model.device)  # type: ignore
             node_embeddings: torch.Tensor = model.encoder(
                 batch.x, batch.edge_index, batch.batch
@@ -175,7 +183,7 @@ def _fused_inference(
     outdir: Path,
 ):
     # have to do everything manually here it seems
-
+    model = model.to()
     model.eval()
     dataloader = datamodule.predict_dataloader()
     filters = tb.Filters(complevel=4, complib="blosc:lz4")
@@ -214,7 +222,7 @@ def _fused_inference(
         )
 
         batch: GenomeGraphBatch
-        for batch in tqdm(dataloader):
+        for batch in tqdm(dataloader, file=sys.stdout):
             batch = batch.to(model.device)  # type: ignore
 
             # this is technically after the final norm too
