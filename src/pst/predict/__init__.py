@@ -54,10 +54,7 @@ def model_inference(
     model.load_state_dict(ckpt["state_dict"])
     model = model.to(device)
 
-    data_config = DataConfig.model_construct(
-        file=config.data.file,
-        **ckpt["datamodule_hyper_parameters"],
-    )
+    data_config = DataConfig.model_validate(**config.data.model_dump())
 
     datamodule = GenomeDataModule(data_config)
     datamodule.setup("predict")
