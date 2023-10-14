@@ -240,13 +240,16 @@ class MultiheadAttentionPooling(nn.Module, AttentionMixin, NormMixin):
         # will project all nodes onto this seed vector
         self.seed = nn.Parameter(torch.empty((1, feature_dim)))
 
+        self.lin_input = nn.Linear(feature_dim, feature_dim)
+        self.actv = nn.GELU()
+
         # we don't change the feature dim of any inputs
         # we just let each attention head attend to a subset of the input
         self.linQ, self.linK, self.linV = self.init_weight_layers(feature_dim)
         self.linO = PositionwiseFeedForward(
             in_dim=feature_dim,
             out_dim=feature_dim,
-            activation=nn.GELU,
+            activation=type(self.actv),
             dropout=dropout,
         )
 
@@ -299,6 +302,10 @@ class MultiheadAttentionPooling(nn.Module, AttentionMixin, NormMixin):
                 attention weights that computed the weighted average.
         """
         # all calculations happen at the node level until the final reduction
+
+        # the impl from the SetTransformer paper says this occurs first before MH attn
+        # but this is missing from the paper's code impl
+        x = self.actv(self.lin_input(x))
 
         # shape: [N, D]
         x_input = x
