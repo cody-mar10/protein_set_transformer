@@ -19,11 +19,8 @@ def train_with_all_data(config: TrainingMode):
 
     logger.info("Training a single model with all available data.")
 
-    datamodule = GenomeDataModule(config.data)
-    datamodule.setup("fit")
-
     # shuffling is a must to prevent OOM since the largest data is all at the end
-    train_loader = datamodule.train_dataloader(shuffle=True)
+    datamodule = GenomeDataModule(config.data, shuffle=True)
 
     check_feature_dim(config)
     model = PST(config.model)
@@ -32,4 +29,4 @@ def train_with_all_data(config: TrainingMode):
     model.check_max_size(datamodule.dataset)
 
     trainer = init_lightning_trainer(config, checkpoint=True, early_stopping=True)
-    trainer.fit(model=model, train_dataloaders=train_loader)
+    trainer.fit(model=model, datamodule=datamodule)
