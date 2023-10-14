@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 from contextlib import ExitStack
 from pathlib import Path
+from turtle import pos
 from typing import Any, Optional, cast
 
 import lightning as L
@@ -163,8 +164,13 @@ def _model_inference_node_embeddings(
         batch: GenomeGraphBatch
         for batch in tqdm(dataloader, file=sys.stdout):
             batch = batch.to(model.device)  # type: ignore
+            pos_emb = model.positional_embedding(batch.pos.squeeze())
+            strand_emb = model.strand_embedding(batch.strand)
+            x_cat = model._concatenate_embeddings(
+                batch.x, positional_embed=pos_emb, strand_embed=strand_emb
+            )
             node_embeddings: torch.Tensor = model.encoder(
-                batch.x, batch.edge_index, batch.batch
+                x_cat, batch.edge_index, batch.batch
             )
 
             _append_to_earray(array, node_embeddings)
@@ -225,9 +231,15 @@ def _fused_inference(
         for batch in tqdm(dataloader, file=sys.stdout):
             batch = batch.to(model.device)  # type: ignore
 
+            pos_emb = model.positional_embedding(batch.pos.squeeze())
+            strand_emb = model.strand_embedding(batch.strand)
+            x_cat = model._concatenate_embeddings(
+                batch.x, positional_embed=pos_emb, strand_embed=strand_emb
+            )
+
             # this is technically after the final norm too
             node_embeddings: torch.Tensor = model.encoder(
-                batch.x, batch.edge_index, batch.batch
+                x_cat, batch.edge_index, batch.batch
             )
             _append_to_earray(node_array, node_embeddings)
 
