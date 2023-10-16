@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, NamedTuple, Protocol
 
 from numpy import float32
 from numpy.typing import NDArray
@@ -30,10 +30,17 @@ class GenomeGraphBatch(Protocol):
 
 EdgeIndexStrategy = Literal["full", "sparse", "chunked"]
 
-# layer.py types
-EdgeAttnOutput = tuple[Tensor, tuple[Tensor, Tensor]]
-OptEdgeAttnOutput = Tensor | EdgeAttnOutput
 
-OptGraphAttnOutput = tuple[Tensor, OptTensor]
+# layer.py types
+class EdgeAttnOutput(NamedTuple):
+    out: Tensor
+    edge_index: OptTensor
+    attn: OptTensor
+
+
+class GraphAttnOutput(NamedTuple):
+    out: Tensor
+    attn: OptTensor
+
 
 NumpyFloat32 = NDArray[float32]
