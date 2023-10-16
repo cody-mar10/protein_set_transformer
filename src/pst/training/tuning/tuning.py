@@ -5,6 +5,7 @@ from functools import partial
 
 import lightning_cv as lcv
 import optuna
+from lightning_cv.tuning.callbacks import OptunaHyperparameterLogger
 
 from pst.data.modules import GenomeDataModule
 from pst.nn.modules import CrossValPST as PST
@@ -56,7 +57,7 @@ def tune(config: TuningMode):
 
     optimize = partial(_optimize, tuner=tuner)
     integration.register_callbacks(
-        lcv.tuning.callbacks.OptunaHyperparameterLogger(
+        OptunaHyperparameterLogger(
             root_dir=config.trainer.default_root_dir,
             expt_name=config.experiment.name,
         )
