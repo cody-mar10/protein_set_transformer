@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any, Literal
 
 import lightning as L
@@ -19,7 +18,7 @@ from pst.nn.utils.sampling import (
     point_swap_sampling,
     positive_sampling,
 )
-from pst.typing import GenomeGraphBatch, OptGraphAttnOutput, OptTensor
+from pst.typing import GenomeGraphBatch, GraphAttnOutput, OptTensor
 
 _STAGE_TYPE = Literal["train", "val", "test"]
 
@@ -30,8 +29,7 @@ class ProteinSetTransformer(L.LightningModule):
         if config.out_dim == -1:
             config.out_dim = config.in_dim
 
-        self.config = deepcopy(config)
-        self.save_hyperparameters(config.model_dump(exclude={"fabric"}))
+        self.config = config.model_copy(deep=True)
 
         embedding_dim = config.in_dim // config.embed_scale
 
@@ -75,6 +73,8 @@ class ProteinSetTransformer(L.LightningModule):
         self.optimizer_cfg = config.optimizer
         self.augmentation_cfg = config.augmentation
         self.fabric = config.fabric
+
+        self.save_hyperparameters(self.config.model_dump(exclude={"fabric"}))
 
     def check_max_size(self, dataset: GenomeDataset):
         if dataset.max_size > self.positional_embedding.max_size:
@@ -132,8 +132,8 @@ class ProteinSetTransformer(L.LightningModule):
         ptr: torch.Tensor,
         batch: OptTensor = None,
         return_attention_weights: bool = False,
-    ) -> OptGraphAttnOutput:
-        output = self.model(
+    ) -> GraphAttnOutput:
+        output: GraphAttnOutput = self.model(
             x=x,
             edge_index=edge_index,
             ptr=ptr,
@@ -147,7 +147,7 @@ class ProteinSetTransformer(L.LightningModule):
         batch: GenomeGraphBatch,
         return_attention_weights: bool = False,
         x: OptTensor = None,
-    ) -> OptGraphAttnOutput:
+    ) -> GraphAttnOutput:
         if x is None:
             x = batch.x
 
@@ -329,9 +329,9 @@ class ProteinSetTransformer(L.LightningModule):
             augment_data=False,
         )
 
-    def predict_step(
-        self, batch: GenomeGraphBatch, batch_idx: int, dataloader_idx: int = 0
-    ) -> OptGraphAttnOutput:
+    def _databatch_forward_with_embeddings(
+        self, batch: GenomeGraphBatch, return_attention_weights: bool = True
+    ) -> GraphAttnOutput:
         strand_embed = self.strand_embedding(batch.strand)
         positional_embed = self.positional_embedding(batch.pos.squeeze())
 
@@ -341,9 +341,17 @@ class ProteinSetTransformer(L.LightningModule):
             strand_embed=strand_embed,
         )
 
-        # internally, the positional embeddings are added later
         return self._databatch_forward(
-            batch=batch, x=x_with_pos_and_strand, return_attention_weights=True
+            batch=batch,
+            x=x_with_pos_and_strand,
+            return_attention_weights=return_attention_weights,
+        )
+
+    def predict_step(
+        self, batch: GenomeGraphBatch, batch_idx: int, dataloader_idx: int = 0
+    ) -> GraphAttnOutput:
+        return self._databatch_forward_with_embeddings(
+            batch=batch, return_attention_weights=True
         )
 
 
