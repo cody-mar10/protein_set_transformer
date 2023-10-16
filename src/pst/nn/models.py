@@ -2,15 +2,11 @@ from __future__ import annotations
 
 import torch
 from torch import nn
-from torch_geometric.nn import GraphNorm
+from torch_geometric.nn import MLP, GraphNorm
 
 from pst.nn.layer_drop import LayerDropModuleList
-from pst.nn.layers import (
-    MultiheadAttentionConv,
-    MultiheadAttentionPooling,
-    PositionwiseFeedForward,
-)
-from pst.typing import OptGraphAttnOutput
+from pst.nn.layers import MultiheadAttentionConv, MultiheadAttentionPooling
+from pst.typing import EdgeAttnOutput, GraphAttnOutput
 
 
 class SetTransformerEncoder(nn.Module):
@@ -23,6 +19,9 @@ class SetTransformerEncoder(nn.Module):
         dropout: float,
         layer_dropout: float = 0.0,
     ):
+        if n_layers < 1:
+            raise ValueError(f"n_layers must be >= 1, got {n_layers}")
+
         super().__init__()
         self.in_dim = in_dim
         self.out_dim = out_dim
@@ -48,29 +47,44 @@ class SetTransformerEncoder(nn.Module):
         edge_index: torch.Tensor,
         batch: torch.Tensor,
         return_attention_weights: bool = False,
-    ) -> torch.Tensor:
+    ) -> EdgeAttnOutput:
         for layer in self.layers:
-            # TODO: what if returning attn weights
-            x = layer(
+            out: EdgeAttnOutput = layer(
                 x=x,
                 edge_index=edge_index,
                 batch=batch,
                 return_attention_weights=return_attention_weights,
             )
 
+            x = out.out
+
         x = self.final_norm(x, batch)
-        return x
+
+        if return_attention_weights:
+            final_output = EdgeAttnOutput(out=x, edge_index=out.edge_index, attn=out.attn)  # type: ignore
+        else:
+            final_output = EdgeAttnOutput(out=x, edge_index=None, attn=None)
+
+        return final_output
 
 
 class SetTransformerDecoder(nn.Module):
     def __init__(self, hidden_dim: int, num_heads: int, dropout: float):
         super().__init__()
+        self.linear = nn.Linear(hidden_dim, hidden_dim)
+        self.actv = nn.GELU()
         self.pool = MultiheadAttentionPooling(
             feature_dim=hidden_dim, heads=num_heads, dropout=dropout
         )
-
-        self.linear = PositionwiseFeedForward(
-            in_dim=hidden_dim, out_dim=hidden_dim, dropout=dropout
+        self.mlp = MLP(
+            in_channels=hidden_dim,
+            out_channels=hidden_dim,
+            hidden_channels=hidden_dim,
+            num_layers=2,
+            dropout=dropout,
+            act=self.actv,
+            norm=None,
+            plain_last=True,
         )
 
     def forward(
@@ -79,15 +93,19 @@ class SetTransformerDecoder(nn.Module):
         ptr: torch.Tensor,
         batch: torch.Tensor,
         return_attention_weights: bool = False,
-    ) -> OptGraphAttnOutput:
+    ) -> GraphAttnOutput:
+        # the impl from the SetTransformer paper says this occurs first before MH attn
+        # but this is missing from the paper's code impl
+        x = self.actv(self.linear(x))
+
         pooled_x, attn = self.pool(
             x=x,
             ptr=ptr,
             batch=batch,
             return_attention_weights=return_attention_weights,
         )
-        output = self.linear(pooled_x)
-        return output, attn
+        output = self.mlp(pooled_x)
+        return GraphAttnOutput(out=output, attn=attn)
 
 
 class SetTransformer(nn.Module):
@@ -120,7 +138,7 @@ class SetTransformer(nn.Module):
         edge_index: torch.Tensor,
         batch: torch.Tensor,
         return_attention_weights: bool = False,
-    ) -> torch.Tensor:
+    ) -> EdgeAttnOutput:
         # x: [N, D] -> [N, D']
         return self.encoder(
             x=x,
@@ -135,7 +153,7 @@ class SetTransformer(nn.Module):
         ptr: torch.Tensor,
         batch: torch.Tensor,
         return_attention_weights: bool = False,
-    ) -> OptGraphAttnOutput:
+    ) -> GraphAttnOutput:
         # shape: [N, D'] -> [B, D']
         return self.decoder(
             x=x_out,
@@ -151,18 +169,18 @@ class SetTransformer(nn.Module):
         ptr: torch.Tensor,
         batch: torch.Tensor,
         return_attention_weights: bool = False,
-    ) -> OptGraphAttnOutput:
-        x_out = self.encode(
+    ) -> GraphAttnOutput:
+        x_out, *_ = self.encode(
             x=x,
             edge_index=edge_index,
             batch=batch,
             return_attention_weights=False,
         )
 
-        graph_rep, attn = self.decode(
+        graph_out = self.decode(
             x_out=x_out,
             ptr=ptr,
             batch=batch,
             return_attention_weights=return_attention_weights,
         )
-        return graph_rep, attn
+        return graph_out

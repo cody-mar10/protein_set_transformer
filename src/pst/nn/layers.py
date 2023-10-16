@@ -5,12 +5,12 @@ from typing import Optional
 import torch
 from einops import einsum, rearrange, reduce
 from torch import nn
-from torch_geometric.nn import GraphNorm, MessagePassing
+from torch_geometric.nn import MLP, GraphNorm, MessagePassing
 from torch_geometric.utils import add_self_loops, segment, softmax
 
 from pst.nn.utils.attention import AttentionMixin
 from pst.nn.utils.norm import NormMixin
-from pst.typing import OptEdgeAttnOutput, OptGraphAttnOutput, OptTensor
+from pst.typing import EdgeAttnOutput, GraphAttnOutput, OptTensor
 
 
 class MultiheadAttentionConv(MessagePassing, AttentionMixin, NormMixin):
@@ -64,11 +64,12 @@ class MultiheadAttentionConv(MessagePassing, AttentionMixin, NormMixin):
         self.norm_input = GraphNorm(in_channels)
 
         self.normO = GraphNorm(in_channels)
-        self.linO = PositionwiseFeedForward(
-            in_dim=in_channels,
-            out_dim=out_channels,
-            activation=nn.GELU,
+        self.linO = MLP(
+            channel_list=[in_channels, in_channels, out_channels],
+            norm=None,
             dropout=dropout,
+            plain_last=True,
+            act="gelu",
         )
 
         self.reset_parameters()
@@ -88,7 +89,7 @@ class MultiheadAttentionConv(MessagePassing, AttentionMixin, NormMixin):
         edge_index: torch.Tensor,
         batch: torch.Tensor,
         return_attention_weights: bool = False,
-    ) -> OptEdgeAttnOutput:
+    ) -> EdgeAttnOutput:
         """Forward pass to compute scaled-dot product attention to update each
         node/item representation. This only supports self-attention.
 
@@ -137,9 +138,9 @@ class MultiheadAttentionConv(MessagePassing, AttentionMixin, NormMixin):
         alpha = self._pop_alpha()
 
         if return_attention_weights:
-            return out, (edge_index, alpha)
+            return EdgeAttnOutput(out=out, edge_index=edge_index, attn=alpha)
 
-        return out
+        return EdgeAttnOutput(out=out, edge_index=None, attn=None)
 
     def message(
         self,
@@ -240,17 +241,19 @@ class MultiheadAttentionPooling(nn.Module, AttentionMixin, NormMixin):
         # will project all nodes onto this seed vector
         self.seed = nn.Parameter(torch.empty((1, feature_dim)))
 
-        self.lin_input = nn.Linear(feature_dim, feature_dim)
-        self.actv = nn.GELU()
-
         # we don't change the feature dim of any inputs
         # we just let each attention head attend to a subset of the input
         self.linQ, self.linK, self.linV = self.init_weight_layers(feature_dim)
-        self.linO = PositionwiseFeedForward(
-            in_dim=feature_dim,
-            out_dim=feature_dim,
-            activation=type(self.actv),
+
+        self.linO = MLP(
+            in_channels=feature_dim,
+            hidden_channels=feature_dim,
+            out_channels=feature_dim,
+            num_layers=2,
+            act="gelu",
             dropout=dropout,
+            norm=None,
+            plain_last=True,
         )
 
         self.normKV = GraphNorm(feature_dim)
@@ -276,7 +279,7 @@ class MultiheadAttentionPooling(nn.Module, AttentionMixin, NormMixin):
         ptr: torch.Tensor,
         batch: torch.Tensor,
         return_attention_weights: bool = False,
-    ) -> OptGraphAttnOutput:
+    ) -> GraphAttnOutput:
         """Compute an attention-based score by projecting the input `x`
         onto a single dimension. These scores are then converted to probabilites
         using the softmax function, and then used to perform a weighted
@@ -302,10 +305,6 @@ class MultiheadAttentionPooling(nn.Module, AttentionMixin, NormMixin):
                 attention weights that computed the weighted average.
         """
         # all calculations happen at the node level until the final reduction
-
-        # the impl from the SetTransformer paper says this occurs first before MH attn
-        # but this is missing from the paper's code impl
-        x = self.actv(self.lin_input(x))
 
         # shape: [N, D]
         x_input = x
@@ -344,7 +343,7 @@ class MultiheadAttentionPooling(nn.Module, AttentionMixin, NormMixin):
         # shape: [N, D] -> [batch_size, D]
         weighted_graph_avg = segment(res_V, ptr=ptr, reduce="mean")
 
-        return weighted_graph_avg, attn
+        return GraphAttnOutput(out=weighted_graph_avg, attn=attn)
 
     def scaled_dot_product_attention(
         self,
@@ -353,7 +352,7 @@ class MultiheadAttentionPooling(nn.Module, AttentionMixin, NormMixin):
         V: torch.Tensor,
         ptr: torch.Tensor,
         return_attention_weights: bool = False,
-    ) -> OptGraphAttnOutput:
+    ) -> GraphAttnOutput:
         # internally this unsqueezes both tensors:
         # [1, H, D, 1] x [N, H, D, 1]^T -> [N, H, D, D]
         # then [N, H, D, D] -> [N, H] by summing over the last 2 dims
@@ -374,37 +373,8 @@ class MultiheadAttentionPooling(nn.Module, AttentionMixin, NormMixin):
         weighted_V = self.cat_heads(weighted_V)
 
         if return_attention_weights:
-            return weighted_V, attn_weight
-        return weighted_V, None
-
-
-class PositionwiseFeedForward(nn.Module):
-    def __init__(
-        self,
-        in_dim: int,
-        out_dim: int,
-        activation: type[nn.Module] = nn.GELU,
-        dropout: float = 0.0,
-        **actv_kwargs,
-    ) -> None:
-        super().__init__()
-        self.layers = nn.Sequential(
-            nn.Linear(in_dim, in_dim),
-            activation(**actv_kwargs),
-            nn.Dropout(p=dropout),
-            nn.Linear(in_dim, out_dim),
-            nn.Dropout(p=dropout),
-        )
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        for layer in self.layers:
-            if hasattr(layer, "reset_parameters"):
-                getattr(layer, "reset_parameters")()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h: torch.Tensor = self.layers(x)
-        return h
+            return GraphAttnOutput(out=weighted_V, attn=attn_weight)
+        return GraphAttnOutput(out=weighted_V, attn=None)
 
 
 class PositionalEmbedding(nn.Module):
