@@ -8,3 +8,6 @@ test/
 .vscode/
 build/
 .mypy_cache/
+*.out
+*.log
+*.err

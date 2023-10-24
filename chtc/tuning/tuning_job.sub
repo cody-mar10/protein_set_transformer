@@ -1,0 +1,26 @@
+universe = vanilla
+executable = tuning_run.sh
+output = $(Cluster)_$(Process).out
+get_env = STAGING, USER
+arguments = $(data) $(outdir) $(devices) $(epochs) $(joblen) $(ntrials) $(name)
+
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+transfer_input_files = config.toml
+
+Requirements = (Target.HasCHTCStaging == true)
+
+require_gpus = (DriverVersion >= 11.6) && (GlobalMemoryMB >= 50000)
+request_gpus = $(devices)
+
++WantGPULab = true
++GPUJobLength = "$(joblen)"
+
+request_cpus = 1
+request_memory = $(memory)
+request_disk = $(disk)
+
+log = $(Cluster)_$(Process).log
+error = $(Cluster)_$(Process).err
+
+queue data,outdir,devices,epochs,memory,disk,joblen,ntrials,name from tuning_inputs.csv
