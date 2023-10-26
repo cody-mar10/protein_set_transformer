@@ -30,6 +30,7 @@ class ProteinSetTransformer(L.LightningModule):
             config.out_dim = config.in_dim
 
         self.config = config.model_copy(deep=True)
+        self.save_hyperparameters(self.config.model_dump(exclude={"fabric"}))
 
         embedding_dim = config.in_dim // config.embed_scale
 
@@ -73,8 +74,6 @@ class ProteinSetTransformer(L.LightningModule):
         self.optimizer_cfg = config.optimizer
         self.augmentation_cfg = config.augmentation
         self.fabric = config.fabric
-
-        self.save_hyperparameters(self.config.model_dump(exclude={"fabric"}))
 
     def check_max_size(self, dataset: GenomeDataset):
         if dataset.max_size > self.positional_embedding.max_size:
