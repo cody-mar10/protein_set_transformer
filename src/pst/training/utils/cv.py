@@ -76,6 +76,7 @@ def get_trainer_config(
         limit_train_batches=trainer_args.limit_train_batches or 1.0,
         limit_val_batches=trainer_args.limit_val_batches or 1.0,
         checkpoint_dir=trainer_args.default_root_dir,
+        grad_accum_steps=trainer_args.accumulate_grad_batches,
         **trainer_args.model_dump(
             include={
                 "accelerator",

@@ -65,6 +65,10 @@ class TrainerArgs(BaseModel):
             "(0.0, 1.0] means that fraction of the val data is used)"
         ),
     )
+    accumulate_grad_batches: int = Field(
+        1,
+        description="number of batches to accumulate gradients before the optimizer steps",
+    )
 
     @field_validator("max_time", mode="before")
     def _convert(cls, value: str | MaxTimeOpts) -> MaxTimeOpts:
