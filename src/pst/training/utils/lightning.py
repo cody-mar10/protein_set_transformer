@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import lightning as L
-from lightning.pytorch.callbacks import Callback, EarlyStopping, ModelCheckpoint
+from lightning.pytorch.callbacks import (
+    Callback,
+    EarlyStopping,
+    LearningRateMonitor,
+    ModelCheckpoint,
+)
 
 from pst.training.debug import LGradientLogger
 from pst.training.utils.constants import (
@@ -54,6 +59,11 @@ def init_lightning_trainer(
     callbacks = get_callbacks(
         config, checkpoint=checkpoint, early_stopping=early_stopping
     )
+
+    if config.model.optimizer.use_scheduler:
+        callbacks.append(
+            LearningRateMonitor(logging_interval="epoch", log_momentum=True)
+        )
 
     if config.experiment.log_gradients:
         callbacks.append(LGradientLogger())
