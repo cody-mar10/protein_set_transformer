@@ -43,7 +43,6 @@ class ProteinSetTransformer(L.LightningModule):
 
         # feature for +/- gene strand
         # TODO: if this works well, this can be a hyperparameter
-        print("using only a single strand feature")
         self.strand_feature_value = 0.5
 
         self.config.in_dim += embedding_dim
