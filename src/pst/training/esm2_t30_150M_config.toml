@@ -3,7 +3,7 @@
 [[hparams]]
 name = "complexity"
 suggest = "categorical"
-choices = ["small", "medium", "large", "xl", "xxl"]
+choices = ["small", "medium", "large", "xl"]
 
 # this refers to the previous table entry in the hparams arraytable, ie complexity
 [hparams.map]
@@ -11,7 +11,6 @@ small = { num_heads = 4, n_enc_layers = 5 }
 medium = { num_heads = 8, n_enc_layers = 10 }
 large = { num_heads = 16, n_enc_layers = 15 }
 xl = { num_heads = 32, n_enc_layers = 20 }
-xxl = { num_heads = 32, n_enc_layers = 30 }
 
 [[hparams]]
 name = "embed_scale"
@@ -90,3 +89,19 @@ low = 0.25
 high = 0.75
 log = false
 parent = "augmentation"
+
+[[forbidden]]
+complexity = "xl"
+batch_size = 32
+
+[[forbidden]]
+complexity = "large"
+batch_size = 32
+
+[[forbidden]]
+complexity = "xl"
+embed_scale = 1
+
+[[forbidden]]
+complexity = "xl"
+embed_scale = 8
