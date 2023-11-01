@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 import lightning as L
 import torch
+from einops import rearrange
 from lightning_cv import CrossValModuleMixin
 from transformers import get_linear_schedule_with_warmup
 
@@ -35,16 +36,17 @@ class ProteinSetTransformer(L.LightningModule):
         embedding_dim = config.in_dim // config.embed_scale
 
         # 2048 ptns should be large enough for probably all viruses
+        # leave one dim for strand feature
         self.positional_embedding = PositionalEmbedding(
-            dim=embedding_dim, max_size=2048
+            dim=embedding_dim - 1, max_size=2048
         )
 
-        # embed +/- gene strand
-        self.strand_embedding = torch.nn.Embedding(
-            num_embeddings=2, embedding_dim=embedding_dim
-        )
+        # feature for +/- gene strand
+        # TODO: if this works well, this can be a hyperparameter
+        print("using only a single strand feature")
+        self.strand_feature_value = 0.5
 
-        self.config.in_dim += 2 * embedding_dim
+        self.config.in_dim += embedding_dim
 
         if not config.proj_cat:
             # plm embeddings, positional embeddings, and strand embeddings
@@ -53,6 +55,13 @@ class ProteinSetTransformer(L.LightningModule):
             # then the output dimension will be equal to the original feature dim
             # plus the dim for both the positional and strand embeddings
             self.config.out_dim = self.config.in_dim
+
+        self.save_hyperparameters(
+            {
+                "effective_in_dim": self.config.in_dim,
+                "effective_out_dim": self.config.out_dim,
+            }
+        )
 
         self.model = SetTransformer(
             **self.config.model_dump(
@@ -86,6 +95,10 @@ class ProteinSetTransformer(L.LightningModule):
     @property
     def decoder(self) -> SetTransformerDecoder:
         return self.model.decoder
+
+    def strand_embedding(self, strand: torch.Tensor) -> torch.Tensor:
+        features = strand.float() * self.strand_feature_value
+        return rearrange(features, "batch -> batch 1")
 
     def configure_optimizers(self) -> dict[str, Any]:
         optimizer = torch.optim.AdamW(
