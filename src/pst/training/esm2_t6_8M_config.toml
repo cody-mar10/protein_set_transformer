@@ -98,15 +98,3 @@ embed_scale = 8
 [[forbidden]]
 complexity = "xxl"
 embed_scale = 8
-
-[[forbidden]]
-complexity = "xl"
-embed_scale = 4
-
-[[forbidden]]
-complexity = "xxl"
-embed_scale = 4
-
-[[forbidden]]
-complexity = "large"
-embed_scale = 8

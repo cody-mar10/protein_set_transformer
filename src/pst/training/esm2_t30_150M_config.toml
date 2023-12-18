@@ -95,6 +95,10 @@ complexity = "xl"
 batch_size = 32
 
 [[forbidden]]
+complexity = "xl"
+batch_size = 16
+
+[[forbidden]]
 complexity = "large"
 batch_size = 32
 
@@ -103,5 +107,5 @@ complexity = "xl"
 embed_scale = 1
 
 [[forbidden]]
-complexity = "xl"
-embed_scale = 8
+complexity = "large"
+embed_scale = 1
