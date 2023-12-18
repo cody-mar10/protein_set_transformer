@@ -1,1 +1,5 @@
-esm2_t6_8M_results.filtered.GRAPHFMT.h5,esm2_t6_8M_best_wo_proj,1,50,45GB,20GB,long
+esm2_t6_8M_results.filtered.GRAPHFMT.h5,esm2_t6_8M_best_wo_proj_nostrand_acc1,1,50,45GB,20GB,long,1
+esm2_t6_8M_results.filtered.GRAPHFMT.h5,esm2_t6_8M_best_wo_proj_nostrand_acc25,1,50,45GB,20GB,long,25
+esm2_t6_8M_results.filtered.GRAPHFMT.h5,esm2_t6_8M_best_wo_proj_nostrand_acc50,1,50,45GB,20GB,long,50
+esm2_t6_8M_results.filtered.GRAPHFMT.h5,esm2_t6_8M_best_wo_proj_nostrand_acc100,1,50,45GB,20GB,long,100
+esm2_t6_8M_results.filtered.GRAPHFMT.h5,esm2_t6_8M_best_wo_proj_nostrand_acc250,1,50,45GB,20GB,long,250

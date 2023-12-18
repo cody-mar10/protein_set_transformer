@@ -75,7 +75,8 @@ run_pst () {
 	--tuning-dir $HISTORY \
 	--max-time $JOBLEN \
 	--gradient-clip-algorithm value \
-	--gradient-clip-val 1.0 
+	--gradient-clip-val 1.0 \
+	--precision bf16-mixed
 }
 
 

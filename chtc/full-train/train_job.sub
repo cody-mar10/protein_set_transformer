@@ -2,7 +2,7 @@ universe = vanilla
 executable = train_run.sh
 output = $(Cluster)_$(Process).out
 get_env = STAGING, USER
-arguments = $(data) $(outdir) $(devices) $(epochs) $(joblen)
+arguments = $(data) $(outdir) $(devices) $(epochs) $(joblen) $(acc)
 
 should_transfer_files = YES
 when_to_transfer_output = ON_EXIT
@@ -23,4 +23,4 @@ request_disk = $(disk)
 log = $(Cluster)_$(Process).log
 error = $(Cluster)_$(Process).err
 
-queue data,outdir,devices,epochs,memory,disk,joblen from train_inputs.csv
+queue data,outdir,devices,epochs,memory,disk,joblen,acc from train_inputs.csv

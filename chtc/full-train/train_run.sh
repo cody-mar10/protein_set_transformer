@@ -5,6 +5,7 @@ OUTDIR=$2
 DEVICES=$3
 EPOCHS=$4
 JOBLEN=$5
+ACCUM=$6
 
 ### these were the results of the current best run
 # simple executable for CHTC
@@ -73,7 +74,7 @@ run_pst () {
 	--gradient-clip-val 1.0 \
 	--gradient-clip-algorithm value \
 	--strategy "auto" \
-	--warmup-steps 3600 
+        --accumulate-grad-batches $ACCUM
 }
 
 ##### run tool
