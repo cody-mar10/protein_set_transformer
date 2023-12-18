@@ -3,7 +3,7 @@
 [[hparams]]
 name = "complexity"
 suggest = "categorical"
-choices = ["small", "medium", "large", "xl", "xxl"]
+choices = ["small", "medium", "large", "xl"]
 
 # this refers to the previous table entry in the hparams arraytable, ie complexity
 [hparams.map]
@@ -11,7 +11,6 @@ small = { num_heads = 4, n_enc_layers = 5 }
 medium = { num_heads = 8, n_enc_layers = 10 }
 large = { num_heads = 16, n_enc_layers = 15 }
 xl = { num_heads = 32, n_enc_layers = 20 }
-xxl = { num_heads = 32, n_enc_layers = 30 }
 
 [[hparams]]
 name = "embed_scale"
@@ -90,14 +89,23 @@ low = 0.25
 high = 0.75
 log = false
 parent = "augmentation"
-<<<<<<< HEAD:src/pst/training/config.toml
-=======
 
 [[forbidden]]
 complexity = "xl"
-embed_scale = 8
+batch_size = 32
 
 [[forbidden]]
-complexity = "xxl"
-embed_scale = 8
->>>>>>> 12fda39... add chtc tuning config and update to new hparam combos:src/pst/training/esm2_t6_8M_config.toml
+complexity = "xl"
+batch_size = 16
+
+[[forbidden]]
+complexity = "large"
+batch_size = 32
+
+[[forbidden]]
+complexity = "xl"
+embed_scale = 1
+
+[[forbidden]]
+complexity = "large"
+embed_scale = 1
