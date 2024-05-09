@@ -42,7 +42,17 @@ class GenomeDataset(Dataset[GenomeGraph]):
         super().__init__()
         with tb.File(file) as fp:
             for field in GenomeDataset.__h5_fields__:
-                data = getattr(fp.root, field)
+                try:
+                    data = getattr(fp.root, field)
+                except tb.exceptions.NoSuchNodeError:
+                    if field == "class_id":
+                        # the class_id field is not required for inference
+                        # this was only used for weighting the loss
+                        # also need to cast to numpy for from numpy call later
+                        # self.sizes should be set before this, so len(self) is fine
+                        data = torch.zeros((len(self),), dtype=torch.long).numpy()
+                    else:
+                        raise
                 setattr(self, field, torch.from_numpy(data[:]))
 
         # convert strand array from [-1, 1] -> [0, 1]
