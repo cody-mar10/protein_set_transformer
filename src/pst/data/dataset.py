@@ -48,9 +48,7 @@ class GenomeDataset(Dataset[GenomeGraph]):
                     if field == "class_id":
                         # the class_id field is not required for inference
                         # this was only used for weighting the loss
-                        # also need to cast to numpy for from numpy call later
-                        # self.sizes should be set before this, so len(self) is fine
-                        data = torch.zeros((len(self),), dtype=torch.long).numpy()
+                        continue
                     else:
                         raise
                 setattr(self, field, torch.from_numpy(data[:]))
@@ -60,6 +58,10 @@ class GenomeDataset(Dataset[GenomeGraph]):
         self.strand[self.strand == -1] = 0
 
         self.weights = self._get_class_weights(log_inverse)
+
+        if not hasattr(self, "class_id"):
+            # default all genomes to the same class
+            self.class_id = torch.zeros((len(self),), dtype=torch.long).numpy()
 
         self.edge_indices = self._get_edge_indices(edge_strategy, chunk_size, threshold)
 
