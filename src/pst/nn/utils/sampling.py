@@ -172,7 +172,10 @@ def point_swap_sampling(
 
     # sample from uniform [0, 1) distribution to determine whether to swap
     # True = should swap, False = should not swap
-    mask = torch.rand(aug_idx.size(0), device=aug_idx.device) >= sample_rate
+    # TODO: this is technically the opposite of the sample rate
+    # if we want to swap 0.4 of proteins,
+    # then the number of proteins swapped here is 0.6, ie 1 - 0.4
+    mask = torch.rand(aug_idx.size(0), device=aug_idx.device) < sample_rate
     default = torch.arange(aug_idx.size(0), device=aug_idx.device)
     aug_idx = torch.where(mask, aug_idx, default)
 
