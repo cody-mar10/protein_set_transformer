@@ -1,7 +1,7 @@
 The PST manuscript methods section map to different repositories or files located in this main repository:
 
-- [ESM2 protein language model embeddings](../esm_embed/)
-- [Modified Leave-One-Group-Out cross validation and hyperparameter tuning](../lightning-crossval/)
+- [ESM2 protein language model embeddings](https://github.com/cody-mar10/esm_embed/tree/main)
+- [Modified Leave-One-Group-Out cross validation and hyperparameter tuning](https://github.com/cody-mar10/lightning-crossval)
     - Part of the specific implementation is also found [here](../src/pst/training/)
 - [GenSLM open reading frame (ORF) and genome embeddings](genome_embeddings/genslm_embed/)
 - [Hyena-DNA genome embeddings](genome_embeddings/hyena-dna-embed/)
@@ -20,10 +20,10 @@ The PST manuscript methods section map to different repositories or files locate
 - [Protein annotation improvement](protein_embeddings/evaluations/annotation_improvement.ipynb)
 - [Protein function co-clustering](protein_embeddings/evaluations/function_co-clustering.ipynb)
 - [Protein functional module detection](protein_embeddings/evaluations/functional_module_detection.ipynb)
-- [Graph-based host prediction framework](PST_host_prediction)
+- [Graph-based host prediction framework](https://github.com/cody-mar10/PST_host_prediction)
 - Host prediction training and test datasets:
-    - [Curating training set](PST_host_prediction/data/training_set_hosts.ipynb)
-    - [Curating test set](PST_host_prediction/data/test_set_hosts.ipynb)
-- [Constructing the virus-host interaction network](PST_host_prediction/data/create_knowledge_graph.ipynb)
-    - Specific knowledge graphs can be found [here](PST_host_prediction/data/knowledge_graphs/)
-- [Host prediction model evaluation](PST_host_prediction/evaluations/iPHoP_test_set_evaluation.ipynb)
+    - [Curating training set](https://github.com/cody-mar10/PST_host_prediction/blob/main/data/training_set_hosts.ipynb)
+    - [Curating test set](https://github.com/cody-mar10/PST_host_prediction/blob/main/data/test_set_hosts.ipynb)
+- [Constructing the virus-host interaction network](https://github.com/cody-mar10/PST_host_prediction/blob/main/data/create_knowledge_graph.ipynb)
+    - Specific knowledge graphs can be found [here](https://github.com/cody-mar10/PST_host_prediction/blob/main/data/knowledge_graphs)
+- [Host prediction model evaluation](https://github.com/cody-mar10/PST_host_prediction/blob/main/evaluations/iPHoP_test_set_evaluation.ipynb)
