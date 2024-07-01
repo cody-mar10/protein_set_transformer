@@ -1,0 +1,15 @@
+[submodule "lightning-crossval"]
+	path = lightning-crossval
+	url = https://github.com/cody-mar10/lightning-crossval
+[submodule "esm_embed"]
+	path = esm_embed
+	url = git@github.com:cody-mar10/esm_embed.git
+[submodule "manuscript/genome_embeddings/genslm_embed"]
+	path = manuscript/genome_embeddings/genslm_embed
+	url = git@github.com:cody-mar10/genslm_embed.git
+[submodule "manuscript/genome_embeddings/hyena-dna-embed"]
+	path = manuscript/genome_embeddings/hyena-dna-embed
+	url = git@github.com:cody-mar10/hyena-dna-embed.git
+[submodule "manuscript/PST_host_prediction"]
+	path = manuscript/PST_host_prediction
+	url = git@github.com:cody-mar10/PST_host_prediction.git
