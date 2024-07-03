@@ -13,6 +13,7 @@ The PST manuscript methods section map to different repositories or files locate
     - [Genome viral and host taxonomy purity](genome_embeddings/evaluations/taxonomy_purity.ipynb)
     - [Protein functional purity](protein_embeddings/evaluations/functional_purity.ipynb)
 - [Average amino acid identity (AAI)](genome_embeddings/evaluations/AAI.ipynb)
+    - Averaging AAI over each genome cluster found [here](genome_embeddings/evaluations/average_AAI_per_cluster.ipynb)
 - [Average amino acid identity (AAI) genome clustering](genome_embeddings/evaluations/AAI.ipynb)
 - Protein functional annotation
     - [Re-categorizing VOG](protein_embeddings/annotations/relabel_VOG.ipynb)
