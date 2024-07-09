@@ -24,9 +24,7 @@ The PST manuscript methods section map to different repositories or files locate
 - [Protein function co-clustering](protein_embeddings/evaluations/function_co-clustering.ipynb)
 - [Protein functional module detection](protein_embeddings/evaluations/functional_module_detection.ipynb)
 - [Graph-based host prediction framework](https://github.com/cody-mar10/PST_host_prediction)
-- Host prediction training and test datasets:
-  - [Curating training set](https://github.com/cody-mar10/PST_host_prediction/blob/main/data/training_set_hosts.ipynb)
-  - [Curating test set](https://github.com/cody-mar10/PST_host_prediction/blob/main/data/test_set_hosts.ipynb)
 - [Constructing the virus-host interaction network](https://github.com/cody-mar10/PST_host_prediction/blob/main/data/create_knowledge_graph.ipynb)
   - Specific knowledge graphs can be found [here](https://github.com/cody-mar10/PST_host_prediction/blob/main/data/knowledge_graphs)
 - [Host prediction model evaluation](https://github.com/cody-mar10/PST_host_prediction/blob/main/evaluations/iPHoP_test_set_evaluation.ipynb)
+  - [Choosing the best models](https://github.com/cody-mar10/PST_host_prediction/blob/main/evaluations/choosing_best_models.ipynb)
