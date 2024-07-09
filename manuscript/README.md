@@ -5,8 +5,8 @@ The PST manuscript methods section map to different repositories or files locate
 - [ESM2 protein language model embeddings](https://github.com/cody-mar10/esm_embed/tree/main)
 - [Modified Leave-One-Group-Out cross validation and hyperparameter tuning](https://github.com/cody-mar10/lightning-crossval)
   - Part of the specific implementation is also found [here](../src/pst/training/)
-- [GenSLM open reading frame (ORF) and genome embeddings](genome_embeddings/genslm_embed/)
-- [Hyena-DNA genome embeddings](genome_embeddings/hyena-dna-embed/)
+- [GenSLM open reading frame (ORF) and genome embeddings](https://github.com/cody-mar10/genslm_embed)
+- [Hyena-DNA genome embeddings](https://github.com/cody-mar10/hyena-dna-embed)
 - [Tetranucleotide frequency vectors as simple genome embeddings](genome_embeddings/kmer.ipynb)
 - Clustering genome and protein embeddings
   - [Genomes](genome_embeddings/clustering.ipynb)
