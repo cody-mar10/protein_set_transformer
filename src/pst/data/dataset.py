@@ -70,7 +70,9 @@ class GenomeDataset(Dataset[GenomeGraph]):
             # calc using inverse frequency
             # convert to ascending 0..n range
             class_counts: torch.Tensor
-            _, class_counts = torch.unique(self.class_id, return_counts=True)
+            _, inverse_index, class_counts = torch.unique(
+                self.class_id, return_inverse=True, return_counts=True
+            )
             freq: torch.Tensor = class_counts / class_counts.sum()
             inv_freq = 1.0 / freq
             if log_inverse:
@@ -81,7 +83,9 @@ class GenomeDataset(Dataset[GenomeGraph]):
             # not sure if normalization does anything since all still contribute
             # the relative same amount to loss
             inv_freq /= torch.amin(inv_freq)
-            weights = inv_freq[self.class_id]
+
+            # inverse index remaps input class_ids to 0..n range if not already
+            weights = inv_freq[inverse_index]
         else:
             # no weights
             weights = torch.ones(size=(len(self),))

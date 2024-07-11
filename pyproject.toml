@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ptn-set-transformer"
-version = "0.8.5"
+version = "0.9.0"
 authors = [{ name = "Cody Martin", email = "codycmar10@gmail.com" }]
 description = "Training and inference on protein sets (genomes)"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.9"
+requires-python = ">=3.9,<=3.11"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -20,9 +20,10 @@ dependencies = [
     "lightning>=2",
     "tables",
     "torch_geometric",
+    "torch_scatter",
     "more-itertools",
     "pydantic>=2,<2.1",
-    "lightning-cv[tune]",
+    "lightning-cv[tune]>=0.4",
     # use my custom fork
     "pydantic-argparse @ git+https://github.com/cody-mar10/pydantic-argparse.git",
     "einops",
