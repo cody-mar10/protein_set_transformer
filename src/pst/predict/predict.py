@@ -181,6 +181,11 @@ class Predictor:
                 attn = cast(torch.Tensor, graph_output.attn)
                 self.append(name="attn", data=attn)
 
+        self.close()
+
         if self.return_predictions:
             return self.in_memory_storage
         return None
+
+    def close(self):
+        self._file.close()
