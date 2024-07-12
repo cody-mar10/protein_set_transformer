@@ -70,13 +70,24 @@ However, the source repository for ESM can be found here: [https://github.com/fa
 
 The ESM team has now provided `esm-extract` utility to do this, but we have not yet integrated protein embeddings generated from this route.
 
-The `esm_embed` tool we provide produces protein language model embeddings for each protein in an input FASTA file
-
 Here is what ESM2 models are used for each vPST model:
 | PST         | ESM2                  |
 | :---------- | :-------------------- |
 | `pst-small` | `esm2_t30_150M_UR50D` |
 | `pst-large` | `esm2_t6_8M_UR50D`    |
+
+#### FASTA File requirements
+
+The `esm_embed` tool we provide produces protein language model embeddings for each protein in an input FASTA file **IN THE SAME ORDER** as the sequences in the file.
+
+Thus, the following are **required** of the input FASTA file:
+
+1. The file must be sorted to group all proteins from the same genome together
+2. For the block of proteins from each genome, the proteins must be in order of their appareance in the genome.
+3. The FASTA headers must look like this: `scaffold_#`, where `scaffold` is the genome scaffold name and `#` is the protein numerical ID relative to each scaffold.
+    - In the event that you have multi-scaffold viruses (vMAGs, etc.), you can either manually orient the scaffolds and renumber the proteins to contiguously count from the first scaffold to the last. This is what was done with the test dataset in the manuscript.
+        - TODO: we will provide a utility script to do this if an input mapping from scaffolds to genomes is provided.
+    - TODO: We will explore a more native solution for multi-scaffold viruses that does not require an arbitrary arrangement of scaffolds.
 
 ### Convert protein embeddings to graph format
 
@@ -85,3 +96,8 @@ TODO: need to add a utility script for this
 ### Use PST for genome embeddings and contextualized protein embeddings
 
 Use the `pst predict` command with the input graph-formatted protein embeddings and trained model checkpoint. The test run above shows the minimum flags needed. You can also use `pst predict -h` to see what options are available.
+
+## Manuscript
+
+- Talk about `manuscript/` folder
+- Talk about submodules that are associated with manuscript analyses
