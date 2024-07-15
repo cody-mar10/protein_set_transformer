@@ -66,12 +66,12 @@ Here is a summary of each model:
 
 You will first need to generate ESM2 protein embeddings.
 
-However, the source repository for ESM can be found here: [https://github.com/facebookresearch/esm](https://github.com/facebookresearch/esm). At the beginning of this project, there was not a user friendly way from the ESM team to get protein embeddings from a protein FASTA file, so we have provided a repository to do this: [https://github.com/cody-mar10/esm_embed](https://github.com/cody-mar10/esm_embed).
+The source repository for ESM can be found here: [https://github.com/facebookresearch/esm](https://github.com/facebookresearch/esm). At the beginning of this project, there was not a user friendly way provided by the ESM team to get protein embeddings from a protein FASTA file, so we have provided a repository to do this: [https://github.com/cody-mar10/esm_embed](https://github.com/cody-mar10/esm_embed).
 
 The ESM team has now provided `esm-extract` utility to do this, but we have not yet integrated protein embeddings generated from this route.
 
 Here is what ESM2 models are used for each vPST model:
-| PST         | ESM2                  |
+| vPST         | ESM2                  |
 | :---------- | :-------------------- |
 | `pst-small` | `esm2_t30_150M_UR50D` |
 | `pst-large` | `esm2_t6_8M_UR50D`    |
@@ -102,12 +102,26 @@ Further, if you have multi-scaffold viruses, you can provide a tab-delimited fil
 
 Use the `pst predict` command with the input graph-formatted protein embeddings and trained model checkpoint. The test run above shows the minimum flags needed. You can also use `pst predict -h` to see what options are available, but the most important ones will be:
 
-- input .h5 file
-- outdir
-- accelerator
-- num devices/threads
+| Argument        | Description                                                                           |
+| :-------------- | :------------------------------------------------------------------------------------ |
+| `--file`        | Input graph-formatted .h5 file                                                        |
+| `--outdir`      | Output directory name                                                                 |
+| `--accelerator` | Device accelerator. Defaults to "gpu", so you may need to change this to "cpu"        |
+| `--devices`     | Either the number of GPUs or the number of CPU threads (depending on `--accelerator`) |
+| `--checkpoint`  | Which trained model checkpoint to use. See data availability above.                   |
 
 ## Manuscript
 
-- Talk about `manuscript/` folder
-- Talk about submodules that are associated with manuscript analyses
+We have provided code for all analyses associated with the manuscript in the [manuscript](manuscript) folder. The README in that folder links each method section from the manuscript to a specific Jupyter notebook code implementation.
+
+### Associated repositories
+
+There are several other repositories associated with the model code and the manuscript:
+
+| Repository | Description |
+| :--------- | :---------- |
+| [lightning-crossval](https://github.com/cody-mar10/lightning-crossval) | Our fold-synchronized cross validation strategy implemented with Lightning Fabric |
+| [esm_embed](https://github.com/cody-mar10/esm_embed) | Our user-friendly way of embedding proteins from a FASTA file with ESM2 models |
+| [genslm_embed](https://github.com/cody-mar10/genslm_embed) | Code to generate [GenSLM](https://github.com/ramanathanlab/genslm) ORF and genome embeddings |
+| [hyena-dna-embed](https://github.com/cody-mar10/hyena-dna-embed) | Code to generate [Hyena-DNA](https://github.com/HazyResearch/hyena-dna) genome embeddings |
+| [PST_host_prediction](https://github.com/cody-mar10/PST_host_prediction) | Model and evaluation code for our host prediction proof of concept analysis |
