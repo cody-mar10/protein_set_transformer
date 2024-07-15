@@ -11,6 +11,7 @@ from pst.training import cv, full
 from pst.training.tuning import tuning
 from pst.utils.cli import Args, parse_args
 from pst.utils.cli.modes import InferenceMode, TrainingMode, TuningMode
+from pst.utils.graphify import to_graph_format
 from pst.utils.history import update_config_from_history
 
 _SEED = 111
@@ -51,7 +52,10 @@ def _check_cpu_accelerator(config: TrainingMode):
 def main():
     args = parse_args()
 
-    if args.train is not None:
+    if args.graphify is not None:
+        to_graph_format(args.graphify.graphify)
+        return
+    elif args.train is not None:
         config = args.train
         _check_cpu_accelerator(config)
         fn = train_main

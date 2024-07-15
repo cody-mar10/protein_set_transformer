@@ -62,7 +62,7 @@ Here is a summary of each model:
 
 ## Embedding new genomes with the pretrained models
 
-### ESM2 protein embeddings
+### 1. ESM2 protein embeddings
 
 You will first need to generate ESM2 protein embeddings.
 
@@ -83,19 +83,29 @@ The `esm_embed` tool we provide produces protein language model embeddings for e
 Thus, the following are **required** of the input FASTA file:
 
 1. The file must be sorted to group all proteins from the same genome together
-2. For the block of proteins from each genome, the proteins must be in order of their appareance in the genome.
+2. For the block of proteins from each genome, the proteins must be in order of their appearance in the genome.
 3. The FASTA headers must look like this: `scaffold_#`, where `scaffold` is the genome scaffold name and `#` is the protein numerical ID relative to each scaffold.
     - In the event that you have multi-scaffold viruses (vMAGs, etc.), you can either manually orient the scaffolds and renumber the proteins to contiguously count from the first scaffold to the last. This is what was done with the test dataset in the manuscript.
-        - TODO: we will provide a utility script to do this if an input mapping from scaffolds to genomes is provided.
-    - TODO: We will explore a more native solution for multi-scaffold viruses that does not require an arbitrary arrangement of scaffolds.
+        - We provided a utility script `pst graphify` to do this if an input mapping from scaffolds to genomes is provided. See next section.
+    - TODO: We will explore a more native solution for multi-scaffold viruses that does not require an arbitrary arrangement of scaffolds that should not require changes to the model.
 
-### Convert protein embeddings to graph format
+### 2. Convert protein embeddings to graph format
 
-TODO: need to add a utility script for this
+Use the `pst graphify` command to convert the ESM2 protein embeddings into graph format. You will need to protein FASTA file used to generate the embeddings, since the embeddings should be in the same order as the FASTA file. The FASTA file should be in prodigal format:
+`>scaffold_ptnid # start # stop # strand ....`
 
-### Use PST for genome embeddings and contextualized protein embeddings
+If you did not keep the extra metadata on the headers, you can alternatively provide a simple tab-delimited mapping file that maps each protein name to its strand (-1 or 1 only).
 
-Use the `pst predict` command with the input graph-formatted protein embeddings and trained model checkpoint. The test run above shows the minimum flags needed. You can also use `pst predict -h` to see what options are available.
+Further, if you have multi-scaffold viruses, you can provide a tab-delimited file that maps the scaffold name to the genome name to count all proteins from the entire genome instead of each scaffold.
+
+### 3. Use PST for genome embeddings and contextualized protein embeddings
+
+Use the `pst predict` command with the input graph-formatted protein embeddings and trained model checkpoint. The test run above shows the minimum flags needed. You can also use `pst predict -h` to see what options are available, but the most important ones will be:
+
+- input .h5 file
+- outdir
+- accelerator
+- num devices/threads
 
 ## Manuscript
 
