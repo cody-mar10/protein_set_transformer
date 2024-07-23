@@ -1,10 +1,10 @@
 # Protein Set Transformer
 
-This repository contains the Protein Set Transformer (PST) framework for contextualizing protein language model embedding at genome-scale to produce genome embeddings. You can use this code to train your own models. Using our foundation model pre-trained on viruses (vPST), you can also generate genome embeddings for input viruses.
+This repository contains the Protein Set Transformer (PST) framework for contextualizing protein language model embeddings at genome-scale to produce genome embeddings. You can use this code to train your own models. Using our foundation model pre-trained on viruses (vPST), you can also generate genome embeddings for input viruses.
 
 For more information, see our manuscript:
 
-Protein Set Transformer: A genome-scale protein language model powers high diversity viromics studies.
+Protein Set Transformer: A protein-based genome language model powers high diversity viromics studies.  
 Cody Martin, Anthony Gitter, and Karthik Anantharaman.
 *bioRxiv*, 2024, doi: ADD THIS.
 
