@@ -66,7 +66,7 @@ Here is a summary of each model:
 
 You will first need to generate ESM2 protein embeddings.
 
-The source repository for ESM can be found here: [https://github.com/facebookresearch/esm](https://github.com/facebookresearch/esm). At the beginning of this project, there was not a user friendly way provided by the ESM team to get protein embeddings from a protein FASTA file, so we have provided a repository to do this: [https://github.com/cody-mar10/esm_embed](https://github.com/cody-mar10/esm_embed).
+The source repository for ESM can be found here: [https://github.com/facebookresearch/esm](https://github.com/facebookresearch/esm). At the beginning of this project, there was not a user friendly way provided by the ESM team to get protein embeddings from a protein FASTA file, so we have provided a repository to do this: [https://github.com/cody-mar10/esm_embed](https://github.com/cody-mar10/esm_embed). We plan to integrate this into the single `pst` executable for simpler usage, including creating an end-to-end pipeline to go from protein FASTA files to PST outputs.
 
 The ESM team has now provided `esm-extract` utility to do this, but we have not yet integrated protein embeddings generated from this route.
 
