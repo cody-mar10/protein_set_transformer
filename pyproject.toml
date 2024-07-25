@@ -21,6 +21,7 @@ dependencies = [
     "tables",
     "torch_geometric",
     "torch_scatter",
+    "numpy<2.0",
     "more-itertools",
     "pydantic>=2,<2.1",
     "lightning-cv[tune]>=0.4",
