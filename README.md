@@ -16,6 +16,8 @@ Cody Martin, Anthony Gitter, and Karthik Anantharaman.
 # setup torch first -- conda does this so much better than pip
 mamba create -n pst -c pytorch -c pyg -c conda-forge 'python<3.12' 'pytorch>=2.0' cpuonly pyg pytorch-scatter
 
+mamba activate pst
+
 # install latest updates from this repository
 pip install git+https://github.com/cody-mar10/protein_set_transformer.git
 ```
@@ -25,6 +27,8 @@ pip install git+https://github.com/cody-mar10/protein_set_transformer.git
 ```bash
 # setup torch first -- conda does this so much better than pip
 mamba create -n pst -c pytorch -c nvidia -c pyg -c conda-forge 'python<3.12' 'pytorch>=2.0' pytorch-cuda=11.8 pyg torch_scatter
+
+mamba activate pst
 
 # install latest updates from this repository
 pip install git+https://github.com/cody-mar10/protein_set_transformer.git
