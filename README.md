@@ -14,7 +14,7 @@ Cody Martin, Anthony Gitter, and Karthik Anantharaman.
 
 ```bash
 # setup torch first -- conda does this so much better than pip
-mamba create -n pst -c pytorch -c pyg -c conda-forge 'pytorch>=2.0' cpuonly pyg pytorch-scatter
+mamba create -n pst -c pytorch -c pyg -c conda-forge 'python<3.12' 'pytorch>=2.0' cpuonly pyg pytorch-scatter
 
 # install latest updates from this repository
 pip install git+https://github.com/cody-mar10/protein_set_transformer.git
@@ -24,7 +24,7 @@ pip install git+https://github.com/cody-mar10/protein_set_transformer.git
 
 ```bash
 # setup torch first -- conda does this so much better than pip
-mamba create -n pst -c pytorch -c nvidia -c pyg -c conda-forge 'pytorch>=2.0' pytorch-cuda=11.8 pyg torch_scatter
+mamba create -n pst -c pytorch -c nvidia -c pyg -c conda-forge 'python<3.12' 'pytorch>=2.0' pytorch-cuda=11.8 pyg torch_scatter
 
 # install latest updates from this repository
 pip install git+https://github.com/cody-mar10/protein_set_transformer.git
@@ -78,7 +78,7 @@ Here is what ESM2 models are used for each vPST model:
 
 #### FASTA File requirements
 
-The `esm_embed` tool we provide produces protein language model embeddings for each protein in an input FASTA file **IN THE SAME ORDER** as the sequences in the file.
+The `esm_embed` tool we provide produces protein language model embeddings for each protein in an input FASTA file **IN THE SAME ORDER** as the sequences in the file. We plan to integrate this tool into the `pst` executable.
 
 Thus, the following are **required** of the input FASTA file:
 
