@@ -1,6 +1,12 @@
 # PST manuscript methods
 
-The PST manuscript methods section map to different repositories or files located in this main repository:
+The PST manuscript methods section map to different repositories or files located in this main repository. Files referenced in these notebooks are either located in the DRYAD repository (datasets, supplementary data, or supplementary tables). The supplementary tables may also be found associated with the manuscript itself.
+
+The files should have the same names. However, due to the combined sized of all `datasets/` files (>170GB), these files are individually grouped into subgroups in the DRYAD repository. The specific file names are the same as referenced in these notebooks, but the DRYAD `README` will tell you what specific tarball you need.
+
+Be warned that the memory requirements of some of these analyses can reach up to 1TB if you try to reproduce these analyses with the full datasets.
+
+## Table of contents
 
 - [ESM2 protein language model embeddings](https://github.com/cody-mar10/esm_embed/tree/main)
 - [Modified Leave-One-Group-Out cross validation and hyperparameter tuning](https://github.com/cody-mar10/lightning-crossval)
@@ -23,6 +29,7 @@ The PST manuscript methods section map to different repositories or files locate
 - [Protein annotation improvement](protein_embeddings/evaluations/annotation_improvement.ipynb)
 - [Protein function co-clustering](protein_embeddings/evaluations/function_co-clustering.ipynb)
 - [Protein functional module detection](protein_embeddings/evaluations/functional_module_detection.ipynb)
+- [Capsid structure searches](protein_embeddings/evaluations/capsid_structure_searches.ipynb)
 - [Graph-based host prediction framework](https://github.com/cody-mar10/PST_host_prediction)
 - [Constructing the virus-host interaction network](https://github.com/cody-mar10/PST_host_prediction/blob/main/data/create_knowledge_graph.ipynb)
   - Specific knowledge graphs can be found [here](https://github.com/cody-mar10/PST_host_prediction/blob/main/data/knowledge_graphs)
