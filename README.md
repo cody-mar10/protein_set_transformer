@@ -4,7 +4,7 @@ This repository contains the Protein Set Transformer (PST) framework for context
 
 For more information, see our manuscript:
 
-Protein Set Transformer: A protein-based genome language model powers high diversity viromics studies.  
+Protein Set Transformer: A protein-based genome language model to power high diversity viromics.  
 Cody Martin, Anthony Gitter, and Karthik Anantharaman.
 *bioRxiv*, 2024, doi: ADD THIS.
 
