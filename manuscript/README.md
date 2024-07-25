@@ -1,6 +1,6 @@
 # PST manuscript methods
 
-The PST manuscript methods section map to different repositories or files located in this main repository. Files referenced in these notebooks are either located in the DRYAD repository (datasets, supplementary data, or supplementary tables). The supplementary tables may also be found associated with the manuscript itself.
+The PST manuscript methods section map to different repositories or files located in this main repository. Files referenced in these notebooks are located in the DRYAD repository (datasets, supplementary data, or supplementary tables). The supplementary tables may also be found associated with the manuscript itself.
 
 The files should have the same names. However, due to the combined sized of all `datasets/` files (>170GB), these files are individually grouped into subgroups in the DRYAD repository. The specific file names are the same as referenced in these notebooks, but the DRYAD `README` will tell you what specific tarball you need.
 
