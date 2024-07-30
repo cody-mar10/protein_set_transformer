@@ -6,7 +6,7 @@ For more information, see our manuscript:
 
 Protein Set Transformer: A protein-based genome language model to power high diversity viromics.  
 Cody Martin, Anthony Gitter, and Karthik Anantharaman.
-*bioRxiv*, 2024, doi: ADD THIS.
+*bioRxiv*, 2024, doi: [10.1101/2024.07.26.605391](https://doi.org/10.1101/2024.07.26.605391).
 
 ## Installation
 
