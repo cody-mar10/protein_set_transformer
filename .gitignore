@@ -1,7 +1,6 @@
 __pycache__/
 dist/
 *.egg-info
-test/
 *lightning_logs/
 *lightning_root/
 src/**/*.ipynb
@@ -12,5 +11,4 @@ build/
 *.log
 *.err
 *.tsv
-*.h5
 *.parquet
