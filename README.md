@@ -10,6 +10,8 @@ Cody Martin, Anthony Gitter, and Karthik Anantharaman.
 
 ## Installation
 
+Use a combination of `mamba` and `pip` to install the required dependencies. This should take no more than 5 minutes.
+
 ### Without GPUs
 
 ```bash
@@ -48,17 +50,22 @@ pst predict \
     --outdir test_run
 ```
 
-The results from the above command are available at `test/test_run/predictions.h5`.
+The results from the above command are available at `test/test_run/predictions.h5`. Depending on the number of available threads, this test run should not take more than 5 minutes.
+
+Note: due to the size of the trained models, you will need to obtain a model checkpoint from the DRYAD data repository. See the next section.
 
 ## Data availability
 
 All data associated with the initial training model training can be found here: [https://doi.org/10.5061/dryad.d7wm37q8w](https://doi.org/10.5061/dryad.d7wm37q8w)
+
+We have provided the README to the DRYAD [here](DRYAD_README.md) to render here.
 
 Specifically at the above link, `trained_models.tar.gz` contains both sizes of the vPST foundation model, `pst-small` and `pst-large`. Each model was trained with the same input data.
 
 The training and test data are also available in the above data repository.
 
 Here is a summary of each model:
+
 | Model       | # Encoder layers | # Attention heads | # Params | Embedding dim |
 | :---------- | :--------------- | :---------------- | :------- | :------------ |
 | `pst-small` | 5                | 4                 | 5.4M     | 400           |
@@ -75,6 +82,7 @@ The source repository for ESM can be found here: [https://github.com/facebookres
 The ESM team has now provided `esm-extract` utility to do this, but we have not yet integrated protein embeddings generated from this route.
 
 Here is what ESM2 models are used for each vPST model:
+
 | vPST         | ESM2                  |
 | :---------- | :-------------------- |
 | `pst-small` | `esm2_t30_150M_UR50D` |
