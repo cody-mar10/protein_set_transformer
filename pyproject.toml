@@ -28,6 +28,8 @@ dependencies = [
     # use my custom fork
     "pydantic-argparse @ git+https://github.com/cody-mar10/pydantic-argparse.git",
     "einops",
+    "requests",
+    "tqdm",
 ]
 
 [project.optional-dependencies]
