@@ -6,6 +6,7 @@ import pydantic_argparse
 from pydantic import BaseModel, Field
 
 from pst.utils.cli.modes import (
+    DownloadMode,
     InferenceMode,
     PreprocessingMode,
     TrainingMode,
@@ -20,6 +21,10 @@ class Args(BaseModel):
     graphify: Optional[PreprocessingMode] = Field(
         None,
         description="Pre-processing mode to convert raw ESM2 protein embeddings into a graph-formatted dataset to be used as input for the other modes",
+    )
+    download: Optional[DownloadMode] = Field(
+        None,
+        description="Download mode to download data and trained models from DRYAD",
     )
 
 

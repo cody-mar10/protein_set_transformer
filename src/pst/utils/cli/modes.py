@@ -4,6 +4,7 @@ import pydantic_argparse
 
 from pst.data.modules import DataConfig
 from pst.nn.config import ModelConfig
+from pst.utils.cli.download import DownloadArgs
 from pst.utils.cli.experiment import ExperimentArgs
 from pst.utils.cli.graphify import GraphifyArgs
 from pst.utils.cli.predict import PredictArgs
@@ -28,3 +29,7 @@ class InferenceMode(TrainingMode):
 
 class PreprocessingMode(pydantic_argparse.BaseCommand):
     graphify: GraphifyArgs
+
+
+class DownloadMode(pydantic_argparse.BaseCommand):
+    download: DownloadArgs
