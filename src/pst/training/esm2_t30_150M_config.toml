@@ -73,15 +73,15 @@ high = 10.0
 log = true
 parent = "loss"
 
-# AUGMENTATION hparams
 [[hparams]]
 name = "sample_scale"
 suggest = "float"
 low = 1.0
 high = 15.0
 log = false
-parent = "augmentation"
+parent = "loss"
 
+# AUGMENTATION hparams
 [[hparams]]
 name = "sample_rate"
 suggest = "float"
