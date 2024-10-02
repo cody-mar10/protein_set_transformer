@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from pathlib import Path
+from typing import Any, Literal, get_args
 
 import lightning as L
 import torch
@@ -21,6 +22,7 @@ from pst.nn.utils.sampling import (
 from pst.typing import GenomeGraphBatch, GraphAttnOutput, OptTensor
 
 _STAGE_TYPE = Literal["train", "val", "test"]
+PRETRAINED_MODEL_NAMES = Literal["vpst-small", "vpst-large"]
 
 
 class ProteinSetTransformer(L.LightningModule):
@@ -201,13 +203,12 @@ class ProteinSetTransformer(L.LightningModule):
         )
 
         # negative sampling
-        scale = self.augmentation_cfg.sample_scale
         neg_idx, neg_weights = negative_sampling(
             setwise_dist=setwise_dist,
             X=y_anchor,
             pos_idx=pos_idx,
-            scale=scale,
-            no_negatives_mode=self.augmentation_cfg.no_negatives_mode,
+            scale=self.config.loss.sample_scale,
+            no_negatives_mode=self.config.loss.no_negatives_mode,
         )
 
         y_pos = y_anchor[pos_idx]
@@ -284,8 +285,8 @@ class ProteinSetTransformer(L.LightningModule):
             setwise_dist=setdist_real_aug,
             X=y_anchor,
             Y=y_aug_pos,
-            scale=self.augmentation_cfg.sample_scale,
-            no_negatives_mode=self.augmentation_cfg.no_negatives_mode,
+            scale=self.config.loss.sample_scale,
+            no_negatives_mode=self.config.loss.no_negatives_mode,
         )
 
         y_aug_neg = y_aug_pos[aug_neg_idx]
@@ -352,6 +353,34 @@ class ProteinSetTransformer(L.LightningModule):
         return self._databatch_forward_with_embeddings(
             batch=batch, return_attention_weights=True
         )
+
+    @classmethod
+    def _load_from_checkpoint(cls, checkpoint_path: Path):
+        ckpt = torch.load(checkpoint_path, map_location="cpu")
+        model_config = ModelConfig.model_validate(ckpt["hyper_parameters"])
+
+        model = cls(model_config)
+        model.load_state_dict(ckpt["state_dict"])
+        return model
+
+    @classmethod
+    def from_pretrained(
+        cls, pretrained_model_name_or_path: PRETRAINED_MODEL_NAMES | str | Path
+    ):
+        if isinstance(pretrained_model_name_or_path, Path):
+            # load checkpoint from path
+            return cls._load_from_checkpoint(pretrained_model_name_or_path)
+        else:
+            # could either be a str path or a model name
+            valid_model_names = set(get_args(PRETRAINED_MODEL_NAMES))
+
+            if pretrained_model_name_or_path in valid_model_names:
+                # load from external source
+                raise NotImplementedError(
+                    "Loading from external source not implemented yet"
+                )
+            else:
+                return cls._load_from_checkpoint(Path(pretrained_model_name_or_path))
 
 
 class CrossValPST(CrossValModuleMixin, ProteinSetTransformer):
