@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
+import torch
 from lightning_cv import CrossValidationDataModule
 from lightning_cv.split import ImbalancedLeaveOneGroupOut
 from pydantic import BaseModel, Field
@@ -131,3 +132,12 @@ class GenomeDataModule(CrossValidationDataModule):
 
     def predict_dataloader(self, **kwargs) -> DataLoader:
         return self.simple_dataloader(self.predict_dataset, **kwargs)
+
+    @classmethod
+    def from_pretrained(cls, checkpoint_path: str | Path, data_file: str | Path):
+        ckpt = torch.load(checkpoint_path, map_location="cpu")
+        config = DataConfig.model_construct(
+            file=Path(data_file), **ckpt["datamodule_hyper_parameters"]
+        )
+
+        return cls(config)
