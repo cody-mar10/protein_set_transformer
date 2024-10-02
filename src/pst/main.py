@@ -6,6 +6,7 @@ import lightning as L
 import torch
 from torch.autograd.anomaly_mode import set_detect_anomaly
 
+from pst.embed import embed
 from pst.predict import model_inference
 from pst.training import cv, full
 from pst.training.tuning import tuning
@@ -59,6 +60,9 @@ def main():
     elif args.download is not None:
         download(args.download.download)
         return
+    elif args.embed is not None:
+        embed(args.embed.embed)
+        return
     elif args.train is not None:
         config = args.train
         _check_cpu_accelerator(config)
@@ -72,9 +76,7 @@ def main():
         _check_cpu_accelerator(config)
         fn = predict_main
     else:
-        raise RuntimeError(
-            "Must pass either 'train', 'tune', or 'predict' as running mode."
-        )
+        raise RuntimeError("Invalid run mode passed.")
 
     with set_detect_anomaly(config.experiment.detect_anomaly):
         if config.experiment.detect_anomaly:

@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from pst.utils.cli.modes import (
     DownloadMode,
+    EmbedMode,
     InferenceMode,
     PreprocessingMode,
     TrainingMode,
@@ -15,9 +16,15 @@ from pst.utils.cli.modes import (
 
 
 class Args(BaseModel):
-    train: Optional[TrainingMode] = Field(None, description="train mode")
-    tune: Optional[TuningMode] = Field(None, description="tune mode")
-    predict: Optional[InferenceMode] = Field(None, description="predict/inference mode")
+    train: Optional[TrainingMode] = Field(None, description="PST train mode")
+    tune: Optional[TuningMode] = Field(None, description="PST tune mode")
+    predict: Optional[InferenceMode] = Field(
+        None, description="PST predict/inference mode"
+    )
+    embed: Optional[EmbedMode] = Field(
+        None,
+        description="ESM2 embed mode to get protein embeddings from raw protein FASTA files",
+    )
     graphify: Optional[PreprocessingMode] = Field(
         None,
         description="Pre-processing mode to convert raw ESM2 protein embeddings into a graph-formatted dataset to be used as input for the other modes",

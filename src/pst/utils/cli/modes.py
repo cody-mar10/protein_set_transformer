@@ -3,6 +3,7 @@ from __future__ import annotations
 import pydantic_argparse
 
 from pst.data.modules import DataConfig
+from pst.embed import EmbedArgs
 from pst.nn.config import ModelConfig
 from pst.utils.cli.download import DownloadArgs
 from pst.utils.cli.experiment import ExperimentArgs
@@ -33,3 +34,8 @@ class PreprocessingMode(pydantic_argparse.BaseCommand):
 
 class DownloadMode(pydantic_argparse.BaseCommand):
     download: DownloadArgs
+
+
+class EmbedMode(pydantic_argparse.BaseCommand):
+
+    embed: EmbedArgs
