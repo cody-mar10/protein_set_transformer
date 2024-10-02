@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ptn-set-transformer"
-version = "0.10.0"
+version = "0.11.0"
 authors = [{ name = "Cody Martin", email = "codycmar10@gmail.com" }]
 description = "Training and inference on protein sets (genomes)"
 readme = "README.md"
@@ -16,7 +16,7 @@ classifiers = [
 ]
 dependencies = [
     "torch>=2",
-    "transformers",
+    "transformers>=4.28",
     "lightning>=2",
     "tables",
     "torch_geometric",
@@ -30,6 +30,7 @@ dependencies = [
     "einops",
     "requests",
     "tqdm",
+    "fair-esm==2.0.0",
 ]
 
 [project.optional-dependencies]
