@@ -7,24 +7,24 @@ from pst.typing import NO_NEGATIVES_MODES
 
 
 class AugmentationConfig(BaseModel):
-    sample_scale: float = Field(
-        7.0,
-        description=(
-            "exponential decay scale factor for weighting negative samples during loss"
-        ),
-        gt=0.0,
-    )
     sample_rate: float = Field(
         0.5, description="PointSwap sampler swapping rate", gt=0.0, lt=1.0
-    )
-    no_negatives_mode: NO_NEGATIVES_MODES = Field(
-        "closest_to_positive",
-        description="mode to handle event of no semihard negative sample existing",
     )
 
 
 class LossConfig(BaseModel):
     margin: float = Field(0.1, description="triplet loss margin", gt=0.0)
+    sample_scale: float = Field(
+        7.0,
+        description=(
+            "exponential decay scale factor for weighting negative samples during triplet loss"
+        ),
+        gt=0.0,
+    )
+    no_negatives_mode: NO_NEGATIVES_MODES = Field(
+        "closest_to_positive",
+        description="mode to handle event of no semihard negative sample existing",
+    )
 
 
 class OptimizerConfig(BaseModel):
