@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lightning_cv import BaseModelConfig
+from lightning_cv import BaseModelConfig as _BaseModelConfig
 from pydantic import BaseModel, Field
 
 from pst.typing import NO_NEGATIVES_MODES
@@ -12,7 +12,16 @@ class AugmentationConfig(BaseModel):
     )
 
 
-class LossConfig(BaseModel):
+class BaseLossConfig(BaseModel):
+    """This is used to pass arguments to setting up the loss function.
+
+    Subclass this if you need to pass additional arguments to the loss function.
+    """
+
+    pass
+
+
+class GenomeTripletLossConfig(BaseLossConfig):
     margin: float = Field(0.1, description="triplet loss margin", gt=0.0)
     sample_scale: float = Field(
         7.0,
@@ -39,7 +48,14 @@ class OptimizerConfig(BaseModel):
     )
 
 
-class ModelConfig(BaseModelConfig):
+class BaseModelConfig(_BaseModelConfig):
+    """Base config for all ProteinSetTransformer models.
+
+    This can be used as is, but subclassing can be used to add additional parameters.
+    Additionally, a custom loss config can be passed to the loss field when subclassing to
+    overwrite the default loss config.
+    """
+
     in_dim: int = Field(
         -1, description="input dimension, default is to use the dataset dimension"
     )
@@ -72,7 +88,7 @@ class ModelConfig(BaseModelConfig):
     )
     compile: bool = Field(False, description="compile model using torch.compile")
     optimizer: OptimizerConfig
-    loss: LossConfig
+    loss: BaseLossConfig
     augmentation: AugmentationConfig
 
     @classmethod
@@ -92,3 +108,7 @@ class ModelConfig(BaseModelConfig):
                 schema[key] = value
 
         return cls.model_validate(schema)
+
+
+class ModelConfig(BaseModelConfig):
+    loss: GenomeTripletLossConfig
