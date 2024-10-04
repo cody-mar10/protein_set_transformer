@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field
 
 from pst.typing import NO_NEGATIVES_MODES
 
+MAX_PROTEINS_PER_GENOME = 2048
+
 
 class AugmentationConfig(BaseModel):
     sample_rate: float = Field(
@@ -84,6 +86,15 @@ class BaseModelConfig(_BaseModelConfig):
         description=(
             "whether to project the concatenated pLM, positional, and strand embeddings "
             "back to the original dimensionality"
+        ),
+    )
+    max_proteins: int = Field(
+        MAX_PROTEINS_PER_GENOME,
+        description=(
+            "maximum number of proteins per genome. This affects the possible size of the "
+            "positional embeddings and does not need to be the actual maximum number of "
+            "proteins in the dataset. The actual maximum number of proteins just needs to be "
+            "less than or equal to this value."
         ),
     )
     compile: bool = Field(False, description="compile model using torch.compile")
