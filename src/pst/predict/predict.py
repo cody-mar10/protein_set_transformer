@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import sys
-from typing import Any, Literal, Optional, cast, get_args
+from pathlib import Path
+from typing import Literal, Optional, cast, get_args
 
 import tables as tb
 import torch
 from tqdm import tqdm
 
-from pst.data.modules import DataConfig, GenomeDataModule
-from pst.nn.modules import ModelConfig
+from pst.data.modules import GenomeDataModule
 from pst.nn.modules import ProteinSetTransformer as PST
 from pst.typing import EdgeAttnOutput, GenomeGraphBatch, GraphAttnOutput
 from pst.utils.cli.modes import InferenceMode
@@ -56,10 +56,10 @@ class Predictor:
 
     def setup(self):
         self._setup_accelerator()
-        ckpt = torch.load(self.config.predict.checkpoint, map_location=self.device)
 
-        self._setup_data(ckpt)
-        self._setup_model(ckpt)
+        ckptfile = self.config.predict.checkpoint
+        self._setup_data(ckptfile)
+        self._setup_model(ckptfile)
 
         self.config.predict.outdir.mkdir(parents=True, exist_ok=True)
 
@@ -73,21 +73,14 @@ class Predictor:
 
         self.device = device
 
-    def _setup_data(self, ckpt: dict[str, Any]):
-        data_config = DataConfig.model_construct(
-            file=self.config.data.file,
-            **ckpt["datamodule_hyper_parameters"],
+    def _setup_data(self, ckptfile: Path):
+        self.datamodule = GenomeDataModule.from_pretrained(
+            checkpoint_path=ckptfile, data_file=self.config.data.file, shuffle=False
         )
-
-        self.datamodule = GenomeDataModule(data_config, shuffle=False)
         self.datamodule.setup("predict")
 
-    def _setup_model(self, ckpt: dict[str, Any]):
-        model_config = ModelConfig.model_validate(ckpt["hyper_parameters"])
-
-        self.model = PST(model_config)
-        self.model.load_state_dict(ckpt["state_dict"])
-        self.model = self.model.to(self.device)
+    def _setup_model(self, ckptfile: Path):
+        self.model = PST.from_pretrained(ckptfile).to(self.device).eval()
 
         expected_max_size = self.model.positional_embedding.max_size
         actual_max_size = self.datamodule.dataset.max_size
@@ -150,17 +143,15 @@ class Predictor:
 
     @torch.no_grad()
     def predict_loop(self) -> Optional[dict[Predictor.OutputType, list[torch.Tensor]]]:
+        # implemented a barebones loop instead of using lightning to enable saving
+        # both the ptn embeddings and the graph embeddings separately
         dataloader = self.datamodule.predict_dataloader()
 
         batch: GenomeGraphBatch
         for batch in tqdm(dataloader, file=sys.stdout):
             batch = batch.to(self.device)  # type: ignore
 
-            pos_emb = self.model.positional_embedding(batch.pos.squeeze())
-            strand_emb = self.model.strand_embedding(batch.strand)
-            x_cat = self.model._concatenate_embeddings(
-                batch.x, positional_embed=pos_emb, strand_embed=strand_emb
-            )
+            x_cat, _, _ = self.model.internal_embeddings(batch)
 
             node_output: EdgeAttnOutput = self.model.encoder(
                 x_cat, batch.edge_index, batch.batch
