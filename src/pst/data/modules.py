@@ -133,11 +133,14 @@ class GenomeDataModule(CrossValidationDataModule):
     def predict_dataloader(self, **kwargs) -> DataLoader:
         return self.simple_dataloader(self.predict_dataset, **kwargs)
 
+    # TODO: need to add a way to change kwargs like train_on_full
     @classmethod
-    def from_pretrained(cls, checkpoint_path: str | Path, data_file: str | Path):
+    def from_pretrained(
+        cls, checkpoint_path: str | Path, data_file: str | Path, **kwargs
+    ):
         ckpt = torch.load(checkpoint_path, map_location="cpu")
         config = DataConfig.model_construct(
             file=Path(data_file), **ckpt["datamodule_hyper_parameters"]
         )
 
-        return cls(config)
+        return cls(config, **kwargs)
