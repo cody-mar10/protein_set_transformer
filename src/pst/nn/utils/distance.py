@@ -7,6 +7,26 @@ from torch_scatter import segment_mean_csr, segment_min_csr
 from pst.typing import OptTensor, PairTensor
 
 
+def pairwise_euclidean_distance(x: torch.Tensor, y: OptTensor = None) -> torch.Tensor:
+    """Returns squared Euclidean distance between two sets of points.
+
+    Args:
+        x (torch.Tensor): point tensor of shape [N, d]
+        y (OptTensor, optional): point tensor of shape [M, d]. Defaults to None. If None,
+            y = x, and the diagonal (self-comparisons) will be set to 0.0.
+
+    Returns:
+        torch.Tensor: squared Euclidean distance tensor of shape [N, M]
+    """
+    if y is None:
+        y = x
+        dist = torch.cdist(x, y, p=2.0).square().fill_diagonal_(0.0)
+    else:
+        dist = torch.cdist(x, y, p=2.0).square()
+
+    return dist
+
+
 def _stacked_batch_chamfer_distance(
     all_pairwise_dist: torch.Tensor, ptr: torch.Tensor
 ) -> PairTensor:
@@ -41,14 +61,10 @@ def stacked_batch_chamfer_distance(
               - Fij points to the item index in `batch` that is closest to
               the ith them in point set j.
     """
-    if other is None:
-        # chamfer distance for all graphs/sets in the batch
-        all_pairwise_dist = (
-            torch.cdist(batch, batch, p=2.0).square().fill_diagonal_(0.0)
-        )
-    else:
-        # chamfer distance between real and augmented point sets
-        all_pairwise_dist = torch.cdist(batch, other, p=2.0).square()
+
+    # if other is None: chamfer distance for all graphs/sets in the batch
+    # else: chamfer distance between real and augmented point sets
+    all_pairwise_dist = pairwise_euclidean_distance(batch, other)
     return _stacked_batch_chamfer_distance(all_pairwise_dist, ptr)
 
 
