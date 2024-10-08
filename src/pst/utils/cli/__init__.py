@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 from typing import Optional
 
 import pydantic_argparse
@@ -42,6 +43,7 @@ def parse_args(args: Optional[list[str]] = None) -> Args:
             "Train or predict genome-level embeddings based on sets of protein-level "
             "embeddings"
         ),
+        version=importlib.metadata.version("ptn-set-transformer"),
     )
 
     return parser.parse_typed_args(args)
