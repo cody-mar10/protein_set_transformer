@@ -6,25 +6,55 @@ import torch
 from einops import rearrange, reduce
 
 from pst.nn.utils.distance import pairwise_chamfer_distance
-from pst.typing import NO_NEGATIVES_MODES, PairTensor
+from pst.typing import NO_NEGATIVES_MODES, OptTensor, PairTensor
 
 
-def positive_sampling(setdist: torch.Tensor) -> torch.Tensor:
-    """Perform positive sampling using a set-wise distance metric like Chamfer distance.
+def positive_sampling(pairwise_dist: torch.Tensor, clone: bool = False) -> torch.Tensor:
+    """Perform positive sampling using a pairwise distance metric.
 
-    It is recommended that the set-wise distance be calculated BEFORE a model forward
+    It is recommended that the pairwise distance be calculated BEFORE a model forward
     pass since this will be comparing data in the original dimension compared to the
     embedding dimension. The positive pairs in the embedding dimension will be heavily
     dependent on the model and how it is being trained and how it was initialized.
 
+    For triplet loss, negative examples can be sampled in the model's embedding space. Thus,
+    the distance to positives is not relevant, as only the indices of the positive examples
+    are needed to select negative examples.
+
     Args:
-        setdist (torch.Tensor)
+        pairwise_dist (torch.Tensor): pairwise distance tensor of shape [N, N]
+        clone (bool, optional): whether to clone the input tensor. This is needed if the
+            original unedited tensor is needed since this method will mask the diagonal to
+            prevent selecting the same point as the positive. Defaults to False.
 
     Returns:
-        torch.Tensor: tensor with the indices of the positive set
+        torch.Tensor: index tensor with the indices of the positive set, shape [N]
     """
-    masked = setdist.clone().fill_diagonal_(torch.inf)
+    if clone:
+        pairwise_dist = pairwise_dist.clone()
+
+    masked = pairwise_dist.fill_diagonal_(torch.inf)
     return masked.argmin(dim=-1)
+
+
+def distance_from_index(
+    pairwise_dist: torch.Tensor, index: torch.Tensor
+) -> torch.Tensor:
+    """From a pairwise distance tensor, get the distances from a given index where the position
+    of along the first dimension corresponds to the item in the pairwise distance tensor at the
+    same position. The index values correspond to the specific columns in the pairwise distance.
+
+    Args:
+        pairwise_dist (torch.Tensor): pairwise distance tensor of shape [N, N]
+        index (torch.Tensor): index tensor of shape [N], the index value j in position i
+            corresponds to position ij in the pairwise distance tensor
+
+    Returns:
+        torch.Tensor: distance tensor of shape [N]
+    """
+    if index.ndim == 1:
+        index = rearrange(index, "batch -> batch 1")
+    return pairwise_dist.gather(dim=-1, index=index).squeeze()
 
 
 def _semi_hard_negative_sampling(
@@ -52,24 +82,75 @@ def _semi_hard_negative_sampling(
 
 @torch.no_grad()
 def negative_sampling(
-    setwise_dist: torch.Tensor,
-    X: torch.Tensor,
-    Y: Optional[torch.Tensor] = None,
+    input_space_pairwise_dist: torch.Tensor,
+    output_embed_X: torch.Tensor,
+    output_embed_Y: OptTensor = None,
+    input_space_dist_std: torch.Tensor | float | None = None,
     *,
-    pos_idx: Optional[torch.Tensor] = None,
+    pos_idx: OptTensor = None,
     scale: float = 7.0,
     no_negatives_mode: NO_NEGATIVES_MODES = "closest_to_positive",
-) -> tuple[torch.Tensor, torch.Tensor]:
-    if Y is None:
+) -> PairTensor:
+    """Sample negative examples for triplet loss using a semi-hard negative sampling strategy
+    in which negative examples are chosen from the model's output embedding space. This
+    sampling strategy requires a positive sample to be chosen first, which can be done using
+    the `positive_sampling` function or from known relationships as with data augmentation.
+
+    Args:
+        input_space_pairwise_dist (torch.Tensor): Pairwise distance tensor of the INPUT
+            embeddings, shape: [N, N]. This should be the same distance tensor used for
+            the positive sampling.
+        output_embed_X (torch.Tensor): output embeddings of the model, shape: [N, D]
+        Y (OptTensor, optional): output embeddings of the model. Defaults to None.
+            This is only used for SETWISE/GRAPHWISE negative sampling when the negative samples
+            are chosen from different genomes, such as with Point Swap Augmentation.
+        input_space_dist_std (torch.Tensor | float | None, optional): standard deviation of
+            the input_space_pairwise_dist tensor. If not provided, it will be calculated from
+            the input tensor. It is recommended to pre-compute this if positive sampling is
+            needed since the `positive_sampling` function may alter the diagonals in-place to
+            `torch.inf`, which would mess up the standard deviation calculation. Defaults to None.
+        pos_idx (OptTensor, optional): index tensor where the value j at the ith position
+            specifies the positive neighbor j for the ith input. This should be provided if the
+            positive samples had to be determined, such as by using the `positive_sampling`
+            function. For augmented genomes, the positive sample is already known.
+            Defaults to None.
+        scale (float, optional): negative exponential decay scale factor. Defaults to 7.0.
+        no_negatives_mode (NO_NEGATIVES_MODES, optional): strategy for handling instances where
+            no negatives exist, based on a semihard negative sampling strategy in which the
+            negative is chosen to be closest to the positive AND farther from the anchor than
+            the positive. If no negatives that fit the previous criteria exist,
+            "closest_to_positive" will choose a sample that is closer to the anchor in the
+            vicinity of the positive sample. Likewise, "closest_to_anchor" will choose a
+            a negative sample that is the closest to the anchor in the embedding space. This
+            issue should only arise for poorly trained models (such as at the beginning of
+            training). Defaults to "closest_to_positive".
+
+    Raises:
+        ValueError: if pos_idx is not provided when output_embed_Y is None as this indicates
+            positive samples were calculated prior to this
+        ValueError: if an invalid strategy is passed for no_negatives_mode is passed. Valid
+            options are "closest_to_positive" and "closest_to_anchor".
+
+    Returns:
+        PairTensor: (negative sample index tensor, negative sample weight tensor). The negative
+            sample is a tensor of shape [N] where the value j at the ith position specifies the
+            negative neighbor j for the ith input. The negative sample weight tensor is a
+            tensor of shape [N] that is the triplet loss weight for each negative sample to
+            downweight poor choices of negative genomes that are really close to the anchor.
+    """
+    if input_space_dist_std is None:
+        input_space_dist_std = input_space_pairwise_dist.std()
+
+    if output_embed_Y is None:
         # this chooses the neg sample from the real dataset
         # otherwise, Y is the augmented data, and this will choose from Y
-        Y = X
+        output_embed_Y = output_embed_X
         if pos_idx is None:
             raise ValueError("pos_idx must be supplied if a second tensor Y is not")
     else:
         # pos_idx is just aligned already in the case of sampling from point swapped
         # augmented data
-        pos_idx = torch.arange(Y.size(0)).to(Y.device)
+        pos_idx = torch.arange(output_embed_Y.size(0)).to(output_embed_Y.device)
 
     batch_size = pos_idx.size(0)
     pos_idx = rearrange(pos_idx, "batch -> batch 1")
@@ -77,11 +158,15 @@ def negative_sampling(
     # in case of sampling from real dataset, diag should be 0 due to self-comparison
     # so don't allow self to be chosen as neg sample
     # for pnt swap, generally diagonal should be the smallest, so chose another
-    embed_dist = torch.cdist(X, Y)
+    # negative sampling happens in the models embedding space,
+    # not the input space
+    embed_dist = torch.cdist(output_embed_X, output_embed_Y)
 
     # don't allow points closer than the pos sample be chosen
     # this also has the effect of removing self-comparisons
-    pos_dists = embed_dist.gather(dim=-1, index=pos_idx)  # type: ignore
+    # NOTE: checking distance to known positives in the OUTPUT embedding space
+    # this allows dynamically choosing the negative samples as the model learns
+    pos_dists = distance_from_index(embed_dist, pos_idx)
 
     gt_pos = embed_dist > pos_dists
     has_neg_choices = reduce(gt_pos, "batch1 batch2 -> batch1", "sum").bool()
@@ -129,11 +214,10 @@ def negative_sampling(
         neg_idx[no_neg_idx] = no_neg_neg_idx
 
     # calc negative sample weight
-    neg_setwise_dists = setwise_dist.gather(
+    neg_setwise_dists = input_space_pairwise_dist.gather(
         dim=-1, index=neg_idx.unsqueeze(1)
     ).squeeze()
-    setwise_std = setwise_dist.std()
-    denom = 2 * (scale * setwise_std) ** 2
+    denom = 2 * (scale * input_space_dist_std) ** 2
     neg_weight = torch.exp(-neg_setwise_dists / denom)
 
     return neg_idx, neg_weight
@@ -172,9 +256,6 @@ def point_swap_sampling(
 
     # sample from uniform [0, 1) distribution to determine whether to swap
     # True = should swap, False = should not swap
-    # TODO: this is technically the opposite of the sample rate
-    # if we want to swap 0.4 of proteins,
-    # then the number of proteins swapped here is 0.6, ie 1 - 0.4
     mask = torch.rand(aug_idx.size(0), device=aug_idx.device) < sample_rate
     default = torch.arange(aug_idx.size(0), device=aug_idx.device)
     aug_idx = torch.where(mask, aug_idx, default)
@@ -190,7 +271,7 @@ def heuristic_augmented_negative_sampling(
     neg_idx: torch.Tensor,
     ptr: torch.Tensor,
     scale: float = 7.0,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> PairTensor:
     chamfer_distances: list[float] = list()
     for i, j in enumerate(neg_idx):
         j = int(j)
@@ -208,8 +289,6 @@ def heuristic_augmented_negative_sampling(
 
     aug_neg_dist = torch.tensor(chamfer_distances, device=X_anchor.device)
     ### AUG NEG WEIGHTS ###
-    # TODO: using std here may make the weights really small since there are fewer
-    # distances gonna use mean for now
     std = aug_neg_dist.std()
     denom = 2 * (scale * std) ** 2
     aug_neg_weights = torch.exp(-aug_neg_dist / denom)
