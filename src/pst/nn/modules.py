@@ -3,7 +3,17 @@ from __future__ import annotations
 import sys
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Callable, Generic, Literal, Optional, Type, TypeVar, cast
+from typing import (
+    Any,
+    Callable,
+    Generic,
+    Literal,
+    Optional,
+    Type,
+    TypeVar,
+    cast,
+    get_type_hints,
+)
 
 if sys.version_info >= (3, 11):  # pragma: >=3.11 cover
     from typing import Self
@@ -34,6 +44,7 @@ from pst.typing import EdgeAttnOutput, GenomeGraphBatch, GraphAttnOutput, OptTen
 _STAGE_TYPE = Literal["train", "val", "test"]
 _FIXED_POINTSWAP_RATE = "FIXED_POINTSWAP_RATE"
 _ModelT = TypeVar("_ModelT", SetTransformer, SetTransformerEncoder)
+_BaseConfigT = TypeVar("_BaseConfigT", bound=BaseModelConfig)
 
 
 class PositionalStrandEmbeddingModule(L.LightningModule):
@@ -106,7 +117,9 @@ class PositionalStrandEmbeddingModule(L.LightningModule):
         return x_cat
 
 
-class BaseProteinSetTransformer(PositionalStrandEmbeddingModule, Generic[_ModelT]):
+class _BaseProteinSetTransformer(
+    PositionalStrandEmbeddingModule, Generic[_ModelT, _BaseConfigT]
+):
     """Base class for `ProteinSetTransformer` models for either genome-level or protein-level
     tasks. This class sets up either the underlying `SetTransformer` model (genome) or the
     `SetTransformerEncoder` (protein) along with the positional and strand embeddings.
@@ -126,19 +139,27 @@ class BaseProteinSetTransformer(PositionalStrandEmbeddingModule, Generic[_ModelT
             called by the `databatch_forward` method, which unwraps a custom batch object to pass
             to the model. Presumably, the `forward` method calls the `databatch_forward` or the
             `forward_step` method directly.
-    4. OPTIONAL -- `_load_from_checkpoint`: the private classmethod to load a pretrained model
-            from a pytorch checkpoint. This method is called by the public `from_pretrained`
-            classmethod.
 
     Further, since this is a `lightning.LightningModule`, you can override any of the
     lightning methods such as `training_step`, `validation_step`, `test_step`,
     `configure_optimizers` to further customize functionality.
+
+    WARNING: Subclasses should NOT change the name of the config argument in the __init__ method.
+    They should always use `config` as the first argument that is TYPE-HINTED as a subclass of
+    `BaseModelConfig`. This is necessary for the `from_pretrained` classmethod to work correctly
+    for loading pretrained models.
+
+    This is not meant to be directly subclassed by users. Instead, users should subclass
+    `BaseProteinSetTransformer` or `BaseProteinSetTransformerEncoder` for genome-level or
+    protein-level tasks. Note: the `BaseProteinSetTransformer` can also be used for dual
+    genome and protein-level tasks.
     """
 
     # keep track of all the valid pretrained model names
     PRETRAINED_MODEL_NAMES = set()
 
-    def __init__(self, config: BaseModelConfig, model_type: Type[_ModelT]) -> None:
+    # NOTE: do not change the name of the config var in all subclasses
+    def __init__(self, config: _BaseConfigT, model_type: Type[_ModelT]) -> None:
         # 2048 ptns should be large enough for probably all viruses
         super().__init__(
             in_dim=config.in_dim,
@@ -436,39 +457,167 @@ class BaseProteinSetTransformer(PositionalStrandEmbeddingModule, Generic[_ModelT
         raise NotImplementedError
 
     @classmethod
-    def _load_from_checkpoint(cls, checkpoint_path: Path) -> Self:
-        raise NotImplementedError
+    def _resolve_model_config_type(cls) -> Type[_BaseConfigT]:
+        # try to get the model config type from the type annotation in the __init__ method
+        type_hints = get_type_hints(cls.__init__)
+
+        if "config" not in type_hints:
+            # no type hint for the config parameter - just use default
+            model_config_type = BaseModelConfig
+        else:
+            # get the type hint for the config parameter
+            model_config_type = type_hints["config"]
+
+            # for these base classes, the type hint is a TypeVar, so check that
+            if issubclass(type(model_config_type), TypeVar):
+                # the type hint is a TypeVar, so just use the default
+                model_config_type = BaseModelConfig
+
+        return cast(Type[_BaseConfigT], model_config_type)
+
+    def _try_load_state_dict(
+        self, state_dict: dict[str, torch.Tensor], strict: bool = True
+    ):
+        try:
+            # just try to load directly
+            self.load_state_dict(state_dict, strict=True)
+        except RuntimeError:
+            # if that fails, then we need to try to see if we are loading a pretrained model
+            # that does not have values for new layers in subclassed models
+
+            # get the base parameters of the SetTransformer or SetTransformerEncoder
+            # along with the positional and strand embeddings
+            base_params = {f"model.{name}" for name, _ in self.model.named_parameters()}
+
+            # PositionalStrandEmbeddingModuleMixin params
+            for embedding_name in ("positional_embedding", "strand_embedding"):
+                layer: torch.nn.Module = getattr(self, embedding_name)
+                for name, _ in layer.named_parameters():
+                    base_params.add(f"{embedding_name}.{name}")
+
+            # get all new params
+            current_params = {name for name, _ in self.named_parameters()}
+
+            new_params = current_params - base_params
+
+            # now try to load the state dict
+            missing, unexpected = map(
+                set, self.load_state_dict(state_dict, strict=False)
+            )
+
+            # missing should be equivalent to the new params if loaded correctly
+            still_missing = new_params - missing
+
+            if still_missing:
+                raise RuntimeError(
+                    f"Missing parameters: {still_missing} when loading the state dict"
+                )
+
+            if strict and unexpected:
+                raise RuntimeError(
+                    f"Unexpected parameters: {unexpected} when loading the state dict"
+                )
+
+    @staticmethod
+    def _adjust_checkpoint_inplace(ckpt: dict[str, Any]):
+        # there was an old error when computing the pointswap rate to be 1 - expected
+        # the code has been changed (see commit 82b0698)
+        # however, old checkpoints will have the previous value, which needs to be adjusted
+        if ckpt["hyper_parameters"].pop(_FIXED_POINTSWAP_RATE, None) is None:
+            # key not present = old model
+            # so need to adjust the sample rate
+            curr_rate = ckpt["hyper_parameters"]["augmentation"]["sample_rate"]
+            ckpt["hyper_parameters"]["augmentation"]["sample_rate"] = 1.0 - curr_rate
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path: str | Path) -> Self:
-        if isinstance(pretrained_model_name_or_path, Path):
-            # load checkpoint from path
-            return cls._load_from_checkpoint(pretrained_model_name_or_path)
-        else:
+    def from_pretrained(
+        cls,
+        pretrained_model_name_or_path: str | Path,
+        model_type: Type[_ModelT],
+        model_config_type: Optional[Type[_BaseConfigT]] = None,
+        strict: bool = True,
+    ) -> Self:
+        """Load a model from a pretrained (or just trained) checkpoint.
+
+        This method handles subclasses that add new trainable parameters that want to start
+        from a parent pretrained model. For example, subclassing a `ProteinSetTransformer` model
+        and changing the objective from triplet loss to some label classification would introduce
+        new trainable layers that would benefit from starting from a pretrained PST.
+
+        This method works with allows interchanging between `SetTransformer` (genomic) and
+        `SetTransformerEncoder` (protein) models. The most common case of this would be with
+        a pretrained genomic PST that is then finetuned for a protein-level task in which
+        the decoder of the `SetTransformer` is not used.
+
+        Args:
+            pretrained_model_name_or_path (str | Path): name or file path to the pretrained model
+                checkpoint. NOTE: passing model names is not currently supported
+            model_type (Type[_ModelT]): underlying model type. For protein-level tasks, this
+                should be `SetTransformerEncoder`. For genome-level tasks, this should be
+                `SetTransformer`. It is recommended that subclasses handle this so users do not
+                have to pass this argument.
+            model_config_type (Optional[Type[_BaseConfigT]], optional): the model config
+                pydantic model. If passed, this must be a subclass of `BaseModelConfig`.
+                Defaults to None, meaning that it will be auto-detected from the class's
+                __init__ type hinted signature or default to `BaseModelConfig` if the
+                type annotation cannot be detected. NOTE: it is recommended that subclasses
+                type hint the `config` argument to the __init__ method to ensure that the
+                type of the model config is correctly detected.
+            strict (bool, optional): raise a RuntimeError if there are unexpected parameters
+                in the checkpoint's state dict. Defaults to True.
+
+        Raises:
+            NotImplementedError: Loading models from their names is not implemented yet
+        """
+        if not isinstance(pretrained_model_name_or_path, Path):
             # could either be a str path or a model name
             valid_model_names = cls.PRETRAINED_MODEL_NAMES
 
             if pretrained_model_name_or_path in valid_model_names:
                 # load from external source
+                # TODO: can call download code written in this module...
                 raise NotImplementedError(
                     "Loading from external source not implemented yet"
                 )
             else:
-                return cls._load_from_checkpoint(Path(pretrained_model_name_or_path))
+                # assume str is a file path
+                pretrained_model_name_or_path = Path(pretrained_model_name_or_path)
+
+        if model_config_type is None:
+            model_config_type = cls._resolve_model_config_type()
+
+        ckpt = torch.load(pretrained_model_name_or_path, map_location="cpu")
+        cls._adjust_checkpoint_inplace(ckpt)
+        model_config = model_config_type.model_validate(ckpt["hyper_parameters"])
+
+        try:
+            model = cls(config=model_config, model_type=model_type)
+        except TypeError:
+            # subclasses may not have the model_type as it will probably be set
+            model = cls(config=model_config)  # type: ignore
+
+        model._try_load_state_dict(ckpt["state_dict"], strict=strict)
+
+        return model
 
 
-class ProteinSetTransformer(BaseProteinSetTransformer[SetTransformer]):
-    # NOTE: updated as new pretrained models are added
-    PRETRAINED_MODEL_NAMES = {"vpst-small", "vpst-large"}
+class BaseProteinSetTransformer(
+    _BaseProteinSetTransformer[SetTransformer, _BaseConfigT]
+):
+    """Base class for a genome-level `ProteinSetTransformer` model. This class sets up the
+    the underlying `SetTransformer` model along with the positional and strand embeddings.
 
-    def __init__(self, config: ModelConfig):
-        super().__init__(config=config, model_type=SetTransformer)
+    This is an abstract base class, so subclasses must implement the following methods:
+    1. `setup_objective`: to setup the loss function
+    2. `forward`: to define the forward pass of the model, including how the loss is computed
 
-        # type cast to actual model config instance
-        self.config = cast(ModelConfig, self.config)
+    If the loss function requires additional parameters, a custom model config subclass of `BaseModelConfig` can be used that replaces the `BaseLossConfig` with new fields.
+    """
 
-    def setup_objective(self, margin: float, **kwargs) -> AugmentedWeightedTripletLoss:
-        return AugmentedWeightedTripletLoss(margin=margin)
+    MODEL_TYPE = SetTransformer
+
+    def __init__(self, config: _BaseConfigT):
+        super().__init__(config=config, model_type=self.MODEL_TYPE)
 
     # change type annotations in the signature
     def databatch_forward(
@@ -476,8 +625,7 @@ class ProteinSetTransformer(BaseProteinSetTransformer[SetTransformer]):
         batch: GenomeGraphBatch,
         return_attention_weights: bool = False,
         x: OptTensor = None,
-    ):
-        # ) -> GraphAttnOutput:
+    ) -> GraphAttnOutput:
         result = super().databatch_forward(
             batch=batch, return_attention_weights=return_attention_weights, x=x
         )
@@ -511,6 +659,47 @@ class ProteinSetTransformer(BaseProteinSetTransformer[SetTransformer]):
         )
 
         return output
+
+    @classmethod
+    def from_pretrained(
+        cls, pretrained_model_name_or_path: str | Path, strict: bool = True
+    ) -> Self:
+        """Load a model from a pretrained (or just trained) checkpoint.
+
+        This method handles subclasses that add new trainable parameters that want to start
+        from a parent pretrained model. For example, subclassing a `ProteinSetTransformer` model
+        and changing the objective from triplet loss to some label classification would introduce
+        new trainable layers that would benefit from starting from a pretrained PST.
+
+        This method works with allows interchanging between `SetTransformer` (genomic) and
+        `SetTransformerEncoder` (protein) models. The most common case of this would be with
+        a pretrained genomic PST that is then finetuned for a protein-level task in which
+        the decoder of the `SetTransformer` is not used.
+
+        Args:
+            pretrained_model_name_or_path (str | Path): name or file path to the pretrained model
+                checkpoint. NOTE: passing model names is not currently supported
+            strict (bool, optional): raise a RuntimeError if there are unexpected parameters
+                in the checkpoint's state dict. Defaults to True.
+
+        Raises:
+            NotImplementedError: Loading models from their names is not implemented yet
+        """
+        return super().from_pretrained(
+            pretrained_model_name_or_path, model_type=cls.MODEL_TYPE, strict=strict
+        )
+
+
+class ProteinSetTransformer(BaseProteinSetTransformer[ModelConfig]):
+    # NOTE: updated as new pretrained models are added
+    PRETRAINED_MODEL_NAMES = {"vpst-small", "vpst-large"}
+
+    def __init__(self, config: ModelConfig):
+        # this only needs to be defined for the config type hint
+        super().__init__(config=config)
+
+    def setup_objective(self, margin: float, **kwargs) -> AugmentedWeightedTripletLoss:
+        return AugmentedWeightedTripletLoss(margin=margin)
 
     def forward(
         self,
@@ -641,23 +830,17 @@ class ProteinSetTransformer(BaseProteinSetTransformer[SetTransformer]):
         y_aug_neg = y_aug_pos[aug_neg_idx]
         return y_aug_pos, y_aug_neg, aug_neg_weights
 
-    @classmethod
-    def _load_from_checkpoint(cls, checkpoint_path: Path):
-        ckpt = torch.load(checkpoint_path, map_location="cpu")
+    @staticmethod
+    def _adjust_checkpoint_inplace(ckpt: dict[str, Any]):
+        # fix the sample rate issue first
+        _BaseProteinSetTransformer._adjust_checkpoint_inplace(ckpt)
 
-        # there was an old error when computing the pointswap rate to be 1 - expected
-        # the code has been changed (see commit 82b0698)
-        # however, old checkpoints will have the previous value, which needs to be adjusted
-        if ckpt["hyper_parameters"].pop(_FIXED_POINTSWAP_RATE, None) is None:
-            # key not present = old model
-            # so need to adjust the sample rate
-            curr_rate = ckpt["hyper_parameters"]["augmentation"]["sample_rate"]
-            ckpt["hyper_parameters"]["augmentation"]["sample_rate"] = 1.0 - curr_rate
-
-        model_config = ModelConfig.model_validate(ckpt["hyper_parameters"])
-        model = cls(model_config)
-        model.load_state_dict(ckpt["state_dict"])
-        return model
+        # move sample_scale and no_negatives_mode to the loss field
+        # if they are part of the augmentation field
+        hparams = ckpt["hyper_parameters"]
+        for hparam_name in ("sample_scale", "no_negatives_mode"):
+            if hparam_name in hparams["augmentation"]:
+                hparams["loss"][hparam_name] = hparams["augmentation"].pop(hparam_name)
 
 
 class CrossValPST(CrossValModuleMixin, ProteinSetTransformer):
@@ -683,7 +866,7 @@ class CrossValPST(CrossValModuleMixin, ProteinSetTransformer):
 
 
 class BaseProteinSetTransformerEncoder(
-    BaseProteinSetTransformer[SetTransformerEncoder]
+    _BaseProteinSetTransformer[SetTransformerEncoder, _BaseConfigT],
 ):
     """Base class for protein-level tasks using the `SetTransformerEncoder` model. This class
     can also be derived from pretrained genome-level models, such as the `ProteinSetTransformer`.
@@ -695,64 +878,108 @@ class BaseProteinSetTransformerEncoder(
 
     1. `setup_objective`: to setup the loss function
     2. `forward`: to define the forward pass of the model, including how the loss is computed
-    3. `forward_step`: to define how data is passed to the underlying models
     """
 
-    def __init__(self, config: BaseModelConfig):
-        super().__init__(config=config, model_type=SetTransformerEncoder)
+    MODEL_TYPE = SetTransformerEncoder
+
+    def __init__(self, config: _BaseConfigT):
+        super().__init__(config=config, model_type=self.MODEL_TYPE)
 
     @classmethod
-    def _load_from_checkpoint(cls, checkpoint_path: Path):
-        ckpt = torch.load(checkpoint_path, map_location="cpu")
-        model_config = ModelConfig.model_validate(ckpt["hyper_parameters"])
-        model = cls(model_config)
+    def from_pretrained(
+        cls, pretrained_model_name_or_path: str | Path, strict: bool = True
+    ) -> Self:
+        """Load a model from a pretrained (or just trained) checkpoint.
+
+        This method handles subclasses that add new trainable parameters that want to start
+        from a parent pretrained model. For example, subclassing a `ProteinSetTransformer` model
+        and changing the objective from triplet loss to some label classification would introduce
+        new trainable layers that would benefit from starting from a pretrained PST.
+
+        This method works with allows interchanging between `SetTransformer` (genomic) and
+        `SetTransformerEncoder` (protein) models. The most common case of this would be with
+        a pretrained genomic PST that is then finetuned for a protein-level task in which
+        the decoder of the `SetTransformer` is not used.
+
+        Args:
+            pretrained_model_name_or_path (str | Path): name or file path to the pretrained model
+                checkpoint. NOTE: passing model names is not currently supported
+            strict (bool, optional): raise a RuntimeError if there are unexpected parameters
+                in the checkpoint's state dict. Defaults to True.
+
+        Raises:
+            NotImplementedError: Loading models from their names is not implemented yet
+        """
+        return super().from_pretrained(
+            pretrained_model_name_or_path, model_type=cls.MODEL_TYPE, strict=strict
+        )
+
+    @staticmethod
+    def _adjust_checkpoint_inplace(ckpt: dict[str, Any]):
+        # fix augmentation sample rate and move sample_scale and no_negatives_mode to loss field
+        ProteinSetTransformer._adjust_checkpoint_inplace(ckpt)
+
+        # since we could be loading a genomic PST for this protein PST,
+        # then we need to remove the decoder layers
+
+    def _try_load_state_dict(
+        self, state_dict: dict[str, torch.Tensor], strict: bool = True
+    ):
 
         try:
-            # try loading directly
-            # if it works, then all fields accounted for and the ckpt is probably
-            # from a protein PST. This should work for subclasses that
-            # add new trainable layers.
-            model.load_state_dict(ckpt["state_dict"])
-
-        except (RuntimeError, AttributeError, KeyError):
+            # try loading directly, which should work for pretrained protein PSTs
+            # derived from this class
+            super()._try_load_state_dict(state_dict, strict=strict)
+        except RuntimeError:
             # however, if it fails, it is likely that the ckpt is from a genomic PST
             # so we need to extract the pos/strand embeddings and the SetTransformerEncoder
             # state dict ONLY
             # we do not care about the SetTransformerDecoder state dict!!
 
-            # we need to load the state dict this way in case we are loading from a pretrained
-            # genomic PST for protein level tasks
+            # we just need to rebuild the state dict to only include the relevant layers
 
-            # TODO: i think this will introduce problems if people subclass this and start adding new layers or change names...
-            # can probably just tell people to overwrite this method in that case?
-            state_dict: dict[str, torch.Tensor] = dict()
+            # get the base parameters of the SetTransformerEncoder from the view of a
+            # ProteinSetTransformer: ie from PST, the encoder is under the field model.encoder.AAA
+            # also get with the positional and strand embeddings
+            params_to_extract = {
+                f"model.encoder.{name}" for name, _ in self.model.named_parameters()
+            }
 
-            name: str
-            params: torch.Tensor
+            # PositionalStrandEmbeddingModuleMixin params
+            for embedding_name in ("positional_embedding", "strand_embedding"):
+                layer: torch.nn.Module = getattr(self, embedding_name)
+                for name, _ in layer.named_parameters():
+                    params_to_extract.add(f"{embedding_name}.{name}")
 
-            for name, params in ckpt["state_dict"].items():
-                if (
-                    ("encoder" in name)
-                    or ("positional_embedding" in name)
-                    or ("strand_embedding" in name)
-                ):
-                    # if we are loading a pretrained genomic PST, then each layer will start with
-                    # the word "model" since that is the name of the class attribute
-                    # for a PST, self.model refers to a SetTransformer but here we just want
-                    # a SetTransformerEncoder, which would be self.model.encoder
-                    # so we need to strip the "encoder." part since the parent class self.model
-                    # is the SetTransformerEncoder itself
-                    if name.startswith("model"):
-                        # pretrained genomic PST has fields like this:
-                        # model.encoder.layers.0.attn.conv.weight
-                        # however for the protein PST, the fields will look like this:
-                        # model.layers.0.attn.conv.weight
-                        name = name.replace("encoder.", "")
+            # from PST, the encoder is under the field model.encoder.AAA
+            # but for the protein PST, the expected field is model.AAA
+            new_state_dict = {
+                name.replace("encoder.", ""): state_dict[name]
+                for name in params_to_extract
+            }
 
-                    state_dict[name] = params
+            # get all new params
+            current_params = {name for name, _ in self.named_parameters()}
 
-            model.load_state_dict(state_dict)
-        return model
+            new_params = current_params - new_state_dict.keys()
+
+            # now try to load the state dict
+            missing, unexpected = map(
+                set, self.load_state_dict(new_state_dict, strict=False)
+            )
+
+            # missing should be equivalent to the new params if loaded correctly
+            still_missing = new_params - missing
+
+            if still_missing:
+                raise RuntimeError(
+                    f"Missing parameters: {still_missing} when loading the state dict"
+                )
+
+            if strict and unexpected:
+                raise RuntimeError(
+                    f"Unexpected parameters: {unexpected} when loading the state dict"
+                )
 
     def forward_step(
         self,
