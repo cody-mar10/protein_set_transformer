@@ -9,7 +9,7 @@ from lightning_cv.split import ImbalancedLeaveOneGroupOut
 from pydantic import BaseModel, Field
 from torch.utils.data import DataLoader
 
-from pst.data.dataset import GenomeDataset
+from pst.data.dataset import FeatureLevel, GenomeDataset
 from pst.typing import EdgeIndexStrategy
 
 
@@ -133,7 +133,6 @@ class GenomeDataModule(CrossValidationDataModule):
     def predict_dataloader(self, **kwargs) -> DataLoader:
         return self.simple_dataloader(self.predict_dataset, **kwargs)
 
-    # TODO: need to add a way to change kwargs like train_on_full
     @classmethod
     def from_pretrained(
         cls, checkpoint_path: str | Path, data_file: str | Path, **kwargs
@@ -144,3 +143,12 @@ class GenomeDataModule(CrossValidationDataModule):
         )
 
         return cls(config, **kwargs)
+
+    def register_feature(
+        self,
+        name: str,
+        data: torch.Tensor,
+        *,
+        feature_level: FeatureLevel,
+    ):
+        self.dataset.register_feature(name, data, feature_level=feature_level)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import tables as tb
 import torch
@@ -16,6 +16,7 @@ from pst.data.graph import (
 from pst.typing import EdgeIndexStrategy, FilePath, GenomeGraphBatch
 
 GraphT = TypeVar("GraphT", bound=Data)
+FeatureLevel = Literal["node", "graph", "protein", "genome"]
 
 
 class GenomeDataset(Dataset[GenomeGraph]):
@@ -64,6 +65,9 @@ class GenomeDataset(Dataset[GenomeGraph]):
             self.class_id = torch.zeros((len(self),), dtype=torch.long).numpy()
 
         self.edge_indices = self._get_edge_indices(edge_strategy, chunk_size, threshold)
+
+        self._node_registry: dict[str, torch.Tensor] = dict()
+        self._graph_registry: dict[str, torch.Tensor] = dict()
 
     def _get_class_weights(self, log_inverse: bool = True) -> torch.Tensor:
         if hasattr(self, "class_id"):
@@ -123,9 +127,14 @@ class GenomeDataset(Dataset[GenomeGraph]):
                 f"{idx=} is out of range for {clsname} with {len(self)} genomes"
             ) from e
 
+        registered_features: dict[str, torch.Tensor | int | float] = {}
+
         # node/item level access (ptn)
         x = self.data[start:stop]
         strand = self.strand[start:stop]
+
+        for name, data in self._node_registry.items():
+            registered_features[name] = data[start:stop]
 
         # graph/set level access (genome)
         edge_index = self.edge_indices[idx]
@@ -134,6 +143,9 @@ class GenomeDataset(Dataset[GenomeGraph]):
         class_id = int(self.class_id[idx])
         # shape: [N, 1]
         pos = torch.arange(num_proteins).unsqueeze(-1).to(x.device)
+
+        for name, data in self._graph_registry.items():
+            registered_features[name] = data[idx]
 
         # the edge index will already be created so no need to pass edge creation info
         graph = GenomeGraph(
@@ -144,8 +156,52 @@ class GenomeDataset(Dataset[GenomeGraph]):
             class_id=class_id,
             strand=strand,
             pos=pos,
+            **registered_features,  # type: ignore
         )
         return graph
+
+    def register_feature(
+        self,
+        name: str,
+        data: torch.Tensor,
+        *,
+        feature_level: FeatureLevel,
+        overwrite_previously_registered: bool = False,
+    ):
+        if name in self.__node_attr__ or name in self.__graph_attr__:
+            raise ValueError(
+                f"Cannot register feature with name {name} as it is a reserved attribute."
+            )
+        elif name in self._node_registry or name in self._graph_registry:
+            if not overwrite_previously_registered:
+                raise ValueError(
+                    f"Feature with name {name} has already been registered. "
+                    "Set `overwrite_previously_registered=True` to overwrite."
+                )
+            else:
+                self._node_registry.pop(name, None)
+                self._graph_registry.pop(name, None)
+
+        if feature_level == "node" or feature_level == "protein":
+            if data.shape[0] != self.data.shape[0]:
+                raise ValueError(
+                    f"Expected {self.data.shape[0]} items in data, got {data.shape[0]}"
+                )
+            self._node_registry[name] = data
+        elif feature_level == "graph" or feature_level == "genome":
+            if data.shape[0] != self.sizes.shape[0]:
+                raise ValueError(
+                    f"Expected {self.sizes.shape[0]} items in data, got {data.shape[0]}"
+                )
+            self._graph_registry[name] = data
+        else:
+            raise ValueError(
+                (
+                    "Invalid feature level. Must be one of 'node'/'protein' or 'graph'/'genome'"
+                    "to indicate if the registered feature describes a node-level or "
+                    "graph-level property, respectively."
+                )
+            )
 
     @property
     def feature_dim(self) -> int:
