@@ -10,7 +10,9 @@ Cody Martin, Anthony Gitter, and Karthik Anantharaman.
 
 ## Installation
 
-Use a combination of `mamba` and `pip` to install the required dependencies. This should take no more than 5 minutes.
+We plan to create a `pip`-installable package in the future but are having issues with a custom fork dependency.
+
+For now, you can install the software dependencies of PST using a combination of `mamba` and `pip`, which should take no more than 5 minutes.
 
 Note: you will likely need to link your git command line interface with an online github account. Follow [this link](https://docs.github.com/en/get-started/getting-started-with-git/set-up-git#setting-up-git) for help setting up git at the command line.
 
@@ -23,7 +25,12 @@ mamba create -n pst -c pytorch -c pyg -c conda-forge 'python<3.12' 'pytorch>=2.0
 mamba activate pst
 
 # install latest updates from this repository
-pip install git+https://github.com/cody-mar10/protein_set_transformer.git
+# best to clone the repo since you may want to run the test demo
+git clone https://github.com/cody-mar10/protein_set_transformer.git
+
+cd protein_set_transformer
+
+pip install . #<- notice the [dot]
 ```
 
 ### With GPUs
@@ -35,12 +42,27 @@ mamba create -n pst -c pytorch -c nvidia -c pyg -c conda-forge 'python<3.12' 'py
 mamba activate pst
 
 # install latest updates from this repository
-pip install git+https://github.com/cody-mar10/protein_set_transformer.git
+# best to clone the repo since you may want to run the test demo
+git clone https://github.com/cody-mar10/protein_set_transformer.git
+
+cd protein_set_transformer
+
+pip install . #<- notice the [dot]
+```
+
+### Installing for training a new PST
+
+We implemented a hyperparameter tuning cross validation workflow implemented using [Lightning Fabric](https://lightning.ai/docs/fabric/stable/) in a base library called [lightning-crossval](https://github.com/cody-mar10/lightning-crossval). Part of our specific implementation for hyperparameter tuning is also implemented in the PST library.
+
+If you want to include the optional dependendings for training a new PST, you can follow the corresponding installation steps above with the following change:
+
+```bash
+pip install .[tune]
 ```
 
 ### Test run
 
-Upon successful installation, you will have the `pst` executable to train, tune, and predict.
+Upon successful installation, you will have the `pst` executable to train, tune, and predict. There are also other modules included as utilties that you can see using `pst -h`.
 
 You will need to first download a trained vPST model:
 
@@ -54,13 +76,21 @@ You can use the test data for a test prediction run:
 
 ```bash
 pst predict \
-    --file test/test_data.graphfmt.h5 \
+    --file test/test_data.graphfmt.h5 \ # this is in the git repo
     --accelerator cpu \
     --checkpoint pstdata/pst-small_trained_model.ckpt \
     --outdir test_run
 ```
 
-The results from the above command are available at `test/test_run/predictions.h5`. Depending on the number of available threads, this test run should not take more than 5 minutes.
+The results from the above command are available at `test/test_run/predictions.h5`. This test run takes fewer than 1 minute using a single CPU.
+
+If you are unfamiliar with `.h5` files, you can use `pytables` (installed with PST as a dependency) to inspect `.h5` files in python, or you can install `hdf5` and use the `h5ls` to inspect the fields in the output file.
+
+There should be 3 fields in the prediciton file:
+
+1. `attn` which contains the per-protein attention values (shape: $N_{prot} \times N_{heads}$)
+2. `ctx_ptn` which contains the contextualized PST protein embeddings (shape: $N_{prot} \times D$)
+3. `data` which contains the PST genome embeddings (shape: $N_{genome} \times D$)
 
 ## Data availability
 
