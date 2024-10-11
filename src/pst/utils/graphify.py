@@ -8,9 +8,8 @@ from typing import Iterator, Optional
 import numpy as np
 import tables as tb
 
+from pst.data.utils import H5_FILE_COMPR_FILTERS
 from pst.utils.cli.graphify import GraphifyArgs
-
-FILTERS = tb.Filters(complevel=4, complib="blosc:lz4")
 
 
 @dataclass
@@ -141,5 +140,5 @@ def to_graph_format(args: GraphifyArgs):
                 where="/",
                 name=loc,
                 obj=data,
-                filters=FILTERS,
+                filters=H5_FILE_COMPR_FILTERS,
             )
