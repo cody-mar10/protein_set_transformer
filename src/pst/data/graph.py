@@ -18,15 +18,25 @@ _DEFAULT_THRESHOLD = 30
 EdgeIndexCreateFn = Callable[..., torch.Tensor]
 
 
+# this is really more of a scaffold-level graph, ie contiguous sequence of proteins
 class GenomeGraph(Data):
+    # protein level features
     x: torch.Tensor
+    strand: torch.Tensor
+    pos: torch.Tensor  # position of each ptn in each scaffold
+
+    # scaffold level features
     edge_index: torch.Tensor
-    y: OptTensor
-    pos: torch.Tensor
     num_proteins: int
     class_id: int
-    strand: torch.Tensor
     weight: float
+    scaffold_label: int
+
+    # genome level features
+    genome_label: int
+
+    # users choice for what level
+    y: OptTensor
 
     def __init__(
         self,
@@ -36,6 +46,8 @@ class GenomeGraph(Data):
         weight: float,
         num_proteins: int,
         pos: torch.Tensor,
+        scaffold_label: int,
+        genome_label: int,
         edge_index: OptTensor = None,
         edge_attr: OptTensor = None,
         y: OptTensor = None,
@@ -48,6 +60,8 @@ class GenomeGraph(Data):
         kwargs["class_id"] = class_id
         kwargs["strand"] = strand
         kwargs["weight"] = weight
+        kwargs["scaffold_label"] = scaffold_label
+        kwargs["genome_label"] = genome_label
 
         # this will set all attrs for this subclass
         super().__init__(x, edge_index, edge_attr, y, pos, **kwargs)
