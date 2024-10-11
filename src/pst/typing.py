@@ -6,8 +6,10 @@ from typing import Literal, NamedTuple, Protocol
 from numpy import float32
 from numpy.typing import NDArray
 from torch import Tensor
-from torch_geometric.typing import PairTensor  # noqa
-from torch_geometric.typing import OptTensor
+from torch_geometric.typing import (
+    OptTensor,
+    PairTensor,  # noqa
+)
 
 FilePath = str | Path
 
@@ -26,6 +28,8 @@ class GenomeGraphBatch(Protocol):
     class_id: Tensor
     strand: Tensor
     pos: Tensor
+    scaffold_label: Tensor
+    genome_label: Tensor
 
 
 EdgeIndexStrategy = Literal["full", "sparse", "chunked"]
