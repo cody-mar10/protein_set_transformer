@@ -28,7 +28,7 @@ class TrainerArgs(BaseModel):
         1,
         description="number of accelerator devices to use. For CPUs, this sets the total thread usage.",  # noqa: E501
     )
-    accelerator: AcceleratorOpts = Field("gpu", description="accelerator to use")
+    accelerator: AcceleratorOpts = Field("auto", description="accelerator to use")
     default_root_dir: Path = Field(
         Path("lightning_root"),
         description="lightning root dir for checkpointing and logging",
