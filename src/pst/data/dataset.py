@@ -505,3 +505,9 @@ class GenomeDataset(Dataset[GenomeGraphBatch]):
             for field in GenomeDataset.__h5_fields__:
                 data = getattr(self, field).numpy()
                 fp.create_carray("/", field, data, filters=H5_FILE_COMPR_FILTERS)
+
+    def any_genomes_have_multiple_scaffolds(self) -> bool:
+        num_scaffolds = self.scaffold_label.max().item()
+        num_genomes = self.genome_label.max().item()
+
+        return num_scaffolds != num_genomes
