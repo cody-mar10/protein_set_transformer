@@ -51,6 +51,11 @@ def _check_cpu_accelerator(config: TrainingMode):
         config.trainer.strategy = "auto"
 
 
+def _validate_accelerator(config: TrainingMode):
+    if config.trainer.accelerator == "auto":
+        config.trainer.accelerator = "gpu" if torch.cuda.is_available() else "cpu"
+
+
 def main():
     args = parse_args()
 
@@ -65,18 +70,18 @@ def main():
         return
     elif args.train is not None:
         config = args.train
-        _check_cpu_accelerator(config)
         fn = train_main
     elif args.tune is not None:
         config = args.tune
-        _check_cpu_accelerator(config)
         fn = tune_main
     elif args.predict is not None:
         config = args.predict
-        _check_cpu_accelerator(config)
         fn = predict_main
     else:
         raise RuntimeError("Invalid run mode passed.")
+
+    _validate_accelerator(config)
+    _check_cpu_accelerator(config)
 
     with set_detect_anomaly(config.experiment.detect_anomaly):
         if config.experiment.detect_anomaly:
