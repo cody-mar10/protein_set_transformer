@@ -7,6 +7,7 @@ from pst.embed import EmbedArgs
 from pst.nn.config import ModelConfig
 from pst.utils.cli.download import DownloadArgs
 from pst.utils.cli.experiment import ExperimentArgs
+from pst.utils.cli.finetune import FinetuningArgs
 from pst.utils.cli.graphify import GraphifyArgs
 from pst.utils.cli.predict import PredictArgs
 from pst.utils.cli.trainer import TrainerArgs
@@ -26,6 +27,10 @@ class TuningMode(TrainingMode):
 
 class InferenceMode(TrainingMode):
     predict: PredictArgs
+
+
+class FinetuningMode(TrainingMode):
+    finetuning: FinetuningArgs
 
 
 class PreprocessingMode(pydantic_argparse.BaseCommand):

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from pst.utils.cli.modes import (
     DownloadMode,
     EmbedMode,
+    FinetuningMode,
     InferenceMode,
     PreprocessingMode,
     TrainingMode,
@@ -17,10 +18,20 @@ from pst.utils.cli.modes import (
 
 
 class Args(BaseModel):
-    train: Optional[TrainingMode] = Field(None, description="PST train mode")
-    tune: Optional[TuningMode] = Field(None, description="PST tune mode")
+    train: Optional[TrainingMode] = Field(
+        None,
+        description="PST train mode for training a new genomic Protein Set Transformer",
+    )
+    tune: Optional[TuningMode] = Field(
+        None, description="PST hyperparameter tuning mode"
+    )
     predict: Optional[InferenceMode] = Field(
-        None, description="PST predict/inference mode"
+        None,
+        description="PST predict/inference mode using a pretrained genomic Protein Set Transformer",
+    )
+    finetune: Optional[FinetuningMode] = Field(
+        None,
+        description="PST finetuning mode using a pretrained genomic Protein Set Transformer. NOTE: This is for finetuning a pretrained PST with new data.",
     )
     embed: Optional[EmbedMode] = Field(
         None,
