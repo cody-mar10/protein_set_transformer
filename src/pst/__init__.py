@@ -5,6 +5,7 @@ from pst import data, nn, predict, training, utils
 # public API
 from pst.data.dataset import GenomeDataset
 from pst.data.graph import GenomeGraph
+from pst.data.loader import GenomeDataLoader
 from pst.data.modules import DataConfig, GenomeDataModule
 from pst.nn.config import BaseLossConfig, BaseModelConfig, ModelConfig
 from pst.nn.modules import (
