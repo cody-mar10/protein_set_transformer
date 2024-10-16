@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 import torch
 from lightning_cv import CrossValidationDataModule
@@ -9,7 +9,7 @@ from lightning_cv.split import ImbalancedLeaveOneGroupOut
 from pydantic import BaseModel, Field
 from torch.utils.data import DataLoader
 
-from pst.data.dataset import FeatureLevel, GenomeDataset
+from pst.data.dataset import _SENTINEL_FRAGMENT_SIZE, FeatureLevel, GenomeDataset
 from pst.typing import EdgeIndexStrategy
 
 
@@ -17,19 +17,19 @@ class DataConfig(BaseModel):
     file: Path = Field(
         ...,
         description=(
-            "input protein embeddings file in .h5 file format with the fields .data for "
-            "protein embeddings"  # TODO: add more desc
+            "input protein embeddings file in `pst graphify` .h5 file format. See the wiki for "
+            "more information if manually creating this file. Otherwise, the `pst graphify`"
+            "workflow will create this file correctly."
         ),
     )
     batch_size: int = Field(
-        32, description="batch size in number of genomes", gt=4, le=128, multiple_of=2
+        32, description="batch size in number of genomes", le=128, multiple_of=2
     )
     train_on_full: bool = Field(
         False,
         description=(
-            "whether to train a single model on the full input data. When not "
-            "specified, the default is  to train multiple models with cross "
-            "validation"
+            "whether to train a single model on the full input data. When not specified, the "
+            "default is to train multiple models with cross validation"
         ),
     )
     pin_memory: bool = Field(
@@ -48,7 +48,12 @@ class DataConfig(BaseModel):
     chunk_size: int = Field(
         30,
         description=(
-            "size of sub-chunks to break genomes into if using --edge_strategy chunked"
+            "size of sub-chunks to break genomes into if using --edge_strategy chunked. This is "
+            "the range of protein-protein neighborhoods within a contiguous scaffold. This is "
+            "different from --fragment-size, which controls artificially fragmenting scaffolds "
+            "before protein-protein neighborhoods are calculated. Protein-protein neighborhoods "
+            "are only calculated within a contiguous scaffold (happens AFTER --fragment-size "
+            "fragmenting)"
         ),
         ge=15,
         le=50,
@@ -61,6 +66,21 @@ class DataConfig(BaseModel):
     )
     log_inverse: bool = Field(
         False, description="take the log of inverse class freqs as weights"
+    )
+    fragment_size: int = Field(
+        _SENTINEL_FRAGMENT_SIZE,
+        description=(
+            "artificially break scaffolds into fragments that have no more than this many "
+            "proteins. This is different from --chunk-size, which controls the range of "
+            "protein-protein neighborhoods within a contiguous scaffold. This value simulates "
+            "smaller scaffolds before protein-protein neighborhoods are calculated. Setting "
+            "this value can reduce the memory burden, especially for large genomes like bacteria "
+            "that encode thousands of proteins. Default is -1, which means NO fragmentation."
+            "During INFERENCE or FINETUNING ONLY, if this value is not -1, the dataset will be "
+            "be automatically fragmented into fragments of this --max-proteins size (if "
+            "--fragment-oversized-genomes used), which may still use too much memory, so consider "
+            "setting this to be smaller than --max-proteins"
+        ),
     )
 
 
@@ -75,6 +95,7 @@ class GenomeDataModule(CrossValidationDataModule):
         "threshold",
         "log_inverse",
         "train_on_full",
+        "fragment_size",
     }
 
     def __init__(self, config: DataConfig, **kwargs) -> None:
@@ -85,11 +106,12 @@ class GenomeDataModule(CrossValidationDataModule):
             chunk_size=config.chunk_size,
             threshold=config.threshold,
             log_inverse=config.log_inverse,
+            fragment_size=config.fragment_size,
         )
         super().__init__(
             dataset=self.dataset,
             batch_size=config.batch_size,
-            cross_validator=ImbalancedLeaveOneGroupOut,
+            cross_validator=ImbalancedLeaveOneGroupOut,  # TODO: should make this configurable
             cross_validator_config={"groups": self.dataset.class_id},
             collate_fn=self.dataset.collate_indices,
             **kwargs,
@@ -135,12 +157,27 @@ class GenomeDataModule(CrossValidationDataModule):
 
     @classmethod
     def from_pretrained(
-        cls, checkpoint_path: str | Path, data_file: str | Path, **kwargs
+        cls,
+        checkpoint_path: str | Path,
+        data_file: str | Path,
+        command_line_config: Optional[DataConfig] = None,
+        **kwargs,
     ):
         ckpt = torch.load(checkpoint_path, map_location="cpu")
         config = DataConfig.model_construct(
             file=Path(data_file), **ckpt["datamodule_hyper_parameters"]
         )
+
+        # allow users to update config from command line
+        # this is most significant for batch size and fragment size
+        # edge creation strategy should have been tuned and shouldn't be updated
+        if command_line_config is not None:
+            ALLOWED_KEYS = {"batch_size", "fragment_size"}
+            for key in ALLOWED_KEYS:
+                # check if they were set from cli
+                if key in command_line_config.model_fields_set:
+                    # if so, update the config
+                    setattr(config, key, getattr(command_line_config, key))
 
         return cls(config, **kwargs)
 
