@@ -16,4 +16,3 @@ from pst.nn.modules import (
 from pst.typing import GenomeGraphBatch
 
 _logger = logging.getLogger(__name__)
-_logger.addHandler(logging.StreamHandler())
