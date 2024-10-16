@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import Literal, NamedTuple, TypedDict, TypeVar, overload
 
@@ -21,16 +22,21 @@ from pst.typing import EdgeIndexStrategy, FilePath, GenomeGraphBatch
 GraphT = TypeVar("GraphT", bound=Data)
 # TODO: what about scaffold?
 FeatureLevel = Literal["node", "graph", "protein", "genome"]
+_SENTINEL_FRAGMENT_SIZE = -1
+logger = logging.getLogger(__name__)
 
 
-# TODO: repeating type annotations <- just use a mixin?
-class FragmentedData(TypedDict):
+class ScaffoldFeatureFragmentedData(TypedDict):
+    weights: torch.Tensor
+    class_id: torch.Tensor
+    scaffold_registry: list[RegisteredFeature]
+
+
+class FragmentedData(ScaffoldFeatureFragmentedData):
     sizes: torch.Tensor
     ptr: torch.Tensor
     genome_label: torch.Tensor
     scaffold_label: torch.Tensor
-    weights: torch.Tensor
-    class_id: torch.Tensor
 
 
 class RegisteredFeature(NamedTuple):
@@ -88,7 +94,7 @@ class GenomeDataset(Dataset[GenomeGraphBatch]):
         chunk_size: int = _DEFAULT_CHUNK_SIZE,
         threshold: int = _SENTINEL_THRESHOLD,
         log_inverse: bool = False,
-        # TODO: add fragmenting option here? would prevent need to re-create edge indices again
+        fragment_size: int = _SENTINEL_FRAGMENT_SIZE,
     ) -> None:
         super().__init__()
         with tb.File(file) as fp:
@@ -121,17 +127,25 @@ class GenomeDataset(Dataset[GenomeGraphBatch]):
             # default all genomes to the same class
             self.class_id = torch.zeros(len(self), dtype=torch.long)
 
-        self.edge_create_fn = GenomeGraph._edge_index_create_method(
-            edge_strategy=edge_strategy, chunk_size=chunk_size, threshold=threshold
-        )
-
-        self.edge_indices = self.compute_edge_indices()
-
         self._registered_features: dict[str, RegisteredFeature] = dict()
 
         # just keep track of names
         self._graph_registry: set[str] = set()
         self._node_registry: set[str] = set()
+
+        self.edge_create_fn = GenomeGraph._edge_index_create_method(
+            edge_strategy=edge_strategy, chunk_size=chunk_size, threshold=threshold
+        )
+
+        if fragment_size != _SENTINEL_FRAGMENT_SIZE:
+            if fragment_size <= 1:
+                raise ValueError(
+                    f"Invalid fragment size {fragment_size}. Must be and integer greater than 1."
+                )
+
+            self.fragment(fragment_size, inplace=True)
+
+        self.edge_indices = self.compute_edge_indices()
 
     def _get_class_weights(self, log_inverse: bool = True) -> torch.Tensor:
         if hasattr(self, "class_id"):
@@ -364,6 +378,27 @@ class GenomeDataset(Dataset[GenomeGraphBatch]):
         batch = [self[int(idx)] for idx in idx_batch]
         return self.collate(batch)
 
+    def _resize_scaffold_features(
+        self, chunk_scaffold_labels: torch.Tensor
+    ) -> ScaffoldFeatureFragmentedData:
+        # need to resize scaffold level features during fragmenting
+        # just propagate labels to each sub-scaffold fragment
+        features: ScaffoldFeatureFragmentedData = {
+            "weights": self.weights[chunk_scaffold_labels],
+            "class_id": self.class_id[chunk_scaffold_labels],
+            "scaffold_registry": list(),
+        }
+        for scaffold_feature in self._graph_registry:
+            feature = self._registered_features[scaffold_feature]
+            new_feature = RegisteredFeature(
+                name=feature.name,
+                data=feature.data[chunk_scaffold_labels],
+                feature_level=feature.feature_level,
+            )
+            features["scaffold_registry"].append(new_feature)
+
+        return features
+
     def _fragment(self, max_size: int) -> FragmentedData:
         # basically all we do to artificially fragment scaffolds
         # break the .ptr and .sizes tensors into smaller chunks
@@ -412,29 +447,37 @@ class GenomeDataset(Dataset[GenomeGraphBatch]):
 
         chunk_index_ptr = graph_sizes_to_index_pointer(chunk_sizes)
 
-        # TODO: need fn to automate this? for these ones that just need to be resized
-        chunk_weights = self.weights[chunk_scaffold_labels]
-        chunk_class_id = self.class_id[chunk_scaffold_labels]
-
-        # TODO: think we are missing updating registered features
-        # node level features should be fine
-        # but I think scaffold / graph level features need to be updated?
+        scaffold_features = self._resize_scaffold_features(chunk_scaffold_labels)
 
         output = FragmentedData(
             sizes=chunk_sizes,
             ptr=chunk_index_ptr,
             genome_label=chunk_genome_labels,
             scaffold_label=chunk_scaffold_labels,
-            weights=chunk_weights,
-            class_id=chunk_class_id,
+            **scaffold_features,
         )
         return output
 
     def _update_from_fragmented_data(self, fragmented_data: FragmentedData):
+        scaffold_feature: RegisteredFeature
         for key, value in fragmented_data.items():
-            setattr(self, key, value)
+            if key == "scaffold_registry":
+                for scaffold_feature in value:  # type: ignore
+                    self.register_feature(
+                        name=scaffold_feature.name,
+                        data=scaffold_feature.data,
+                        feature_level=scaffold_feature.feature_level,
+                        overwrite_previously_registered=True,
+                    )
+            else:
+                setattr(self, key, value)
 
         self.edge_indices = self.compute_edge_indices()
+        self.validate()
+        logger.debug(
+            f"Fragmented dataset into {len(self)} fragments with <= "
+            f"{self.max_size} proteins."
+        )
 
     def fragment(self, max_size: int, inplace: bool = True):
         fragmented_data = self._fragment(max_size)
@@ -443,12 +486,15 @@ class GenomeDataset(Dataset[GenomeGraphBatch]):
             self._update_from_fragmented_data(fragmented_data)
             return self
 
-        from copy import copy
+        from copy import copy, deepcopy
 
         # this makes a shallow copy, so the underlying tensors are actually shared
         # but we can still reassign the tensors. Most signficant reason to do this
         # is to not have to copy the protein embeddings
         new_dataset = copy(self)
+        # however, we need to make a deep copy of the registered features
+        # so that the new and old datasets don't share the same dict
+        new_dataset._registered_features = deepcopy(self._registered_features)
         new_dataset._update_from_fragmented_data(fragmented_data)
 
         return new_dataset
@@ -478,6 +524,11 @@ class GenomeDataset(Dataset[GenomeGraphBatch]):
         num_scaffolds_from_weight = self.weights.numel()
         num_scaffolds_from_class_id = self.class_id.numel()
 
+        num_scaffolds_from_registry = [
+            self._registered_features[name].data.shape[0]
+            for name in self._graph_registry
+        ]
+
         if not all_equal(
             (
                 num_scaffolds,
@@ -487,6 +538,7 @@ class GenomeDataset(Dataset[GenomeGraphBatch]):
                 num_scaffolds_from_scaffold_label,
                 num_scaffolds_from_weight,
                 num_scaffolds_from_class_id,
+                *num_scaffolds_from_registry,
             )
         ):
             raise RuntimeError(
