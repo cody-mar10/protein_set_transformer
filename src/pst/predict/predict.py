@@ -92,11 +92,20 @@ class Predictor:
 
     def _setup_data(self, ckptfile: Path):
         self.datamodule = GenomeDataModule.from_pretrained(
-            checkpoint_path=ckptfile, data_file=self.config.data.file, shuffle=False
+            checkpoint_path=ckptfile,
+            data_file=self.config.data.file,
+            command_line_config=self.config.data,  # allow updating batch size and fragment size from cli if set
+            shuffle=False,
         )
         self.datamodule.setup("predict")
         if self.datamodule.dataset.any_genomes_have_multiple_scaffolds():
             self.graph_type = "scaffold"
+
+        if "fragment_size" in self.config.data.model_fields_set:
+            if self.graph_type == "scaffold":
+                self.graph_type = "fragmented scaffold"
+            else:
+                self.graph_type = "fragment"
 
     def _setup_model(self, ckptfile: Path):
         self.model = PST.from_pretrained(ckptfile).to(self.device).eval()
