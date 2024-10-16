@@ -94,7 +94,8 @@ class BaseModelConfig(_BaseModelConfig):
             "maximum number of proteins per genome. This affects the possible size of the "
             "positional embeddings and does not need to be the actual maximum number of "
             "proteins in the dataset. The actual maximum number of proteins just needs to be "
-            "less than or equal to this value."
+            "less than or equal to this value. Increasing this value will lead to increases in "
+            "model size equal to this value * embedding_dim / embed_scale * 4 bytes."
         ),
     )
     compile: bool = Field(False, description="compile model using torch.compile")
