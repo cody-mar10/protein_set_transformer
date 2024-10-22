@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import Literal, Optional, cast, get_args
@@ -15,6 +16,8 @@ from pst.nn.modules import ProteinSetTransformer as PST
 from pst.typing import EdgeAttnOutput, GenomeGraphBatch, GraphAttnOutput, PairTensor
 from pst.utils.cli.modes import InferenceMode
 
+logger = logging.getLogger(__name__)
+
 
 def model_inference(
     config: InferenceMode,
@@ -22,12 +25,29 @@ def model_inference(
     graph_embeddings: bool = True,
     return_predictions: bool = False,
 ):
+    logger.info("Starting model inference.")
     predictor = Predictor(
         config=config,
         node_embeddings=node_embeddings,
         graph_embeddings=graph_embeddings,
         return_predictions=return_predictions,
     )
+
+    n_genomes = predictor.datamodule.dataset.num_genomes
+
+    if "fragment" not in predictor.graph_type:
+        n_scaffolds = predictor.datamodule.dataset.num_scaffolds
+        n_chunks = 0
+    else:
+        n_chunks = predictor.datamodule.dataset.num_scaffolds
+        n_scaffolds = predictor.datamodule.dataset.scaffold_label.amax() + 1
+
+    msg = f"Starting prediction loop on {n_genomes} genomes composed of {n_scaffolds} scaffolds"
+
+    if n_chunks > 0:
+        msg += f" that were broken into {n_chunks} chunks."
+
+    logger.info(msg)
 
     return predictor.predict_loop()
 
@@ -98,7 +118,7 @@ class Predictor:
             shuffle=False,
         )
         self.datamodule.setup("predict")
-        if self.datamodule.dataset.any_genomes_have_multiple_scaffolds():
+        if self.datamodule.dataset.any_multi_scaffold_genomes():
             self.graph_type = "scaffold"
 
         if "fragment_size" in self.config.data.model_fields_set:
@@ -133,15 +153,15 @@ class Predictor:
         if name == "node":
             loc = "ctx_ptn"
             dim = self.model.encoder.out_dim
-            expectedrows = int(self.datamodule.dataset.data.size(0))
+            expectedrows = self.datamodule.dataset.num_proteins
         elif name == "graph":
             loc = "data"
             dim = self.model.config.out_dim
-            expectedrows = int(self.datamodule.dataset.sizes.numel())
+            expectedrows = self.datamodule.dataset.num_scaffolds
         else:
             loc = "attn"
             dim = self.model.config.num_heads
-            expectedrows = int(self.datamodule.dataset.data.size(0))
+            expectedrows = self.datamodule.dataset.num_proteins
 
         earray = self._file.create_earray(
             where=self._file.root,
@@ -222,7 +242,7 @@ class Predictor:
         # so we need to convert it to labeling scaffolds
         # ie shape: [N fragments] -> [N scaffolds]
         scaffold_level_genome_label = convert_to_scaffold_level_genome_label(
-            self.datamodule.dataset.genome_label,
+            self.datamodule.dataset.scaffold_genome_label,
             self.datamodule.dataset.scaffold_label,
         )
 
@@ -239,7 +259,9 @@ class Predictor:
 
         scaffold_embeddings = self.get_graph_embeddings()
         genome_embeddings = scatter(
-            scaffold_embeddings, self.datamodule.dataset.genome_label, reduce=reduce
+            scaffold_embeddings,
+            self.datamodule.dataset.scaffold_genome_label,
+            reduce=reduce,
         )
 
         return scaffold_embeddings, genome_embeddings
