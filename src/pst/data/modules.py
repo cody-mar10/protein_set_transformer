@@ -112,7 +112,7 @@ class GenomeDataModule(CrossValidationDataModule):
             dataset=self.dataset,
             batch_size=config.batch_size,
             cross_validator=ImbalancedLeaveOneGroupOut,  # TODO: should make this configurable
-            cross_validator_config={"groups": self.dataset.class_id},
+            cross_validator_config={"groups": self.dataset.scaffold_class_id},
             collate_fn=self.dataset.collate_indices,
             **kwargs,
         )
