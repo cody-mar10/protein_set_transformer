@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterable
 from functools import cached_property
-from typing import overload
+from typing import Any, overload
 
 import tables as tb
 import torch
@@ -49,18 +49,7 @@ class GenomeDataset(
     # [num proteins, D]. The __X_attr__ class attributes define the attributes at each level.
 
     __minimum_h5_fields__ = {"data", "ptr", "sizes", "strand"}
-
-    __h5_fields__ = {
-        "data",
-        "ptr",
-        "sizes",
-        "class_id",
-        "strand",
-        "scaffold_label",
-        "genome_label",
-    }
-
-    __optional_h5_fields__ = {"class_id", "scaffold_label", "genome_label"}
+    __expected_h5_fields__ = __minimum_h5_fields__ | {"scaffold_label", "genome_label"}
 
     # the names of the object attributes at each level will be prefixed with the level name
     # if you want the protein embeddings, you can refer to `dataset.protein_data`
@@ -68,13 +57,15 @@ class GenomeDataset(
     __scaffold_attr__ = {
         "ptr",
         "sizes",
-        "class_id",
+        # "class_id",
         "scaffold_label",
         "genome_label",
         "edge_indices",
         "part_of_multiscaffold",
     }
     __genome_attr__ = {"is_multiscaffold"}
+
+    __feature_levels__ = {"protein", "scaffold", "genome"}
 
     _FEATURE_MAP: dict[FeatureLevel, FeatureLevel] = {
         "node": "protein",
@@ -92,38 +83,8 @@ class GenomeDataset(
     ) -> None:
         super().__init__()
 
-        with tb.File(file) as fp:
-            # TODO: what if file has other fields? ie target labels etc
-            for field in GenomeDataset.__h5_fields__:
-                try:
-                    data = getattr(fp.root, field)
-                except tb.exceptions.NoSuchNodeError:
-                    if field in GenomeDataset.__optional_h5_fields__:
-                        # the class_id field is not required for inference
-                        # this was only used for weighting the loss
-                        continue
-                    else:
-                        raise
-
-                if field in GenomeDataset.__protein_attr__:
-                    prefix = "protein"
-                elif field in GenomeDataset.__scaffold_attr__:
-                    prefix = "scaffold"
-                elif field in GenomeDataset.__genome_attr__:
-                    prefix = "genome"
-                else:
-                    # TODO: should allow users to input custom data fields
-                    # but they need to adhere to the same naming conventions
-                    # then these can go into registered features
-                    raise ValueError(
-                        f"Unknown field {field} not part of protein, scaffold, or genome attributes"
-                    )
-
-                # specifically for scaffold_label
-                obj_attr_name = (
-                    field if field.startswith("scaffold") else f"{prefix}_{field}"
-                )
-                setattr(self, obj_attr_name, torch.from_numpy(data[:]))
+        self._setup_registry()
+        self._read_h5_file(file)
 
         if not hasattr(self, "scaffold_genome_label"):
             # assume each scaffold is a separate genome
@@ -151,16 +112,6 @@ class GenomeDataset(
         # this will be used as an idx in a lut embedding
         self.protein_strand[self.protein_strand == -1] = 0
 
-        # TODO: deprecate this and let callers register this thru the register_feature method
-        if not hasattr(self, "scaffold_class_id"):
-            # default all genomes to the same class
-            self.scaffold_class_id = torch.zeros(len(self), dtype=torch.long)
-
-        # TODO: deprecate
-        self.scaffold_weights = self._get_class_weights(log_inverse)
-
-        self._setup_registry()
-
         self.edge_create_fn = GenomeGraph._edge_index_create_method(
             edge_strategy=edge_strategy,
             chunk_size=chunk_size,
@@ -187,32 +138,89 @@ class GenomeDataset(
 
         self._registered_features: dict[str, RegisteredFeature] = dict()
 
-    def _get_class_weights(self, log_inverse: bool = True) -> torch.Tensor:
-        if hasattr(self, "scaffold_class_id"):
-            # calc using inverse frequency
-            # convert to ascending 0..n range
-            class_counts: torch.Tensor
-            _, inverse_index, class_counts = torch.unique(
-                self.scaffold_class_id, return_inverse=True, return_counts=True
+    def _read_h5_file(self, file: FilePath):
+        features_to_register: list[dict[str, Any]] = []
+        with tb.File(file) as fp:
+            for node in fp.root:
+                name: str = node._v_name
+
+                # allow subgroups in h5 file, all data fields beneath them will be registered
+                if isinstance(node, tb.Group):
+                    if name not in GenomeDataset.__feature_levels__:
+                        raise ValueError(
+                            f"Unknown feature level {name}. Subgroups must be one of {GenomeDataset.__feature_levels__}"
+                        )
+                    # register all fields beneath this group
+                    for subnode in node:
+                        if not isinstance(subnode, tb.Array):
+                            raise ValueError(
+                                f"Only arrays are allowed underneath H5 groups. Found {subnode}"
+                            )
+                        subname = subnode._v_name
+                        features_to_register.append(
+                            {
+                                "name": subname,
+                                "data": torch.from_numpy(subnode[:]),
+                                "feature_level": name,
+                            }
+                        )
+                else:
+                    if name in GenomeDataset.__expected_h5_fields__:
+                        # directly set these as attributes
+                        if name in GenomeDataset.__protein_attr__:
+                            prefix = "protein"
+                        elif name in GenomeDataset.__scaffold_attr__:
+                            prefix = "scaffold"
+                        # there are no expected genome fields
+                        else:
+                            assert False, "UNREACHABLE"
+
+                        obj_attr_name = (
+                            name if name == "scaffold_label" else f"{prefix}_{name}"
+                        )
+                        setattr(self, obj_attr_name, torch.from_numpy(node[:]))
+                    else:
+                        # then other top level fields will become a registered feature
+                        # so self._setup_registry() should be called before this method
+                        # these are REQUIRED to label the name with "protein_", "scaffold_", or "genome_"
+                        feature_level = name.split("_", 1)[0]
+                        if feature_level not in GenomeDataset.__feature_levels__:
+                            if name == "class_id":
+                                # backwards compatibility
+                                feature_level = "scaffold"
+                            else:
+                                raise ValueError(
+                                    f"Field {name} is not a recognized protein, scaffold, or genome attribute."
+                                )
+
+                        features_to_register.append(
+                            {
+                                "name": name,
+                                "data": torch.from_numpy(node[:]),
+                                "feature_level": feature_level,
+                            }
+                        )
+
+        # now need to check that the minimum required fields are set
+        missing: set[str] = set()
+        for name in GenomeDataset.__minimum_h5_fields__:
+            if name in self.__protein_attr__:
+                prefix = "protein"
+            elif name in self.__scaffold_attr__:
+                prefix = "scaffold"
+
+            obj_attr_name = name if name == "scaffold_label" else f"{prefix}_{name}"
+
+            if not hasattr(self, obj_attr_name):
+                missing.add(obj_attr_name)
+
+        if missing:
+            raise ValueError(
+                f"Missing required fields: {missing}. These fields are required to create a GenomeDataset object."
             )
-            freq: torch.Tensor = class_counts / class_counts.sum()
-            inv_freq = 1.0 / freq
-            if log_inverse:
-                # with major class imbalance the contribution from rare classes can
-                # be extremely high relative to other classes
-                inv_freq = torch.log(inv_freq)
 
-            # not sure if normalization does anything since all still contribute
-            # the relative same amount to loss
-            inv_freq /= torch.amin(inv_freq)
-
-            # inverse index remaps input class_ids to 0..n range if not already
-            weights = inv_freq[inverse_index]
-        else:
-            # no weights
-            weights = torch.ones(size=(len(self),))
-
-        return weights
+        for feature in features_to_register:
+            self.register_feature(**feature)
 
     def compute_edge_indices(self) -> list[torch.Tensor]:
         # needed to compute edge indices for new fragmented datasets
@@ -292,11 +300,9 @@ class GenomeDataset(
                 data = self._registered_features[name].data
                 registered_features[name] = data[start:stop]
 
-            #### graph/set level access (genome)
+            #### graph/set level access (scaffold)
             edge_index = self.scaffold_edge_indices[idx]
             num_proteins = int(self.scaffold_sizes[idx])
-            weight = self.scaffold_weights[idx].item()
-            class_id = int(self.scaffold_class_id[idx])
             # shape: [N, 1]
             pos = torch.arange(num_proteins).unsqueeze(-1).to(x.device)
             scaffold_label = int(self.scaffold_label[idx])
@@ -311,8 +317,6 @@ class GenomeDataset(
                 x=x,
                 edge_index=edge_index,
                 num_proteins=num_proteins,
-                weight=weight,
-                class_id=class_id,
                 strand=strand,
                 pos=pos,
                 scaffold_label=scaffold_label,
@@ -457,8 +461,6 @@ class GenomeDataset(
         # need to resize scaffold level features during fragmenting
         # just propagate labels to each sub-scaffold fragment
         features: _ScaffoldFeatureFragmentedData = {
-            "scaffold_weights": self.scaffold_weights[chunk_scaffold_labels],
-            "scaffold_class_id": self.scaffold_class_id[chunk_scaffold_labels],
             "scaffold_part_of_multiscaffold": self.scaffold_part_of_multiscaffold[
                 chunk_scaffold_labels
             ],
