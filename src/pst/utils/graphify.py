@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,20 +9,37 @@ from typing import Iterator, Optional
 import numpy as np
 import tables as tb
 
+from pst.data import dataset
 from pst.data.utils import H5_FILE_COMPR_FILTERS
 from pst.utils.cli.graphify import GraphifyArgs
+
+# silence the dataset logger which would report detection of multi-scaffold datasets
+dataset.logger.setLevel("ERROR")
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class FastaSummary:
-    genome_sizes: defaultdict[str, int]
+    scaffold_sizes: defaultdict[str, int]
     strand: dict[str, int]
+    genome_ids: dict[str, int]
+    scaffold_to_genome: Optional[dict[str, str]]
 
-    def to_numpy(self) -> tuple[np.ndarray, np.ndarray]:
-        genome_sizes = np.fromiter(self.genome_sizes.values(), dtype=int)
+    def to_numpy(self) -> tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
+        scaffold_sizes = np.fromiter(self.scaffold_sizes.values(), dtype=int)
         strand = np.fromiter(self.strand.values(), dtype=int)
 
-        return genome_sizes, strand
+        if self.scaffold_to_genome is not None:
+            genome_label = np.array(
+                [
+                    self.genome_ids[self.scaffold_to_genome[scaffold]]
+                    for scaffold in self.scaffold_sizes.keys()
+                ]
+            )
+        else:
+            genome_label = None
+
+        return scaffold_sizes, strand, genome_label
 
 
 def tsv_to_dict(tsv_file: Path) -> dict[str, str]:
@@ -52,38 +70,23 @@ def _validate_fasta_file_headers(fasta_file: Path, strand_file_provided: bool):
         )
 
 
-def _head(d: dict) -> dict:
-    from itertools import islice
-
-    return dict(islice(d.items(), 5))
-
-
 def summarize_fasta_file(
     fasta_file: Path,
-    scaffold_map_file: Optional[Path] = None,
-    strand_file: Optional[Path] = None,
+    scaffold_map: dict[str, str],
+    strand_map: dict[str, str],
 ) -> FastaSummary:
-    strand_file_provided = strand_file is not None
+    strand_file_provided = bool(strand_map)
     _validate_fasta_file_headers(fasta_file, strand_file_provided)
 
-    if scaffold_map_file is not None:
-        # scaffold -> genome mapping
-        scaffold_map = tsv_to_dict(scaffold_map_file)
-    else:
-        scaffold_map = dict()
-
-    if strand_file_provided:
-        # protein -> strand mapping
-        strand_map = tsv_to_dict(strand_file)
-    else:
-        strand_map = dict()
-
     # this will be in the same order as the genomes appear in the FASTA file
-    proteins_per_genome = defaultdict(int)
+    proteins_per_scaffold = defaultdict(int)
     strand_per_protein: dict[str, int] = dict()
+    genome_ids: dict[str, int] = dict()
+    detected_scaffold_to_genome: dict[str, str] = dict()
 
     # guaranteed to exist due to validation above
     strand_idx = 3
+    curr_genome_id = 0
     for header in iter_proteins(fasta_file):
         fields = header.split(" # ")
         ptn = fields[0]
@@ -93,36 +96,75 @@ def summarize_fasta_file(
         strand = int(strand)
         strand_per_protein[ptn] = strand
 
-        ### GENOME SIZES
+        ### SCAFFOLD SIZES
         scaffold, ptn_id = ptn.rstrip().rsplit("_", 1)
         genome = scaffold_map.get(scaffold, scaffold)
-        proteins_per_genome[genome] += 1
+        if genome not in genome_ids:
+            genome_ids[genome] = curr_genome_id
+            curr_genome_id += 1
 
-    return FastaSummary(genome_sizes=proteins_per_genome, strand=strand_per_protein)
+        detected_scaffold_to_genome[scaffold] = genome
+        proteins_per_scaffold[scaffold] += 1
 
+    if all(
+        scaffold == genome for scaffold, genome in detected_scaffold_to_genome.items()
+    ):
+        scaffold_to_genome = None
+    else:
+        scaffold_to_genome = detected_scaffold_to_genome
 
-def to_graph_format(args: GraphifyArgs):
-    fasta_summary = summarize_fasta_file(
-        args.inputs.fasta_file,
-        args.optional.scaffold_map_file,
-        args.optional.strand_file,
+    return FastaSummary(
+        scaffold_sizes=proteins_per_scaffold,
+        strand=strand_per_protein,
+        genome_ids=genome_ids,
+        scaffold_to_genome=scaffold_to_genome,
     )
 
-    genome_sizes, strand = fasta_summary.to_numpy()
 
-    ptr = np.concatenate(([0], np.cumsum(genome_sizes)))
+def validate(output: Path):
+    try:
+        # try to load a dataset
+        dataset.GenomeDataset(output)
+    except (RuntimeError, ValueError) as e:
+        # output.unlink()
+        raise ValueError(
+            f"There was a validation error when creating the graph-formatted dataset file {output}: {e}"
+        ) from e
 
-    if args.inputs.output is None:
-        datadir = args.inputs.file.parent
-        output = datadir / f"{args.inputs.file.stem}.graphfmt.h5"
-    else:
-        output = args.inputs.output
 
-    with tb.open_file(args.inputs.file) as fsrc:
-        ptn_embeddings = fsrc.root[args.inputs.loc][:]
+def single_file_to_graph_format(
+    file: Path,
+    fasta_file: Path,
+    scaffold_map: dict[str, str],
+    strand_map: dict[str, str],
+    loc: str,
+    output: Optional[Path] = None,
+):
+    logger.info(f"Processing {file} and {fasta_file}")
+    fasta_summary = summarize_fasta_file(
+        fasta_file=fasta_file,
+        scaffold_map=scaffold_map,
+        strand_map=strand_map,
+    )
+
+    scaffold_sizes, strand, genome_label = fasta_summary.to_numpy()
+
+    ptr = np.concatenate(
+        (
+            [0],
+            np.cumsum(scaffold_sizes),
+        )
+    )
+
+    if output is None:
+        datadir = file.parent
+        output = datadir / f"{file.stem}.graphfmt.h5"
+
+    with tb.open_file(file) as fsrc:
+        ptn_embeddings = fsrc.root[loc][:]
         n_proteins = len(ptn_embeddings)
 
-        if n_proteins != sum(genome_sizes):
+        if n_proteins != sum(scaffold_sizes):
             raise ValueError(
                 "Number of proteins in the FASTA file does not match the number of protein embeddings"
             )
@@ -132,8 +174,11 @@ def to_graph_format(args: GraphifyArgs):
             "data": ptn_embeddings,
             "ptr": ptr,
             "strand": strand,
-            "sizes": genome_sizes,
+            "sizes": scaffold_sizes,
         }
+
+        if genome_label is not None:
+            locations["genome_label"] = genome_label
 
         for loc, data in locations.items():
             fdst.create_carray(
@@ -142,3 +187,118 @@ def to_graph_format(args: GraphifyArgs):
                 obj=data,
                 filters=H5_FILE_COMPR_FILTERS,
             )
+
+    validate(output)
+    return output
+
+
+def merge_graph_files(files: list[Path], output: Path):
+    logger.info(f"Merging {len(files)} graph-formatted files into {output}")
+
+    expected_fields = dataset.GenomeDataset.__minimum_h5_fields__ | {"genome_label"}
+    all_data: dict[str, list[np.ndarray]] = {field: [] for field in expected_fields}
+    for file in files:
+        found_genome_label = False
+        with tb.open_file(file) as fsrc:
+            for field in expected_fields:
+                try:
+                    data = getattr(fsrc.root, field)
+                except tb.NoSuchNodeError:
+                    continue
+                else:
+                    if field == "genome_label":
+                        found_genome_label = True
+                    all_data[field].append(data[:])
+
+        # this needs to happen after reading h5 file since we need to know the number of scaffolds
+        if not found_genome_label:
+            num_scaffolds = all_data["sizes"][-1].shape[0]
+            genome_label = np.arange(num_scaffolds)
+            all_data["genome_label"].append(genome_label)
+
+    # now we need to merge all data
+    final_fields: dict[str, np.ndarray] = {
+        "data": np.vstack(all_data["data"]),
+        "sizes": np.concatenate(all_data["sizes"]),
+        "strand": np.concatenate(all_data["strand"]),
+    }
+
+    # ptr is the cumulative sum of scaffold sizes, so just recompute it
+    total_scaffolds = final_fields["sizes"].shape[0]
+    final_fields["ptr"] = np.zeros(total_scaffolds + 1, dtype=int)
+    final_fields["ptr"][1:] = np.cumsum(final_fields["sizes"])
+
+    # genome_label needs to be made relative to all data instead of each file
+    final_genome_label = np.zeros(total_scaffolds, dtype=int)
+    curr_max_genome_label = 0
+    local_start = 0
+    for genome_label in all_data["genome_label"]:
+        num_scaffolds = genome_label.shape[0]
+        local_end = local_start + num_scaffolds
+        final_genome_label[local_start:local_end] = genome_label + curr_max_genome_label
+        num_genomes = genome_label.max()
+        curr_max_genome_label += num_genomes + 1
+
+        local_start = local_end
+    final_fields["genome_label"] = final_genome_label
+
+    with tb.open_file(output, "w") as fdst:
+        for loc, data in final_fields.items():
+            fdst.create_carray(
+                where="/",
+                name=loc,
+                obj=data,
+                filters=H5_FILE_COMPR_FILTERS,
+            )
+
+    validate(output)
+
+    for file in files:
+        file.unlink()
+
+
+def to_graph_format(args: GraphifyArgs):
+    if args.optional.scaffold_map_file is not None:
+        # scaffold -> genome mapping
+        scaffold_map = tsv_to_dict(args.optional.scaffold_map_file)
+    else:
+        scaffold_map = dict()
+
+    if args.optional.strand_file is not None:
+        # protein -> strand mapping
+        strand_map = tsv_to_dict(args.optional.strand_file)
+    else:
+        strand_map = dict()
+
+    if args.inputs.multi_input_map is not None:
+        outputs: list[Path] = []
+        with args.inputs.multi_input_map.open() as fp:
+            for line in fp:
+                fasta_file, file = line.rstrip().split("\t")
+                output = single_file_to_graph_format(
+                    file=Path(file),
+                    fasta_file=Path(fasta_file),
+                    scaffold_map=scaffold_map,
+                    strand_map=strand_map,
+                    loc=args.inputs.loc,
+                    output=None,
+                )
+                outputs.append(output)
+
+        merge_graph_files(
+            outputs, args.inputs.output or Path("combined_dataset.graphfmt.h5")
+        )
+    elif args.inputs.fasta_file is not None and args.inputs.file is not None:
+        output = single_file_to_graph_format(
+            file=args.inputs.file,
+            fasta_file=args.inputs.fasta_file,
+            scaffold_map=scaffold_map,
+            strand_map=strand_map,
+            loc=args.inputs.loc,
+            output=args.inputs.output,
+        )
+        logging.info(f"Created graph-formatted dataset at {output}")
+    else:
+        raise ValueError(
+            "Either --file AND --fasta-file must be provided OR --multi-input-map must be used"
+        )
