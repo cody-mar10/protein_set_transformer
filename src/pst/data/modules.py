@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from torch.utils.data import DataLoader
 
 from pst.data.dataset import _SENTINEL_FRAGMENT_SIZE, FeatureLevel, GenomeDataset
+from pst.data.utils import compute_group_frequency_weights
 from pst.typing import EdgeIndexStrategy
 
 
@@ -108,11 +109,33 @@ class GenomeDataModule(CrossValidationDataModule):
             log_inverse=config.log_inverse,
             fragment_size=config.fragment_size,
         )
+
+        try:
+            scaffold_class_id = self.dataset.get_registered_feature("class_id")
+        # missing class_id feature
+        except KeyError:
+            self._HAS_CLASS_ID = False
+
+            # just create one for now - for the main PST, this is not needed for inference or
+            # finetuning with other objectives
+            # however, it is required for training/tuning
+            scaffold_class_id = torch.zeros(
+                self.dataset.num_scaffolds, dtype=torch.long
+            )
+        else:
+            self._HAS_CLASS_ID = True
+            class_weights = compute_group_frequency_weights(
+                scaffold_class_id, log_inverse=config.log_inverse
+            )
+            self.dataset.register_feature(
+                "weights", class_weights, feature_level="scaffold"
+            )
+
         super().__init__(
             dataset=self.dataset,
             batch_size=config.batch_size,
             cross_validator=ImbalancedLeaveOneGroupOut,  # TODO: should make this configurable
-            cross_validator_config={"groups": self.dataset.scaffold_class_id},
+            cross_validator_config={"groups": scaffold_class_id},
             collate_fn=self.dataset.collate_indices,
             **kwargs,
         )
@@ -124,6 +147,11 @@ class GenomeDataModule(CrossValidationDataModule):
 
     def setup(self, stage: _StageType):
         if stage == "fit":
+            if not self._HAS_CLASS_ID:
+                # TODO: this is too coupled with PST?
+                raise ValueError(
+                    "No `class_id` feature found in dataset. This is required for training triplet-loss PST with imbalanced taxonomic data."
+                )
             if self.config.train_on_full:
                 # train final model with all data
                 self.train_dataset = self.dataset

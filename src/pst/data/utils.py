@@ -117,9 +117,37 @@ def convert_to_scaffold_level_genome_label(
     return scatter(genome_label, scaffold_label, reduce="any")
 
 
+def compute_group_frequency_weights(
+    groups: torch.Tensor, log_inverse: bool = False
+) -> torch.Tensor:
+    """Compute frequency-based weights for each group in a tensor of group labels. The weights are based on inverse frequency.
+
+    Args:
+        groups (torch.Tensor): 1D integer tensor of group labels
+        log_inverse (bool, optional): Whether to take the log of the inverse frequency. Defaults to False.
+
+    Returns:
+        torch.Tensor: 1D tensor of weights for each group
+    """
+    group_counts: torch.Tensor
+    _, inverse_index, group_counts = torch.unique(
+        groups, return_inverse=True, return_counts=True
+    )
+
+    freq = group_counts / group_counts.sum()
+    inv_freq = 1 / freq
+    if log_inverse:
+        # major class imbalance will lead to extremely rare groups dominate reweighting
+        inv_freq = torch.log(inv_freq)
+
+    # not really sure if needed since relative contribution to loss should be the same
+    inv_freq /= torch.amin(inv_freq)
+
+    weights = inv_freq[inverse_index]
+    return weights
+
+
 class _ScaffoldFeatureFragmentedData(TypedDict):
-    scaffold_weights: torch.Tensor
-    scaffold_class_id: torch.Tensor
     scaffold_part_of_multiscaffold: torch.Tensor
     scaffold_registry: list[RegisteredFeature]
 
