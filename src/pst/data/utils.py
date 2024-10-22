@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from typing import NamedTuple, TypedDict
+
 import tables as tb
 import torch
 from torch_geometric.utils import scatter
+
+from pst.data._types import FeatureLevel
 
 H5_FILE_COMPR_FILTERS = tb.Filters(complevel=4, complib="blosc:lz4")
 
@@ -111,3 +115,24 @@ def convert_to_scaffold_level_genome_label(
         )
 
     return scatter(genome_label, scaffold_label, reduce="any")
+
+
+class _ScaffoldFeatureFragmentedData(TypedDict):
+    scaffold_weights: torch.Tensor
+    scaffold_class_id: torch.Tensor
+    scaffold_part_of_multiscaffold: torch.Tensor
+    scaffold_registry: list[RegisteredFeature]
+
+
+class _FragmentedData(_ScaffoldFeatureFragmentedData):
+    scaffold_sizes: torch.Tensor
+    scaffold_ptr: torch.Tensor
+    scaffold_genome_label: torch.Tensor
+    scaffold_label: torch.Tensor
+    genome_is_multiscaffold: torch.Tensor
+
+
+class RegisteredFeature(NamedTuple):
+    name: str
+    data: torch.Tensor
+    feature_level: FeatureLevel
