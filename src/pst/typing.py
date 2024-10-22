@@ -1,19 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, NamedTuple, Protocol
+from typing import Literal, NamedTuple, Protocol, Union
 
 from numpy import float32
 from numpy.typing import NDArray
 from torch import Tensor
-from torch_geometric.typing import (
-    OptTensor,
-    PairTensor,  # noqa
-)
 
 FilePath = str | Path
 
 NO_NEGATIVES_MODES = Literal["closest_to_positive", "closest_to_anchor"]
+PairTensor = tuple[Tensor, Tensor]
+OptTensor = Union[Tensor, None]
 
 
 # data.py types
@@ -24,8 +22,6 @@ class GenomeGraphBatch(Protocol):
     batch: Tensor
     ptr: Tensor
     num_proteins: Tensor
-    weight: Tensor
-    class_id: Tensor
     strand: Tensor
     pos: Tensor
     scaffold_label: Tensor
