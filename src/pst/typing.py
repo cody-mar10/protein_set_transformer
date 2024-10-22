@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, NamedTuple, Protocol, Union
+from typing import Literal, NamedTuple, Optional, Protocol
 
 from numpy import float32
 from numpy.typing import NDArray
@@ -11,7 +11,7 @@ FilePath = str | Path
 
 NO_NEGATIVES_MODES = Literal["closest_to_positive", "closest_to_anchor"]
 PairTensor = tuple[Tensor, Tensor]
-OptTensor = Union[Tensor, None]
+OptTensor = Optional[Tensor]
 
 
 # data.py types
