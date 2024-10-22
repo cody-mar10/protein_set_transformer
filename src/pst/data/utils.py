@@ -129,7 +129,6 @@ class _FragmentedData(_ScaffoldFeatureFragmentedData):
     scaffold_ptr: torch.Tensor
     scaffold_genome_label: torch.Tensor
     scaffold_label: torch.Tensor
-    genome_is_multiscaffold: torch.Tensor
 
 
 class RegisteredFeature(NamedTuple):
