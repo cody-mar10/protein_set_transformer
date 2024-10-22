@@ -113,8 +113,17 @@ class GenomeGraph(Data):
         num_nodes: int, chunk_size: int, threshold: int = _SENTINEL_THRESHOLD
     ) -> torch.Tensor:
         connected_comp = list(chunked(range(num_nodes), n=chunk_size))
+        if num_nodes == 1:
+            raise ValueError("Cannot create a chunked graph with only 1 node")
         # don't want any connected components / subgraphs that only have 1 node
         if len(connected_comp[-1]) == 1:
+            # NOTE: this doesn't work for multiscaffold genomes
+            # where one scaffold has 1 protein
+            # we will let the caller handle this case
+            # but basically if that is ok, then you can just create
+            # a single-node graph: torch.tensor([[0, 0]]).t().contiguous()
+            # This class is more of a contiguous genomic segment representation (scaffold),
+            # so it doesn't necessarily know about groups of scaffolds.
             connected_comp[-2].extend(connected_comp[-1])
             del connected_comp[-1]
 
