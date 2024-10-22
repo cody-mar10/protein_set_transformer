@@ -770,7 +770,7 @@ class ProteinSetTransformer(BaseProteinSetTransformer[ModelConfig]):
             y_pos=y_pos,
             y_neg=y_neg,
             neg_weights=neg_weights,
-            class_weights=batch.weight,
+            class_weights=batch.weight,  # type: ignore
             y_aug_pos=y_aug_pos,
             y_aug_neg=y_aug_neg,
             aug_neg_weights=aug_neg_weights,

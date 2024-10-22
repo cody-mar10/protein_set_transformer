@@ -15,8 +15,6 @@ class ScaffoldFeaturesTypeMixin:
     # shapes should all refer to number of scaffolds
     scaffold_ptr: Tensor
     scaffold_sizes: Tensor
-    scaffold_class_id: Tensor  # TODO: deprecate and move to a registered feature
-    scaffold_weights: Tensor  # TODO: deprecate and move to a registered feature
     scaffold_edge_indices: list[Tensor]
     scaffold_label: Tensor
     scaffold_genome_label: Tensor

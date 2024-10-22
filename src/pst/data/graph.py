@@ -28,8 +28,6 @@ class GenomeGraph(Data):
     # scaffold level features
     edge_index: torch.Tensor
     num_proteins: int
-    class_id: int
-    weight: float
     scaffold_label: int
 
     # genome level features
@@ -41,9 +39,7 @@ class GenomeGraph(Data):
     def __init__(
         self,
         x: torch.Tensor,
-        class_id: int,
         strand: torch.Tensor,
-        weight: float,
         num_proteins: int,
         pos: torch.Tensor,
         scaffold_label: int,
@@ -57,9 +53,7 @@ class GenomeGraph(Data):
         **kwargs,
     ):
         kwargs["num_proteins"] = num_proteins
-        kwargs["class_id"] = class_id
         kwargs["strand"] = strand
-        kwargs["weight"] = weight
         kwargs["scaffold_label"] = scaffold_label
         kwargs["genome_label"] = genome_label
 
