@@ -77,7 +77,6 @@ You can use the test data for a test prediction run:
 ```bash
 pst predict \
     --file test/test_data.graphfmt.h5 \ # this is in the git repo
-    --accelerator cpu \
     --checkpoint pstdata/pst-small_trained_model.ckpt \
     --outdir test_run
 ```
@@ -90,7 +89,8 @@ There should be 3 fields in the prediciton file:
 
 1. `attn` which contains the per-protein attention values (shape: $N_{prot} \times N_{heads}$)
 2. `ctx_ptn` which contains the contextualized PST protein embeddings (shape: $N_{prot} \times D$)
-3. `data` which contains the PST genome embeddings (shape: $N_{genome} \times D$)
+3. `genome` which contains the PST genome embeddings (shape: $N_{genome} \times D$)
+    - Prior to version `1.2.0`, this was called `data`.
 
 ## Data availability
 
