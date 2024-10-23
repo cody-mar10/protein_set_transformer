@@ -79,7 +79,6 @@ class GenomeDataset(
         edge_strategy: EdgeIndexStrategy = _DEFAULT_EDGE_STRATEGY,
         chunk_size: int = _DEFAULT_CHUNK_SIZE,
         threshold: int = _SENTINEL_THRESHOLD,
-        log_inverse: bool = False,
         fragment_size: int = _SENTINEL_FRAGMENT_SIZE,
     ) -> None:
         super().__init__()

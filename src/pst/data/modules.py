@@ -106,7 +106,6 @@ class GenomeDataModule(CrossValidationDataModule):
             edge_strategy=config.edge_strategy,
             chunk_size=config.chunk_size,
             threshold=config.threshold,
-            log_inverse=config.log_inverse,
             fragment_size=config.fragment_size,
         )
 
