@@ -11,6 +11,7 @@ from more_itertools import all_equal
 from torch.utils.data import Dataset
 from torch_geometric.data import Batch
 from torch_geometric.utils import scatter
+from typing_extensions import deprecated
 
 from pst.data._types import (
     GenomeFeaturesTypeMixin,
@@ -31,7 +32,7 @@ from pst.data.utils import (
     _ScaffoldFeatureFragmentedData,
     graph_sizes_to_index_pointer,
 )
-from pst.typing import EdgeIndexStrategy, FilePath, GenomeGraphBatch
+from pst.typing import EdgeIndexStrategy, FilePath, GenomeGraphBatch, OptTensor
 
 _SENTINEL_FRAGMENT_SIZE = -1
 logger = logging.getLogger(__name__)
@@ -649,9 +650,115 @@ class GenomeDataset(
     def save(self, file: FilePath):
         """Save the dataset to an HDF5 file."""
         with tb.open_file(file, "w") as fp:
-            for field in GenomeDataset.__h5_fields__:
+            for field in GenomeDataset.__expected_h5_fields__:
                 data = getattr(self, field).numpy()
                 fp.create_carray("/", field, data, filters=H5_FILE_COMPR_FILTERS)
 
+            groups: dict[str, tb.Group] = dict()
+            for feature in self._registered_features.values():
+                group_name = feature.feature_level
+                group = groups.get(
+                    group_name,
+                    fp.create_group(fp.root, group_name),
+                )
+
+                fp.create_carray(
+                    group,
+                    feature.name,
+                    feature.data.numpy(),
+                    filters=H5_FILE_COMPR_FILTERS,
+                )
+
     def any_multi_scaffold_genomes(self) -> bool:
         return bool(self.genome_is_multiscaffold.any())
+
+    ### backwards compatibility --- all marked as deprecated
+
+    @property
+    @deprecated(
+        "Deprecated since v1.3: Use .protein_data instead for clarity",
+        category=DeprecationWarning,
+    )
+    def data(self) -> torch.Tensor:
+        """Protein embeddings, shape: [num proteins, D]"""
+        return self.protein_data
+
+    @property
+    @deprecated(
+        "Deprecated since v1.3: Use .scaffold_ptr instead for clarity",
+        category=DeprecationWarning,
+    )
+    def ptr(self) -> torch.Tensor:
+        """CSR Index pointer to the start of each set of protein embeddings in
+        self.protein_data for each scaffold, shape: [num scaffolds + 1]"""
+        return self.scaffold_ptr
+
+    @property
+    @deprecated(
+        "Deprecated since v1.3: Use .scaffold_sizes instead for clarity",
+        category=DeprecationWarning,
+    )
+    def sizes(self) -> torch.Tensor:
+        """Number of proteins in each scaffold, shape: [num scaffolds]"""
+        return self.scaffold_sizes
+
+    @property
+    @deprecated(
+        (
+            "Deprecated since v1.3: This is no longer a required field for a GenomeDataset. It "
+            "is instead a registered feature. Use .get_registered_feature('class_id') instead "
+            "(or whatever name you have registered it as)."
+        ),
+        category=DeprecationWarning,
+    )
+    def class_id(self) -> OptTensor:
+        """Class ID for each scaffold if it exists, shape: [num scaffolds]"""
+        try:
+            return self.get_registered_feature("class_id")
+        except KeyError:
+            return None
+
+    @property
+    @deprecated(
+        (
+            "Deprecated since v1.3: This is no longer a required field for a GenomeDataset. It "
+            "is instead a registered feature. Use .get_registered_feature('weights') instead "
+            "(or whatever name you have registered it as)."
+        ),
+        category=DeprecationWarning,
+    )
+    def weights(self) -> OptTensor:
+        """Class ID for each scaffold if it exists, shape: [num scaffolds]"""
+        try:
+            return self.get_registered_feature("weights")
+        except KeyError:
+            return None
+
+    @property
+    @deprecated(
+        "Deprecated since v1.3: Use .protein_strand instead for clarity",
+        category=DeprecationWarning,
+    )
+    def strand(self) -> torch.Tensor:
+        """Strand of each protein, shape: [num proteins]"""
+        return self.protein_strand
+
+    @property
+    @deprecated(
+        "Deprecated since v1.3: Use .scaffold_edge_indices instead for clarity",
+        category=DeprecationWarning,
+    )
+    def edge_indices(self) -> list[torch.Tensor]:
+        """Edge indices list, list shape: [num scaffolds] where each edge index tensor has
+        shape [2, E] where E is the number of edges in the scaffold based on the number of proteins.
+        """
+        return self.scaffold_edge_indices
+
+    @property
+    @deprecated(
+        "Deprecated since v1.3: Use .scaffold_genome_label instead for clarity",
+        category=DeprecationWarning,
+    )
+    def genome_label(self) -> torch.Tensor:
+        """Genome label for each scaffold, shape: [num scaffolds]"""
+        return self.scaffold_genome_label
