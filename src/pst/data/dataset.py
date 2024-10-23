@@ -49,8 +49,12 @@ class GenomeDataset(
     # shape of each tensor should be. For example, "protein_data" should be of shape:
     # [num proteins, D]. The __X_attr__ class attributes define the attributes at each level.
 
-    __minimum_h5_fields__ = {"data", "ptr", "sizes", "strand"}
-    __expected_h5_fields__ = __minimum_h5_fields__ | {"scaffold_label", "genome_label"}
+    __minimum_h5_fields__ = {"data", "sizes", "strand"}
+    __expected_h5_fields__ = __minimum_h5_fields__ | {
+        "ptr",
+        "scaffold_label",
+        "genome_label",
+    }
 
     # the names of the object attributes at each level will be prefixed with the level name
     # if you want the protein embeddings, you can refer to `dataset.protein_data`
@@ -218,6 +222,10 @@ class GenomeDataset(
             raise ValueError(
                 f"Missing required fields: {missing}. These fields are required to create a GenomeDataset object."
             )
+
+        if not hasattr(self, "scaffold_ptr"):
+            # just compute it from scaffold sizes
+            self.scaffold_ptr = graph_sizes_to_index_pointer(self.scaffold_sizes)
 
         for feature in features_to_register:
             self.register_feature(**feature)
