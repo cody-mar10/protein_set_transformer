@@ -126,7 +126,7 @@ def validate(output: Path):
         # try to load a dataset
         dataset.GenomeDataset(output)
     except (RuntimeError, ValueError) as e:
-        # output.unlink()
+        output.unlink()
         raise ValueError(
             f"There was a validation error when creating the graph-formatted dataset file {output}: {e}"
         ) from e
