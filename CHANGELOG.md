@@ -1,6 +1,14 @@
 # Change log since first stable release (v1.0)
 
-## v1.3 - 2024-10-23
+## v1.3.1 - 2024-10-24
+
+### Fixed
+
+- `GenomeDataset`
+  - There was a bug with fragmenting single-scaffold genomes. If the fragment size created a sub-scaffold fragment that only contained 1 protein, this will lead to an error when creating the edge index since this genome was not originally multi-scaffold.
+  - The dataset now keeps track of if fragmentation occurred to allow either multi-scaffold genomes or fragmented genomes to have a scaffold or fragment with 1 protein.
+
+## v1.3.0 - 2024-10-23
 
 ### Added
 
