@@ -129,8 +129,10 @@ class GenomeDataset(
                 )
 
             self.fragment(fragment_size, inplace=True)
+            self._fragmented = True
         else:
             # .fragment will compute edge indices and call .validate
+            self._fragmented = False
             self.scaffold_edge_indices = self.compute_edge_indices()
             self.validate()
 
@@ -239,17 +241,18 @@ class GenomeDataset(
         ):
             is_multi_scaffold = bool(is_multi_scaffold)
 
-            if num_nodes == 1:
-                if is_multi_scaffold:
-                    # only multiscaffold genomes are allowed to have scaffolds with 1 protein
+            try:
+                edge_index = self.edge_create_fn(num_nodes=num_nodes)
+            except ValueError as e:
+                # this only occurs when the scaffold has 1 protein
+                if is_multi_scaffold or self._fragmented:
                     edge_index = torch.tensor([[0, 0]]).t().contiguous()
                 else:
                     raise RuntimeError(
-                        "Failed to create edge index. This is because the scaffold has only 1 protein."
-                    )
-            else:
-
-                edge_index = self.edge_create_fn(num_nodes=num_nodes)
+                        "Failed to create edge index, since a scaffold only contains 1 protein. "
+                        "This is only allowed for scaffold that are part of multi-scaffold "
+                        "genomes or if the dataset was artificially fragmented."
+                    ) from e
 
             edge_indices.append(edge_index)
 
@@ -561,6 +564,14 @@ class GenomeDataset(
             else:
                 setattr(self, key, value)
 
+        # need to set _fragmented to True for edge index creation to not raise errors for
+        # single protein fragments. this is preferred over merging single protein fragment with
+        # a previous fragment since the fragment size may be a hard maximum, like when adjusting
+        # due to model positional embedding LUT
+        # the other alternative would be modifying the user input fragment size to be the next
+        # smallest integer that does not produce single protein fragments
+        # -> note that this issue only affects genomes that were not originally multiscaffold
+        self._fragmented = True
         self.scaffold_edge_indices = self.compute_edge_indices()
         self.validate()
         logger.info(
