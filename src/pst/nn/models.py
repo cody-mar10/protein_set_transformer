@@ -6,7 +6,7 @@ from torch_geometric.nn import MLP, GraphNorm
 
 from pst.nn.layer_drop import LayerDropModuleList
 from pst.nn.layers import MultiheadAttentionConv, MultiheadAttentionPooling
-from pst.typing import EdgeAttnOutput, GraphAttnOutput
+from pst.typing import EdgeAttnOutput, GraphAttnOutput, OptTensor
 
 
 class SetTransformerEncoder(nn.Module):
@@ -46,6 +46,7 @@ class SetTransformerEncoder(nn.Module):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         batch: torch.Tensor,
+        node_mask: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> EdgeAttnOutput:
         for layer in self.layers:
@@ -53,6 +54,7 @@ class SetTransformerEncoder(nn.Module):
                 x=x,
                 edge_index=edge_index,
                 batch=batch,
+                node_mask=node_mask,
                 return_attention_weights=return_attention_weights,
             )
 
@@ -61,7 +63,9 @@ class SetTransformerEncoder(nn.Module):
         x = self.final_norm(x, batch)
 
         if return_attention_weights:
-            final_output = EdgeAttnOutput(out=x, edge_index=out.edge_index, attn=out.attn)  # type: ignore
+            final_output = EdgeAttnOutput(
+                out=x, edge_index=out.edge_index, attn=out.attn
+            )
         else:
             final_output = EdgeAttnOutput(out=x, edge_index=None, attn=None)
 
@@ -137,6 +141,7 @@ class SetTransformer(nn.Module):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         batch: torch.Tensor,
+        node_mask: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> EdgeAttnOutput:
         # x: [N, D] -> [N, D']
@@ -144,6 +149,7 @@ class SetTransformer(nn.Module):
             x=x,
             edge_index=edge_index,
             batch=batch,
+            node_mask=node_mask,
             return_attention_weights=return_attention_weights,
         )
 
@@ -168,12 +174,14 @@ class SetTransformer(nn.Module):
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
         batch: torch.Tensor,
+        node_mask: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> GraphAttnOutput:
         x_out, *_ = self.encode(
             x=x,
             edge_index=edge_index,
             batch=batch,
+            node_mask=node_mask,
             return_attention_weights=False,
         )
 
