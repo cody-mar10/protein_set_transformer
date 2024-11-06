@@ -746,7 +746,7 @@ class GenomeDataset(
         category=DeprecationWarning,
     )
     def weights(self) -> OptTensor:
-        """Class ID for each scaffold if it exists, shape: [num scaffolds]"""
+        """Class weight for each scaffold if it exists, shape: [num scaffolds]"""
         try:
             return self.get_registered_feature("weights")
         except KeyError:
