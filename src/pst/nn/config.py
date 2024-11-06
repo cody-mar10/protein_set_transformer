@@ -23,15 +23,18 @@ class BaseLossConfig(BaseModel):
     pass
 
 
+_sample_scale_field = Field(
+    7.0,
+    description=(
+        "exponential decay scale factor for weighting negative samples during triplet loss"
+    ),
+    gt=0.0,
+)
+
+
 class GenomeTripletLossConfig(BaseLossConfig):
     margin: float = Field(0.1, description="triplet loss margin", gt=0.0)
-    sample_scale: float = Field(
-        7.0,
-        description=(
-            "exponential decay scale factor for weighting negative samples during triplet loss"
-        ),
-        gt=0.0,
-    )
+    sample_scale: float = _sample_scale_field
     no_negatives_mode: NO_NEGATIVES_MODES = Field(
         "closest_to_positive",
         description="mode to handle event of no semihard negative sample existing",
@@ -124,3 +127,14 @@ class BaseModelConfig(_BaseModelConfig):
 
 class ModelConfig(BaseModelConfig):
     loss: GenomeTripletLossConfig
+
+
+class MaskedLanguageModelingLossConfig(BaseLossConfig):
+    masking_rate: float = Field(
+        0.15, gt=0.0, lt=0.5, description="masking rate for MLM"
+    )
+    sample_scale: float = _sample_scale_field
+
+
+class MaskedLanguageModelingConfig(BaseModelConfig):
+    loss: MaskedLanguageModelingLossConfig
