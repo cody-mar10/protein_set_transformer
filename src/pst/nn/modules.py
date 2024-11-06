@@ -26,14 +26,18 @@ from lightning_cv import CrossValModuleMixin
 from transformers import get_linear_schedule_with_warmup
 
 from pst.data.modules import GenomeDataset
-from pst.nn.config import BaseModelConfig, ModelConfig
+from pst.nn.config import BaseModelConfig, MaskedLanguageModelingConfig, ModelConfig
 from pst.nn.layers import PositionalEmbedding
 from pst.nn.models import SetTransformer, SetTransformerDecoder, SetTransformerEncoder
 from pst.nn.utils.distance import (
     pairwise_euclidean_distance,
     stacked_batch_chamfer_distance,
 )
-from pst.nn.utils.loss import AugmentedWeightedTripletLoss, WeightedTripletLoss
+from pst.nn.utils.loss import (
+    AugmentedWeightedTripletLoss,
+    MaskedLanguageModelingLoss,
+    WeightedTripletLoss,
+)
 from pst.nn.utils.sampling import (
     negative_sampling,
     point_swap_sampling,
@@ -169,7 +173,14 @@ class _BaseProteinSetTransformer(
         if config.out_dim == -1:
             config.out_dim = config.in_dim
 
-        self.config = config.model_copy(deep=True)
+        # the pydantic implementation of deepcopy causes problems with
+        # lightning.Fabric, which does not appear to be deep copyable
+        # so we can just serialize/deserialize to get a deep copy
+        # NOTE: if fabric is not None, it will be shared
+        # but that is probably desired since that would likely be in a
+        # cross validation use case
+        self.config = config.model_validate(config.model_dump())
+
         # need all new models to set _FIXED_POINTSWAP_RATE to True
         # this way we know that saved models are using the correct sample rate
         self.save_hyperparameters(
@@ -341,6 +352,7 @@ class _BaseProteinSetTransformer(
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
         batch: OptTensor = None,
+        node_mask: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> GraphAttnOutput | EdgeAttnOutput:
         """**Must be overridden by subclasses to define how the model's direct forward pass
@@ -365,6 +377,9 @@ class _BaseProteinSetTransformer(
                 each protein to a specific genome (graph). This can be computed from the `ptr`
                 tensor, so it is optional, but passing a precomputed batch tensor will be more
                 efficient.
+            node_mask (Optional[torch.Tensor]): Used to mask out certain nodes in the graph,
+                such as during masked language modeling, during node-node attention calculation.
+                If not provided, no masking is done.
             return_attention_weights (bool): whether to return the attention weights, probably
                 only wanted for debugging or for final predictions
 
@@ -384,11 +399,12 @@ class _BaseProteinSetTransformer(
                     model internally adds self loops if they are not present. `attn` is computed
                     over the edges in the **returned** `edge_index`.
         """
-        raise NotImplementedError
+        raise NotImplementedError  # TODO: should the PST decoder accept a node mask?
 
     def databatch_forward(
         self,
         batch: GenomeGraphBatch,
+        node_mask: OptTensor = None,
         return_attention_weights: bool = False,
         x: OptTensor = None,
     ) -> GraphAttnOutput | EdgeAttnOutput:
@@ -400,6 +416,9 @@ class _BaseProteinSetTransformer(
                 edge index, the index pointer, the number of proteins in each genome, etc, that
                 are used for the forward pass of the `SetTransformer` or `SetTransformerEncoder`.
                 This object models the data patterns of PyTorch Geometric graphs.
+            node_mask (Optional[torch.Tensor]): Used to mask out certain nodes in the graph,
+                such as during masked language modeling, during node-node attention calculation.
+                If not provided, no masking is done.
             return_attention_weights (bool): whether to return the attention weights, probably
                 only wanted for debugging or for final predictions
             x (Optional[torch.Tensor]): Used to allow custom protein embeddings, such as those
@@ -431,6 +450,7 @@ class _BaseProteinSetTransformer(
             edge_index=batch.edge_index,
             ptr=batch.ptr,
             batch=batch.batch,
+            node_mask=node_mask,
             return_attention_weights=return_attention_weights,
         )
 
@@ -623,11 +643,15 @@ class BaseProteinSetTransformer(
     def databatch_forward(
         self,
         batch: GenomeGraphBatch,
+        node_mask: OptTensor = None,
         return_attention_weights: bool = False,
         x: OptTensor = None,
     ) -> GraphAttnOutput:
         result = super().databatch_forward(
-            batch=batch, return_attention_weights=return_attention_weights, x=x
+            batch=batch,
+            node_mask=node_mask,
+            return_attention_weights=return_attention_weights,
+            x=x,
         )
 
         return cast(GraphAttnOutput, result)
@@ -647,6 +671,7 @@ class BaseProteinSetTransformer(
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
         batch: OptTensor = None,
+        node_mask: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> GraphAttnOutput:
         # GraphAttnOutput
@@ -655,6 +680,7 @@ class BaseProteinSetTransformer(
             edge_index=edge_index,
             ptr=ptr,
             batch=batch,
+            node_mask=node_mask,
             return_attention_weights=return_attention_weights,
         )
 
@@ -865,6 +891,9 @@ class CrossValPST(CrossValModuleMixin, ProteinSetTransformer):
         raise RuntimeError(self.__error_msg__.format(stage="inference"))
 
 
+######### Protein-level models #########
+
+
 class BaseProteinSetTransformerEncoder(
     _BaseProteinSetTransformer[SetTransformerEncoder, _BaseConfigT],
 ):
@@ -987,6 +1016,7 @@ class BaseProteinSetTransformerEncoder(
         edge_index: torch.Tensor,
         ptr: torch.Tensor,
         batch: OptTensor = None,
+        node_mask: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> EdgeAttnOutput:
         # ptr is not used here but needed for the signature due to inheritance
@@ -994,6 +1024,7 @@ class BaseProteinSetTransformerEncoder(
             x=x,
             edge_index=edge_index,
             batch=batch,
+            node_mask=node_mask,
             return_attention_weights=return_attention_weights,
         )
 
@@ -1003,11 +1034,15 @@ class BaseProteinSetTransformerEncoder(
     def databatch_forward(
         self,
         batch: GenomeGraphBatch,
+        node_mask: OptTensor = None,
         return_attention_weights: bool = False,
         x: OptTensor = None,
     ) -> EdgeAttnOutput:
         result = super().databatch_forward(
-            batch=batch, return_attention_weights=return_attention_weights, x=x
+            batch=batch,
+            node_mask=node_mask,
+            return_attention_weights=return_attention_weights,
+            x=x,
         )
 
         return cast(EdgeAttnOutput, result)
@@ -1022,11 +1057,9 @@ class BaseProteinSetTransformerEncoder(
         return cast(EdgeAttnOutput, result)
 
 
-class ProteinSetTransformerEncoder(BaseProteinSetTransformerEncoder):
+class ProteinSetTransformerEncoder(BaseProteinSetTransformerEncoder[ModelConfig]):
     def __init__(self, config: ModelConfig):
         super().__init__(config=config)
-
-        self.config = cast(ModelConfig, self.config)
 
     def setup_objective(self, margin: float, **kwargs) -> WeightedTripletLoss:
         return WeightedTripletLoss(margin=margin)
@@ -1087,4 +1120,82 @@ class ProteinSetTransformerEncoder(BaseProteinSetTransformerEncoder):
         batch_size = batch.num_proteins.numel()
         if self.fabric is None:
             self.log_loss(loss=loss, batch_size=batch_size, stage=stage)
+        return loss
+
+
+class MLMProteinSetTransformer(
+    BaseProteinSetTransformerEncoder[MaskedLanguageModelingConfig]
+):
+    # inherit from Encoder class since we don't actually need the decoder
+    # but to get genome representations, we can just average
+
+    def __init__(self, config: MaskedLanguageModelingConfig):
+        super().__init__(config=config)
+
+        # TODO: this could technically be a typevar in the base class
+        self.criterion = cast(MaskedLanguageModelingLoss, self.criterion)
+
+    def setup_objective(
+        self, masking_rate: float, **kwargs
+    ) -> MaskedLanguageModelingLoss:
+        return MaskedLanguageModelingLoss(masking_rate=masking_rate)
+
+    def forward(self, batch: GenomeGraphBatch, stage: _STAGE_TYPE, **kwargs):
+        # generate mask tensor, True = protein is masked
+        node_mask = self.criterion.mask(batch.num_proteins, batch.ptr)
+
+        # get a positive example -> idea is that multiple diff proteins (perhaps of the same family)
+        # could occupy the same context
+
+        # theoretically, this could just only be computed with the masked nodes
+        # but idk if that would bias the std calc for what is a typical dist
+        node_dist = pairwise_euclidean_distance(batch.x)
+
+        # use to weight good/bad choices of positive examples
+        node_dist_std = node_dist.std()
+
+        pos_idx = positive_sampling(node_dist)
+        pos_dist = node_dist.gather(dim=-1, index=pos_idx.unsqueeze(-1)).squeeze()
+
+        # concatenate positional and strand embeddings
+        x, _, _ = self.internal_embeddings(batch)
+
+        # shape: [num masked proteins, hidden_dim]
+        # need to keep these for loss
+        masked_embeddings = x[node_mask]
+
+        # then mask out protein embeddings
+        x[node_mask] = 0.0
+
+        # forward pass
+        # y shape: [num_proteins, hidden_dim]
+        y, *_ = self.databatch_forward(
+            batch=batch,
+            node_mask=node_mask,
+            return_attention_weights=False,
+            x=x,
+        )
+
+        y_pos = y[pos_idx]
+        y_pos_weight_denom = 2 * (node_dist_std * self.config.loss.sample_scale) ** 2
+        y_pos_weight = torch.exp(-pos_dist / y_pos_weight_denom)
+
+        real_loss: torch.Tensor = self.criterion(y[node_mask], masked_embeddings)
+        # just compute directly here since we need to customize mse
+        pos_loss: torch.Tensor = (
+            torch.abs(y_pos[node_mask] - masked_embeddings)
+            .square()
+            .mul(y_pos_weight[node_mask].unsqueeze(-1))
+            .mean()
+        )
+
+        loss = real_loss + pos_loss
+
+        # TODO: I feel like this should be in the lightning hooks
+        # ie in the training_step, validation_step, etc
+        # so that way the forward method can be called without a lightning trainer
+        # AND you won't need to pass the stage to this method
+        if self.fabric is None:
+            self.log_loss(loss=loss, batch_size=batch.num_proteins.numel(), stage=stage)
+
         return loss
