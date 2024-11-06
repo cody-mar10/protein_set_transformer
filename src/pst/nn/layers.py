@@ -88,6 +88,7 @@ class MultiheadAttentionConv(MessagePassing, AttentionMixin, NormMixin):
         x: torch.Tensor,
         edge_index: torch.Tensor,
         batch: torch.Tensor,
+        node_mask: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> EdgeAttnOutput:
         """Forward pass to compute scaled-dot product attention to update each
@@ -100,8 +101,13 @@ class MultiheadAttentionConv(MessagePassing, AttentionMixin, NormMixin):
                 connected for each graph.
             batch (torch.Tensor): [N] LongTensor encoding the graph/set each node/item
                 belongs to.
+            node_mask (OptTensor, optional): Masking tensor to apply to the attention weights.
+                `True` values are masked out. Internally, this just removes edges that contain
+                masked nodes to they don't actually contribute to the final representations.
+                Defaults to None (no masking).
             return_attention_weights (bool, optional): Whether to return the
                 attention weights and edge index. Defaults to False.
+
 
         Returns:
             torch.Tensor | tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
@@ -120,6 +126,15 @@ class MultiheadAttentionConv(MessagePassing, AttentionMixin, NormMixin):
         key = self.uncat_heads(self.linK(x))
         value = self.uncat_heads(self.linV(x))
         edge_index, _ = add_self_loops(edge_index)
+
+        if node_mask is not None:
+            # if either node is masked, the edge is masked
+            # True = masked out
+            edge_mask = node_mask[edge_index[0]] | node_mask[edge_index[1]]
+
+            # then just remove any edges that are masked, so attn is not computed
+            # along those edges
+            edge_index = edge_index[:, ~edge_mask]
 
         # propagate order:
         # 1. self.message
@@ -159,7 +174,6 @@ class MultiheadAttentionConv(MessagePassing, AttentionMixin, NormMixin):
             "sum",
         )
 
-        # shape: [E, H]
         alpha = softmax(qk, index=index, ptr=ptr, num_nodes=size_i, dim=0)
 
         # store attn weights
@@ -341,6 +355,8 @@ class MultiheadAttentionPooling(nn.Module, AttentionMixin, NormMixin):
         res_V = weighted_V + norm_weighted_V
 
         # shape: [N, D] -> [batch_size, D]
+        # TODO: this actually should be sum....
+        # actually dont think so since there are several steps between this and the weighted_V..
         weighted_graph_avg = segment(res_V, ptr=ptr, reduce="mean")
 
         return GraphAttnOutput(out=weighted_graph_avg, attn=attn)
