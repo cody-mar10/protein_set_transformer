@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Optional
-
 import einops
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+from pst.data.utils import graph_sizes_to_index_pointer
+from pst.typing import OptTensor
 
 
 def average(x: torch.Tensor) -> torch.Tensor:
@@ -29,7 +31,7 @@ class WeightedTripletLoss(nn.Module):
         y_neg: torch.Tensor,
         weights: torch.Tensor,
         reduce: bool = False,
-        class_weights: Optional[torch.Tensor] = None,
+        class_weights: OptTensor = None,
     ) -> torch.Tensor:
         if class_weights is None:
             # no actual weights
@@ -62,10 +64,10 @@ class AugmentedWeightedTripletLoss(nn.Module):
         y_pos: torch.Tensor,
         y_neg: torch.Tensor,
         neg_weights: torch.Tensor,
-        class_weights: Optional[torch.Tensor] = None,
-        y_aug_pos: Optional[torch.Tensor] = None,
-        y_aug_neg: Optional[torch.Tensor] = None,
-        aug_neg_weights: Optional[torch.Tensor] = None,
+        class_weights: OptTensor = None,
+        y_aug_pos: OptTensor = None,
+        y_aug_neg: OptTensor = None,
+        aug_neg_weights: OptTensor = None,
     ) -> torch.Tensor:
         loss: torch.Tensor = self.loss_fn(
             y_self=y_self,
@@ -90,3 +92,39 @@ class AugmentedWeightedTripletLoss(nn.Module):
             loss += augmented_loss
             return average(loss) / 2
         return average(loss)
+
+
+class MaskedLanguageModelingLoss(nn.Module):
+    def __init__(self, masking_rate: float):
+        super().__init__()
+        if masking_rate < 0 or masking_rate > 0.5:
+            raise ValueError("masking_rate should be in [0.0, 0.5]")
+
+        # this is PER scaffold
+        self.masking_rate = masking_rate
+
+    def mask(self, sizes: torch.Tensor, ptr: OptTensor = None) -> torch.Tensor:
+        # sizes shape: [num scaffolds]
+        # ptr shape:   [num scaffolds + 1]
+        # mask shape:  [num proteins]
+
+        if ptr is None:
+            ptr = graph_sizes_to_index_pointer(sizes)
+
+        mask = torch.zeros(int(sizes.sum()), device=sizes.device, dtype=torch.bool)
+        for idx, size in enumerate(sizes):
+            view = mask[ptr[idx] : ptr[idx + 1]]
+            # guarantee that at least one element is masked
+            while True:
+                scaffold_mask: torch.Tensor = torch.rand(size, device=sizes.device) < self.masking_rate  # type: ignore
+                if scaffold_mask.any():
+                    break
+
+            view[:] = scaffold_mask
+
+        return mask
+
+    def forward(self, y_pred: torch.Tensor, y_target: torch.Tensor) -> torch.Tensor:
+        # compute euclidean distance (sort of) between masked (expected) embeddings
+        # and the model's predicted embeddings
+        return F.mse_loss(y_pred, y_target, reduction="mean")
