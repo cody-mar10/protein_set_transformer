@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from pst.data.utils import graph_sizes_to_index_pointer
 from pst.typing import OptTensor
 
 
@@ -95,36 +94,39 @@ class AugmentedWeightedTripletLoss(nn.Module):
 
 
 class MaskedLanguageModelingLoss(nn.Module):
-    def __init__(self, masking_rate: float):
-        super().__init__()
-        if masking_rate < 0 or masking_rate > 0.5:
-            raise ValueError("masking_rate should be in [0.0, 0.5]")
+    # TODO: add option for positive sampling
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        masked_embeddings: torch.Tensor,
+        node_mask: torch.Tensor,
+        y_pos: OptTensor = None,
+        y_pos_weight: OptTensor = None,
+    ) -> torch.Tensor:
+        y_pred = y_pred[node_mask]
 
-        # this is PER scaffold
-        self.masking_rate = masking_rate
-
-    def mask(self, sizes: torch.Tensor, ptr: OptTensor = None) -> torch.Tensor:
-        # sizes shape: [num scaffolds]
-        # ptr shape:   [num scaffolds + 1]
-        # mask shape:  [num proteins]
-
-        if ptr is None:
-            ptr = graph_sizes_to_index_pointer(sizes)
-
-        mask = torch.zeros(int(sizes.sum()), device=sizes.device, dtype=torch.bool)
-        for idx, size in enumerate(sizes):
-            view = mask[ptr[idx] : ptr[idx + 1]]
-            # guarantee that at least one element is masked
-            while True:
-                scaffold_mask: torch.Tensor = torch.rand(size, device=sizes.device) < self.masking_rate  # type: ignore
-                if scaffold_mask.any():
-                    break
-
-            view[:] = scaffold_mask
-
-        return mask
-
-    def forward(self, y_pred: torch.Tensor, y_target: torch.Tensor) -> torch.Tensor:
         # compute euclidean distance (sort of) between masked (expected) embeddings
         # and the model's predicted embeddings
-        return F.mse_loss(y_pred, y_target, reduction="mean")
+        loss = F.mse_loss(y_pred, masked_embeddings, reduction="mean")
+
+        if y_pos is not None:
+            if y_pos_weight is None:
+                raise ValueError(
+                    "Should also provide y_pos_weight when provided positive samples"
+                )
+
+            y_pos = y_pos[node_mask]
+            y_pos_weight = y_pos_weight[node_mask]
+
+            # weighted mse where the choice of positive is weighted to penalize bad choices
+            # of positives
+            pos_loss: torch.Tensor = (
+                torch.abs(y_pos - masked_embeddings)
+                .square()
+                .mul(y_pos_weight.unsqueeze(-1))
+                .mean()
+            )
+
+            loss += pos_loss
+
+        return loss
