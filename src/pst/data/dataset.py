@@ -38,6 +38,9 @@ _SENTINEL_FRAGMENT_SIZE = -1
 logger = logging.getLogger(__name__)
 
 
+# TODO: I think theoretically this could support lazy loading of the data?
+# prob wouldn't be that good, but we can just completely load the ptr? and then just load the data when needed
+# but would prob be fairly slow? and we'd have to keep the file handle open
 class GenomeDataset(
     Dataset[GenomeGraphBatch],
     ProteinFeaturesTypeMixin,
@@ -690,6 +693,15 @@ class GenomeDataset(
     def any_multi_scaffold_genomes(self) -> bool:
         return bool(self.genome_is_multiscaffold.any())
 
+    def __getattr__(self, name: str):
+        try:
+            return self.get_registered_feature(name)
+        except KeyError as e:
+            raise AttributeError(
+                f"'{self.__class__.__name__}' object has no attribute '{name}', "
+                "and this is not a registered feature"
+            ) from e
+
     ### backwards compatibility --- all marked as deprecated
 
     @property
@@ -745,10 +757,10 @@ class GenomeDataset(
         ),
         category=DeprecationWarning,
     )
-    def weights(self) -> OptTensor:
+    def weight(self) -> OptTensor:
         """Class weight for each scaffold if it exists, shape: [num scaffolds]"""
         try:
-            return self.get_registered_feature("weights")
+            return self.get_registered_feature("weight")
         except KeyError:
             return None
 
