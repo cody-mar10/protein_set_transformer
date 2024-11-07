@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ptn-set-transformer"
-version = "1.3.1"
+version = "1.4.0"
 authors = [{ name = "Cody Martin", email = "codycmar10@gmail.com" }]
 description = "Training and inference on protein sets (genomes)"
 readme = "README.md"
@@ -31,6 +31,7 @@ dependencies = [
     "requests",
     "tqdm",
     "fair-esm==2.0.0",
+    "scikit-learn",
 ]
 
 [project.optional-dependencies]
