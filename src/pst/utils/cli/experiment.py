@@ -6,6 +6,9 @@ from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 AnnealingOpts = Literal["linear", "cos"]
+ModelType = Literal[
+    "ProteinSetTransformer", "MLMProteinSetTransformer", "ProteinSetTransformerEncoder"
+]
 
 
 class ExperimentArgs(BaseModel):
@@ -48,4 +51,12 @@ class ExperimentArgs(BaseModel):
     log_gradients: bool = Field(False, description="debug mode to log gradients")
     detect_anomaly: bool = Field(
         False, description="debug mode to detect gradient anomalies"
+    )
+    pst_model_type: ModelType = Field(
+        "ProteinSetTransformer",
+        description=(
+            "model type to train. `ProteinSetTransformer` is described in the manuscript and is "
+            "trained with triplet loss and pointswap augmentation. `MLMProteinSetTransformer` "
+            "is trained using masked language modeling loss with "
+        ),
     )
