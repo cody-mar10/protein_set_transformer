@@ -4,8 +4,8 @@ import logging
 
 from pst.data.dataset import _SENTINEL_FRAGMENT_SIZE
 from pst.data.modules import GenomeDataModule
-from pst.nn.modules import ProteinSetTransformer as PST
 from pst.training.utils.lightning import init_lightning_trainer
+from pst.utils.auto import auto_resolve_model_type
 from pst.utils.cli.modes import FinetuningMode
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,9 @@ def finetune(args: FinetuningMode):
         command_line_config=args.data,  # allow updating batch size and fragment size from cli if set
         shuffle=True,
     )
-    model = PST.from_pretrained(args.finetuning.checkpoint)
+
+    model_type = auto_resolve_model_type(args.experiment.pst_model_type)
+    model = model_type.from_pretrained(args.finetuning.checkpoint)
 
     # need to check how many proteins are encoded in new data and fragment the
     # dataset accordingly

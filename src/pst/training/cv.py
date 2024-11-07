@@ -5,9 +5,9 @@ import logging
 import lightning_cv as lcv
 
 from pst.data.modules import GenomeDataModule
-from pst.nn.modules import CrossValPST as PST
 from pst.training.utils.cv import init_trainer_config
 from pst.training.utils.dim import check_feature_dim
+from pst.utils.auto import auto_resolve_model_type
 from pst.utils.cli.modes import TrainingMode
 
 logger = logging.getLogger(__name__)
@@ -26,8 +26,10 @@ def train_with_cross_validation(config: TrainingMode):
     datamodule = GenomeDataModule(config.data)
     check_feature_dim(config)
 
+    model_type = auto_resolve_model_type(config.experiment.pst_model_type)
+
     trainer = lcv.CrossValidationTrainer(
-        model_type=PST,  # type: ignore
+        model_type=model_type,  # type: ignore
         config=trainer_config,
     )
 

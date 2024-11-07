@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 
 from pst.data.modules import GenomeDataModule
-from pst.nn.modules import ProteinSetTransformer as PST
 from pst.training.utils.dim import check_feature_dim
 from pst.training.utils.lightning import init_lightning_trainer
+from pst.utils.auto import auto_resolve_model_type
 from pst.utils.cli.modes import TrainingMode
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,9 @@ def train_with_all_data(config: TrainingMode):
     datamodule = GenomeDataModule(config.data, shuffle=True)
 
     check_feature_dim(config)
-    model = PST(config.model)
+
+    model_type = auto_resolve_model_type(config.experiment.pst_model_type)
+    model = model_type(config.model)
 
     # update positional embedding max size
     model.check_max_size(datamodule.dataset)

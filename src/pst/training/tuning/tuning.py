@@ -8,10 +8,10 @@ import optuna
 from lightning_cv.tuning.callbacks import OptunaHyperparameterLogger
 
 from pst.data.modules import GenomeDataModule
-from pst.nn.modules import CrossValPST as PST
 from pst.training.tuning.optuna import OptunaIntegration
 from pst.training.utils.cv import init_trainer_config
 from pst.training.utils.dim import check_feature_dim
+from pst.utils.auto import auto_resolve_model_type
 from pst.utils.cli.modes import TuningMode
 
 logger = logging.getLogger(__name__)
@@ -34,9 +34,11 @@ def tune(config: TuningMode):
         add_logger=False,  # Tuner adds logger
     )
 
+    model_type = auto_resolve_model_type(config.experiment.pst_model_type)
+
     ### CV TUNER INIT
     tuner = lcv.tuning.Tuner(
-        model_type=PST,  # type: ignore
+        model_type=model_type,  # type: ignore
         model_config=config.model,
         datamodule_type=GenomeDataModule,  # type: ignore
         datamodule_config=config.data,
