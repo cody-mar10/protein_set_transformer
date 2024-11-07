@@ -573,14 +573,8 @@ class _BaseProteinSetTransformer(
 
     @staticmethod
     def _adjust_checkpoint_inplace(ckpt: dict[str, Any]):
-        # there was an old error when computing the pointswap rate to be 1 - expected
-        # the code has been changed (see commit 82b0698)
-        # however, old checkpoints will have the previous value, which needs to be adjusted
-        if ckpt["hyper_parameters"].pop(_FIXED_POINTSWAP_RATE, None) is None:
-            # key not present = old model
-            # so need to adjust the sample rate
-            curr_rate = ckpt["hyper_parameters"]["augmentation"]["sample_rate"]
-            ckpt["hyper_parameters"]["augmentation"]["sample_rate"] = 1.0 - curr_rate
+        # no-op for base classes, subclasses can override this to adjust the checkpoint
+        return
 
     @classmethod
     def from_pretrained(
@@ -800,14 +794,6 @@ class BaseProteinSetTransformerEncoder(
         return super().from_pretrained(
             pretrained_model_name_or_path, model_type=cls.MODEL_TYPE, strict=strict
         )
-
-    @staticmethod
-    def _adjust_checkpoint_inplace(ckpt: dict[str, Any]):
-        # fix augmentation sample rate and move sample_scale and no_negatives_mode to loss field
-        ProteinSetTransformer._adjust_checkpoint_inplace(ckpt)
-
-        # since we could be loading a genomic PST for this protein PST,
-        # then we need to remove the decoder layers
 
     def _try_load_state_dict(
         self, state_dict: dict[str, torch.Tensor], strict: bool = True
