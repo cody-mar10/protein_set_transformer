@@ -4,7 +4,12 @@ import pydantic_argparse
 
 from pst.data.modules import DataConfig
 from pst.embed import EmbedArgs
-from pst.nn.config import ModelConfig
+from pst.nn.config import (
+    GenomeTripletLossConfig,
+    MaskedLanguageModelingConfig,
+    MaskedLanguageModelingLossConfig,
+    ModelConfig,
+)
 from pst.utils.cli.download import DownloadArgs
 from pst.utils.cli.experiment import ExperimentArgs
 from pst.utils.cli.finetune import FinetuningArgs
@@ -14,8 +19,19 @@ from pst.utils.cli.trainer import TrainerArgs
 from pst.utils.cli.tuning import TuningArgs
 
 
+# take all args for all loss configs so they are available at cli
+class _UnionLossConfig(GenomeTripletLossConfig, MaskedLanguageModelingLossConfig):
+    pass
+
+
+# take all args for all model configs so they are available at cli
+# NOTE: cannot have fields of same name refer to different things
+class UnionModelConfig(ModelConfig, MaskedLanguageModelingConfig):
+    loss: _UnionLossConfig
+
+
 class TrainingMode(pydantic_argparse.BaseCommand):
-    model: ModelConfig
+    model: UnionModelConfig
     data: DataConfig
     trainer: TrainerArgs
     experiment: ExperimentArgs
