@@ -57,6 +57,9 @@ class ExperimentArgs(BaseModel):
         description=(
             "model type to train. `ProteinSetTransformer` is described in the manuscript and is "
             "trained with triplet loss and pointswap augmentation. `MLMProteinSetTransformer` "
-            "is trained using masked language modeling loss with "
+            "is trained using masked language modeling loss with positive sampling. "
+            "`ProteinSetTransformerEncoder` is an encoder-only variant of "
+            "`ProteinSetTransformer` that trains only on protein embeddings with triplet loss "
+            "at the protein level."
         ),
     )
