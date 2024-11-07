@@ -7,11 +7,14 @@ import torch
 from lightning_cv import CrossValidationDataModule
 from lightning_cv.split import ImbalancedLeaveOneGroupOut
 from pydantic import BaseModel, Field
+from sklearn.model_selection import GroupKFold
 from torch.utils.data import DataLoader
 
 from pst.data.dataset import _SENTINEL_FRAGMENT_SIZE, FeatureLevel, GenomeDataset
 from pst.data.utils import compute_group_frequency_weights
 from pst.typing import EdgeIndexStrategy
+
+CVStragegies = Literal["ImbalancedLeaveOneGroupOut", "GroupKFold"]
 
 
 class DataConfig(BaseModel):
@@ -83,6 +86,14 @@ class DataConfig(BaseModel):
             "setting this to be smaller than --max-proteins"
         ),
     )
+    cv_strategy: CVStragegies = Field(
+        "ImbalancedLeaveOneGroupOut",
+        description=(
+            "cross validation strategy to use for training. The default is described in the "
+            "original PST manuscript. Custom strategies should be implemented with custom code "
+            "instead of using the CLI of pst for now."
+        ),
+    )
 
 
 _StageType = Literal["fit", "test", "predict"]
@@ -127,15 +138,30 @@ class GenomeDataModule(CrossValidationDataModule):
                 scaffold_class_id, log_inverse=config.log_inverse
             )
             self.dataset.register_feature(
-                "weights", class_weights, feature_level="scaffold"
+                "weight", class_weights, feature_level="scaffold"
             )
+
+        if config.cv_strategy == "ImbalancedLeaveOneGroupOut":
+            cv = ImbalancedLeaveOneGroupOut
+            cv_config = {"groups": scaffold_class_id}
+        elif config.cv_strategy == "GroupKFold":
+            cv = GroupKFold
+            n_splits = int(scaffold_class_id.max().item()) + 1
+            if n_splits < 2:
+                raise ValueError(
+                    "GroupKFold requires at least 2 unique groups to split on"
+                )
+            cv_config = {"n_splits": n_splits}
+        else:
+            raise ValueError(f"Unknown cross validation strategy: {config.cv_strategy}")
 
         super().__init__(
             dataset=self.dataset,
             batch_size=config.batch_size,
-            cross_validator=ImbalancedLeaveOneGroupOut,  # TODO: should make this configurable
-            cross_validator_config={"groups": scaffold_class_id},
+            cross_validator=cv,  # type: ignore
+            cross_validator_config=cv_config,
             collate_fn=self.dataset.collate_indices,
+            group_attr="class_id",
             **kwargs,
         )
 
@@ -165,13 +191,10 @@ class GenomeDataModule(CrossValidationDataModule):
 
     def simple_dataloader(self, dataset: GenomeDataset, **kwargs) -> DataLoader:
         kwargs = self._overwrite_dataloader_kwargs(**kwargs)
-        dataloader = DataLoader(
-            dataset=dataset,
-            batch_size=self.batch_size,
-            collate_fn=dataset.collate,
-            **kwargs,
-        )
-        return dataloader
+        kwargs["dataset"] = dataset
+        kwargs["batch_size"] = self.batch_size
+        kwargs["collate_fn"] = dataset.collate
+        return DataLoader(**kwargs)
 
     def train_dataloader(self, **kwargs) -> DataLoader:
         return self.simple_dataloader(self.train_dataset, **kwargs)
