@@ -28,6 +28,11 @@ class GenomeGraphBatch(Protocol):
     genome_label: Tensor
 
 
+class MaskedGenomeGraphBatch(GenomeGraphBatch):
+    node_mask: Tensor
+    masked_embeddings: Tensor
+
+
 EdgeIndexStrategy = Literal["full", "sparse", "chunked"]
 
 
