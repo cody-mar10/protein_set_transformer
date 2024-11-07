@@ -37,7 +37,7 @@ pip install . #<- notice the [dot]
 
 ```bash
 # setup torch first -- conda does this so much better than pip
-mamba create -n pst -c pytorch -c nvidia -c pyg -c conda-forge 'python<3.12' 'pytorch>=2.0' pytorch-cuda=11.8 pyg torch_scatter
+mamba create -n pst -c pytorch -c nvidia -c pyg -c conda-forge 'python<3.12' 'pytorch>=2.0' pytorch-cuda=11.8 pyg pytorch-scatter
 
 mamba activate pst
 
