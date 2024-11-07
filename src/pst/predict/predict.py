@@ -3,17 +3,18 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Literal, Optional, cast, get_args
+from typing import Literal, Optional, get_args
 
 import tables as tb
 import torch
-from torch_geometric.utils import scatter
+from torch_geometric.utils import scatter, segment
 from tqdm import tqdm
 
 from pst.data.modules import GenomeDataModule
 from pst.data.utils import H5_FILE_COMPR_FILTERS, convert_to_scaffold_level_genome_label
-from pst.nn.modules import ProteinSetTransformer as PST
+from pst.nn.base import BaseProteinSetTransformer
 from pst.typing import EdgeAttnOutput, GenomeGraphBatch, GraphAttnOutput, PairTensor
+from pst.utils.auto import auto_resolve_model_type
 from pst.utils.cli.modes import InferenceMode
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,14 @@ class Predictor:
                 self.graph_type = "fragment"
 
     def _setup_model(self, ckptfile: Path):
-        self.model = PST.from_pretrained(ckptfile).to(self.device).eval()
+        self.model_type = auto_resolve_model_type(self.config.experiment.pst_model_type)
+        self.model = self.model_type.from_pretrained(ckptfile).to(self.device).eval()
+        self.is_genomic = isinstance(self.model, BaseProteinSetTransformer)
+
+        if self.is_genomic:
+            self.compute_scaffold_embeddings = self._genomic_model_scaffold_embeddings
+        else:
+            self.compute_scaffold_embeddings = self._protein_model_scaffold_embeddings
 
         expected_max_size = self.model.positional_embedding.max_size
         actual_max_size = self.datamodule.dataset.max_size
@@ -325,6 +333,28 @@ class Predictor:
         else:
             self._file.remove_node(where=self._file.root, name="data")
 
+    def _genomic_model_scaffold_embeddings(
+        self, node_embeddings: torch.Tensor, batch: GenomeGraphBatch
+    ) -> GraphAttnOutput:
+        # if the model is a genomic level model, ie a subclass of BaseProteinSetTransformer,
+        # then it has a decoder that returns the graph embeddings at the scaffold level
+
+        return self.model.decoder(
+            x=node_embeddings,
+            ptr=batch.ptr,
+            batch=batch.batch,
+            return_attention_weights=True,
+        )
+
+    def _protein_model_scaffold_embeddings(
+        self, node_embeddings: torch.Tensor, batch: GenomeGraphBatch
+    ) -> GraphAttnOutput:
+        # if the model is a protein level model, ie a subclass of BaseProteinSetTransformerEncoder,
+        # then it does not have a decoder, so we just reduce the node embeddings to the scaffold level
+
+        scaffold_embeddings = segment(node_embeddings, ptr=batch.ptr, reduce="mean")
+        return GraphAttnOutput(out=scaffold_embeddings, attn=None)
+
     @torch.no_grad()
     def predict_loop(self) -> Optional[dict[str, torch.Tensor]]:
         # implemented a barebones loop instead of using lightning to enable saving
@@ -344,17 +374,12 @@ class Predictor:
             if self.node_embeddings:
                 self.append(name="node", data=node_output.out)
 
-            graph_output: GraphAttnOutput = self.model.decoder(
-                x=node_output.out,
-                ptr=batch.ptr,
-                batch=batch.batch,
-                return_attention_weights=True,
-            )
+            graph_output = self.compute_scaffold_embeddings(node_output.out, batch)
 
             if self.graph_embeddings:
                 self.append(name="graph", data=graph_output.out)
-                attn = cast(torch.Tensor, graph_output.attn)
-                self.append(name="attn", data=attn)
+                if graph_output.attn is not None:
+                    self.append(name="attn", data=graph_output.attn)
 
         reduced_embeddings: dict[str, torch.Tensor] = dict()
         # if self.graph_type == "genome" ### don't need to do anything extra
