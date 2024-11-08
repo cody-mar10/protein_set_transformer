@@ -44,7 +44,7 @@ def get_callbacks(
                 check_finite=True,
                 strict=True,
                 stopping_threshold=STOPPING_THRESHOLD,
-                min_delta=MIN_DELTA,
+                min_delta=config.experiment.min_delta or MIN_DELTA,
             )
         )
 

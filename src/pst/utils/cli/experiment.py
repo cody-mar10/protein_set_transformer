@@ -63,3 +63,11 @@ class ExperimentArgs(BaseModel):
             "at the protein level."
         ),
     )
+    min_delta: float = Field(
+        0.05,
+        description=(
+            "loss has to improve by this much before --patience epochs otherwise training will "
+            "stop early"
+        ),
+        ge=0.0,
+    )
