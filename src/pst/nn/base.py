@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Mapping
 from functools import cached_property
 from pathlib import Path
 from typing import (
@@ -583,6 +584,7 @@ class _BaseProteinSetTransformer(
         model_type: Type[_ModelT],
         model_config_type: Optional[Type[_BaseConfigT]] = None,
         strict: bool = True,
+        **update_kwargs,
     ) -> Self:
         """Load a model from a pretrained (or just trained) checkpoint.
 
@@ -612,6 +614,7 @@ class _BaseProteinSetTransformer(
                 type of the model config is correctly detected.
             strict (bool, optional): raise a RuntimeError if there are unexpected parameters
                 in the checkpoint's state dict. Defaults to True.
+            **update_kwargs: additional keyword arguments to update the model config with
 
         Raises:
             NotImplementedError: Loading models from their names is not implemented yet
@@ -635,6 +638,17 @@ class _BaseProteinSetTransformer(
 
         ckpt = torch.load(pretrained_model_name_or_path, map_location="cpu")
         cls._adjust_checkpoint_inplace(ckpt)
+
+        # need to merge ckpt["hyper_parameters"] with update_kwargs with nested dicts
+        # however, there should only be 2 nesting levels if present
+
+        for key, value in update_kwargs.items():
+            if isinstance(value, Mapping):
+                for subkey, subvalue in value.items():
+                    ckpt["hyper_parameters"][key][subkey] = subvalue
+            else:
+                ckpt["hyper_parameters"][key] = value
+
         model_config = model_config_type.model_validate(ckpt["hyper_parameters"])
 
         try:
@@ -715,7 +729,10 @@ class BaseProteinSetTransformer(
 
     @classmethod
     def from_pretrained(
-        cls, pretrained_model_name_or_path: str | Path, strict: bool = True
+        cls,
+        pretrained_model_name_or_path: str | Path,
+        strict: bool = True,
+        **update_kwargs,
     ) -> Self:
         """Load a model from a pretrained (or just trained) checkpoint.
 
@@ -734,12 +751,16 @@ class BaseProteinSetTransformer(
                 checkpoint. NOTE: passing model names is not currently supported
             strict (bool, optional): raise a RuntimeError if there are unexpected parameters
                 in the checkpoint's state dict. Defaults to True.
+            **update_kwargs: additional keyword arguments to update the model config
 
         Raises:
             NotImplementedError: Loading models from their names is not implemented yet
         """
         return super().from_pretrained(
-            pretrained_model_name_or_path, model_type=cls.MODEL_TYPE, strict=strict
+            pretrained_model_name_or_path,
+            model_type=cls.MODEL_TYPE,
+            strict=strict,
+            **update_kwargs,
         )
 
 
@@ -768,7 +789,10 @@ class BaseProteinSetTransformerEncoder(
 
     @classmethod
     def from_pretrained(
-        cls, pretrained_model_name_or_path: str | Path, strict: bool = True
+        cls,
+        pretrained_model_name_or_path: str | Path,
+        strict: bool = True,
+        **update_kwargs,
     ) -> Self:
         """Load a model from a pretrained (or just trained) checkpoint.
 
@@ -787,12 +811,16 @@ class BaseProteinSetTransformerEncoder(
                 checkpoint. NOTE: passing model names is not currently supported
             strict (bool, optional): raise a RuntimeError if there are unexpected parameters
                 in the checkpoint's state dict. Defaults to True.
+            **update_kwargs: additional keyword arguments to update the model config with
 
         Raises:
             NotImplementedError: Loading models from their names is not implemented yet
         """
         return super().from_pretrained(
-            pretrained_model_name_or_path, model_type=cls.MODEL_TYPE, strict=strict
+            pretrained_model_name_or_path,
+            model_type=cls.MODEL_TYPE,
+            strict=strict,
+            **update_kwargs,
         )
 
     def _try_load_state_dict(
