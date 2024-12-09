@@ -1,34 +1,53 @@
-from __future__ import annotations
-
 import logging
+from pathlib import Path
 
+from pst.data.config import DataConfig
 from pst.data.modules import GenomeDataModule
-from pst.training.utils.dim import check_feature_dim
+from pst.nn.base import BaseModels
+from pst.nn.modules import ProteinSetTransformer
 from pst.training.utils.lightning import init_lightning_trainer
-from pst.utils.auto import auto_resolve_model_type
-from pst.utils.cli.modes import TrainingMode
+from pst.training.utils.pst import _add_group_weights
+from pst.utils.cli.trainer import TrainerArgs
 
 logger = logging.getLogger(__name__)
 
 
-def train_with_all_data(config: TrainingMode):
-    if not config.data.train_on_full:
-        raise RuntimeError(
-            "Cannot train with all data if --train-on-full not passed at command line."
-        )
+def train(
+    model: BaseModels,
+    data: DataConfig,
+    trainer_cfg: TrainerArgs,
+):
+    datamodule = GenomeDataModule(data, shuffle=True)
 
-    logger.info("Training a single model with all available data.")
+    # backwards compatibility with PST that computes group weights
+    if isinstance(model, ProteinSetTransformer):
+        _add_group_weights(datamodule)
 
-    # shuffling is a must to prevent OOM since the largest data is all at the end
-    datamodule = GenomeDataModule(config.data, shuffle=True)
+    logger.info(datamodule.summarize())
 
-    check_feature_dim(config)
+    log_msg = "Training a single model with "
+    if isinstance(data.validation, Path):
+        log_msg += f"validation data from {data.validation}."
+    elif data.validation == "random":
+        log_msg += "a random 80:20 validation split from the input data."
+    else:
+        log_msg += "all available data WITHOUT validation."
 
-    model_type = auto_resolve_model_type(config.experiment.pst_model_type)
-    model = model_type(config.model)
+    logger.info(log_msg)
 
     # update positional embedding max size
     model.check_max_size(datamodule.dataset)
 
-    trainer = init_lightning_trainer(config, checkpoint=True, early_stopping=True)
+    if datamodule.config.validation is not None:
+        checkpoint_monitor = "val_loss"
+    else:
+        checkpoint_monitor = "train_loss"
+
+    trainer = init_lightning_trainer(
+        model.config,
+        trainer_cfg,
+        checkpoint=True,
+        early_stopping=True,
+        monitor=checkpoint_monitor,
+    )
     trainer.fit(model=model, datamodule=datamodule)
