@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Optional
 
 import torch
@@ -28,6 +26,7 @@ class MultiheadAttentionConv(MessagePassing, AttentionMixin, NormMixin):
         out_channels: int,
         heads: int,
         dropout: float = 0.0,
+        add_self_loops: bool = False,
         **kwargs,
     ):
         """Create a multihead attention layer that operates on graph-structured
@@ -43,6 +42,8 @@ class MultiheadAttentionConv(MessagePassing, AttentionMixin, NormMixin):
             heads (int): Number of attention heads.
             dropout (float, optional): Dropout fraction for the final
                 linear layer. Defaults to 0.0.
+            add_self_loops (bool, optional): Whether to add self-loops to the
+                input graph. Defaults to False.
             **kwargs: Additional arguments for the `MessagePassing` base class
         """
         # this setup mirrors exactly how attention would be computed normally
@@ -58,6 +59,7 @@ class MultiheadAttentionConv(MessagePassing, AttentionMixin, NormMixin):
         self.out_channels = out_channels
 
         self._alpha = None
+        self.add_self_loops = add_self_loops
 
         # scaled dot product attn does not change feature dim
         self.linQ, self.linK, self.linV = self.init_weight_layers(in_channels)
@@ -125,7 +127,9 @@ class MultiheadAttentionConv(MessagePassing, AttentionMixin, NormMixin):
         query = self.uncat_heads(self.linQ(x))
         key = self.uncat_heads(self.linK(x))
         value = self.uncat_heads(self.linV(x))
-        edge_index, _ = add_self_loops(edge_index)
+
+        if self.add_self_loops:
+            edge_index, _ = add_self_loops(edge_index)
 
         if node_mask is not None:
             # if either node is masked, the edge is masked
