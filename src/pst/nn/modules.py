@@ -1,17 +1,13 @@
-from __future__ import annotations
-
 from typing import Any, cast
 
-import lightning as L
 import torch
-from lightning_cv import CrossValModuleMixin
 
 from pst.nn.base import (
     _FIXED_POINTSWAP_RATE,
     BaseProteinSetTransformer,
     BaseProteinSetTransformerEncoder,
 )
-from pst.nn.config import MaskedLanguageModelingConfig, ModelConfig
+from pst.nn.config import GenomeTripletLossModelConfig, MaskedLanguageModelingConfig
 from pst.nn.utils.distance import (
     pairwise_euclidean_distance,
     stacked_batch_chamfer_distance,
@@ -41,11 +37,11 @@ def _adjust_checkpoint_inplace(ckpt: dict[str, Any]):
         ckpt["hyper_parameters"]["augmentation"]["sample_rate"] = 1.0 - curr_rate
 
 
-class ProteinSetTransformer(BaseProteinSetTransformer[ModelConfig]):
+class ProteinSetTransformer(BaseProteinSetTransformer[GenomeTripletLossModelConfig]):
     # NOTE: updated as new pretrained models are added
     PRETRAINED_MODEL_NAMES = {"vpst-small", "vpst-large"}
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: GenomeTripletLossModelConfig):
         # this only needs to be defined for the config type hint
         super().__init__(config=config)
 
@@ -137,7 +133,7 @@ class ProteinSetTransformer(BaseProteinSetTransformer[ModelConfig]):
             pos_idx=pos_idx,
             item_flow=item_flow,
             sizes=batch.num_proteins,
-            sample_rate=self.augmentation_cfg.sample_rate,
+            sample_rate=self.config.augmentation.sample_rate,
         )
 
         # let strand use original strand for each ptn
@@ -207,33 +203,13 @@ class ProteinSetTransformer(BaseProteinSetTransformer[ModelConfig]):
         return super().test_step(test_batch, batch_idx, augment_data=False)
 
 
-class CrossValPST(CrossValModuleMixin, ProteinSetTransformer):
-    __error_msg__ = (
-        "Model {stage} is not allowed during cross validation. Only training and "
-        "validation is supported."
-    )
-
-    def __init__(self, config: ModelConfig):
-        ProteinSetTransformer.__init__(self, config=config)
-
-        # needed for type hints
-        self.fabric: L.Fabric
-        CrossValModuleMixin.__init__(self, config=config)
-
-    def test_step(self, test_batch: GenomeGraphBatch, batch_idx: int):
-        raise RuntimeError(self.__error_msg__.format(stage="testing"))
-
-    def predict_step(
-        self, batch: GenomeGraphBatch, batch_idx: int, dataloader_idx: int = 0
-    ):
-        raise RuntimeError(self.__error_msg__.format(stage="inference"))
-
-
 ######### Protein-level models #########
 
 
-class ProteinSetTransformerEncoder(BaseProteinSetTransformerEncoder[ModelConfig]):
-    def __init__(self, config: ModelConfig):
+class ProteinSetTransformerEncoder(
+    BaseProteinSetTransformerEncoder[GenomeTripletLossModelConfig]
+):
+    def __init__(self, config: GenomeTripletLossModelConfig):
         super().__init__(config=config)
 
     def setup_objective(self, margin: float, **kwargs) -> WeightedTripletLoss:
@@ -317,6 +293,7 @@ class MLMProteinSetTransformer(
         super().__init__(config=config)
 
         # TODO: this could technically be a typevar in the base class
+        # not sure it matters that much since it should only be used to call the loss fn
         self.criterion = cast(MaskedLanguageModelingLoss, self.criterion)
 
     def setup_objective(
@@ -346,8 +323,11 @@ class MLMProteinSetTransformer(
         # 2. Extract the protein embeddings to-be-masked for the MLM loss fn. These are stored under batch.label
         # 3. Set's the masked protein embeddings to zero in batch.x
         # NOTE: The masked protein embeddings STILL need the positional and strand embeddings, so we add them after this
-        # TODO: I think?... It should be ok for the masked embeddings to have the gradient attached with the positional and strand embeddings....
+        # It should be ok for the masked embeddings to have the gradient attached with the positional and strand embeddings....
         # it's not like that's really the mystery here, it's the protein identity that's the mystery
+        # more importantly if the pos/strand embeddings were masked, the learned embeddings
+        # for each might suffer since we're trying to learn them twice and independently
+        # the trivial solution would be for the pos/strand embeddings to all be 0s (ie masked)
         batch = mask_batch(batch, masking_rate=self.config.loss.masking_rate)
 
         # these are the TARGETS
