@@ -1,16 +1,14 @@
-from __future__ import annotations
-
 from pathlib import Path
-from typing import Literal, NamedTuple, Optional, Protocol
+from typing import Any, Dict, Literal, NamedTuple, Optional, Protocol, Tuple, Union
 
 from numpy import float32
 from numpy.typing import NDArray
 from torch import Tensor
 
-FilePath = str | Path
+FilePath = Union[str, Path]
 
 NO_NEGATIVES_MODES = Literal["closest_to_positive", "closest_to_anchor"]
-PairTensor = tuple[Tensor, Tensor]
+PairTensor = Tuple[Tensor, Tensor]
 OptTensor = Optional[Tensor]
 
 
@@ -49,3 +47,5 @@ class GraphAttnOutput(NamedTuple):
 
 
 NumpyFloat32 = NDArray[float32]
+
+KwargType = Dict[str, Any]
