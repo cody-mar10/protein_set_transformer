@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 import sys
 from pathlib import Path
@@ -10,38 +8,86 @@ import torch
 from torch_geometric.utils import scatter, segment
 from tqdm import tqdm
 
+from pst.data.dataset import _SENTINEL_FRAGMENT_SIZE
 from pst.data.modules import GenomeDataModule
 from pst.data.utils import H5_FILE_COMPR_FILTERS, convert_to_scaffold_level_genome_label
-from pst.nn.base import BaseProteinSetTransformer
+from pst.nn.base import BaseModelTypes, BaseProteinSetTransformer
+from pst.nn.modules import ProteinSetTransformer
 from pst.typing import EdgeAttnOutput, GenomeGraphBatch, GraphAttnOutput, PairTensor
-from pst.utils.auto import auto_resolve_model_type
-from pst.utils.cli.modes import InferenceMode
+from pst.utils.cli.predict import PredictArgs
+from pst.utils.cli.trainer import AcceleratorOpts
 
 logger = logging.getLogger(__name__)
 
 
+class PredictMode:
+    def predict(
+        self,
+        file: Path,
+        predict: PredictArgs,
+        model_type: BaseModelTypes = ProteinSetTransformer,
+        accelerator: AcceleratorOpts = AcceleratorOpts.auto,
+        batch_size: Optional[int] = None,
+        fragment_size: Optional[int] = None,
+    ) -> Optional[dict[str, torch.Tensor]]:
+        """PST predict mode for predicting with a pretrained Protein Set Transformer
+
+        Args:
+            file (Path): path to the graph-formatted .h5 data file
+            predict (PredictArgs): predict configuration
+            model_type (BaseModelTypes, optional): PST model type to use for prediction
+            accelerator (AcceleratorOpts, optional): accelerator to use
+            batch_size (Optional[int], optional): batch size to use for prediction. Defaults to
+                batch size in checkpoint file.
+            fragment_size (Optional[int], optional): fragment size to use for prediction.
+                Defaults to fragment size in checkpoint file.
+        """
+        model_inference(
+            model_type=model_type,
+            file=file,
+            predict=predict,
+            accelerator=accelerator,
+            batch_size=batch_size,
+            fragment_size=fragment_size,
+            node_embeddings=True,
+            graph_embeddings=True,
+            return_predictions=True,
+        )
+
+
 def model_inference(
-    config: InferenceMode,
+    model_type: BaseModelTypes,
+    file: Path,
+    predict: PredictArgs,
+    accelerator: AcceleratorOpts = AcceleratorOpts.auto,
+    batch_size: Optional[int] = None,
+    fragment_size: Optional[int] = None,
     node_embeddings: bool = True,
     graph_embeddings: bool = True,
     return_predictions: bool = False,
 ):
     logger.info("Starting model inference.")
     predictor = Predictor(
-        config=config,
+        model_type=model_type,
+        file=file,
+        predict=predict,
+        accelerator=accelerator,
+        batch_size=batch_size,
+        fragment_size=fragment_size,
         node_embeddings=node_embeddings,
         graph_embeddings=graph_embeddings,
         return_predictions=return_predictions,
     )
 
-    n_genomes = predictor.datamodule.dataset.num_genomes
+    dataset = predictor.datamodule.dataset
+    n_genomes = dataset.num_genomes
 
     if "fragment" not in predictor.graph_type:
-        n_scaffolds = predictor.datamodule.dataset.num_scaffolds
+        n_scaffolds = dataset.num_scaffolds
         n_chunks = 0
     else:
-        n_chunks = predictor.datamodule.dataset.num_scaffolds
-        n_scaffolds = predictor.datamodule.dataset.scaffold_label.amax() + 1
+        n_chunks = dataset.num_scaffolds
+        n_scaffolds = dataset.scaffold_label.amax() + 1
 
     msg = f"Starting prediction loop on {n_genomes} genomes composed of {n_scaffolds} scaffolds"
 
@@ -53,18 +99,30 @@ def model_inference(
     return predictor.predict_loop()
 
 
+# TODO: This is only an embedding predictor, so we don't really need to consider if using a GenomeLoader?
+# if we did, then the expected sizes would be wrong
 class Predictor:
     OutputType = Literal["node", "graph", "attn"]
     GraphType = Literal["genome", "scaffold", "fragment", "fragmented scaffold"]
 
     def __init__(
         self,
-        config: InferenceMode,
+        model_type: BaseModelTypes,
+        file: Path,
+        predict: PredictArgs,
+        accelerator: AcceleratorOpts = AcceleratorOpts.auto,
+        batch_size: Optional[int] = None,
+        fragment_size: Optional[int] = None,
         node_embeddings: bool = True,
         graph_embeddings: bool = True,
         return_predictions: bool = False,
     ):
-        self.config = config
+        self.model_type = model_type
+        self.input_file = file
+        self.accelerator = accelerator
+        self.predict_cfg = predict
+        self.batch_size = batch_size
+        self.fragment_size = fragment_size
 
         if not node_embeddings and not graph_embeddings:
             raise ValueError(
@@ -74,7 +132,7 @@ class Predictor:
         self.node_embeddings = node_embeddings
         self.graph_embeddings = graph_embeddings
         self.return_predictions = return_predictions
-        self.allow_genome_fragmenting = config.predict.fragment_oversized_genomes
+        self.allow_genome_fragmenting = self.predict_cfg.fragment_oversized_genomes
 
         # by default, the graph will be "genome" level, assuming that each individual scaffold is
         # a complete genome. If any genomes are multi scaffold, the graph will be "scaffold" level
@@ -87,7 +145,7 @@ class Predictor:
         self.filters = H5_FILE_COMPR_FILTERS
 
         # TODO: should just let users provide the file name directly since this is just a single file
-        self._file = tb.File(self.config.predict.outdir.joinpath("predictions.h5"), "w")
+        self._file = tb.File(self.predict_cfg.outdir.joinpath("predictions.h5"), "w")  # type: ignore
 
         self.storage, self.in_memory_storage = self._init_storages()
         self._return_value: dict[str, torch.Tensor] = dict()
@@ -95,41 +153,44 @@ class Predictor:
     def setup(self):
         self._setup_accelerator()
 
-        ckptfile = self.config.predict.checkpoint
+        ckptfile = self.predict_cfg.checkpoint
         self._setup_data(ckptfile)
         self._setup_model(ckptfile)
 
-        self.config.predict.outdir.mkdir(parents=True, exist_ok=True)
+        self.predict_cfg.outdir.mkdir(parents=True, exist_ok=True)
 
     def _setup_accelerator(self):
-        if self.config.trainer.accelerator == "auto":
+        if self.accelerator == "auto":
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        elif self.config.trainer.accelerator == "gpu":
+        elif self.accelerator == "gpu":
             device = torch.device("cuda")
         else:
-            device = torch.device(self.config.trainer.accelerator)
+            device = torch.device(self.accelerator.value)
 
         self.device = device
 
     def _setup_data(self, ckptfile: Path):
         self.datamodule = GenomeDataModule.from_pretrained(
             checkpoint_path=ckptfile,
-            data_file=self.config.data.file,
-            command_line_config=self.config.data,  # allow updating batch size and fragment size from cli if set
+            data_file=self.input_file,
+            batch_size=self.batch_size,
+            fragment_size=self.fragment_size,
             shuffle=False,
         )
         self.datamodule.setup("predict")
         if self.datamodule.dataset.any_multi_scaffold_genomes():
             self.graph_type = "scaffold"
 
-        if "fragment_size" in self.config.data.model_fields_set:
+        if (
+            self.fragment_size is not None
+            or self.datamodule.config.fragment_size != _SENTINEL_FRAGMENT_SIZE
+        ):
             if self.graph_type == "scaffold":
                 self.graph_type = "fragmented scaffold"
             else:
                 self.graph_type = "fragment"
 
     def _setup_model(self, ckptfile: Path):
-        self.model_type = auto_resolve_model_type(self.config.experiment.pst_model_type)
         self.model = self.model_type.from_pretrained(ckptfile).to(self.device).eval()
         self.is_genomic = isinstance(self.model, BaseProteinSetTransformer)
 
@@ -147,13 +208,16 @@ class Predictor:
                         f"The maximum number of proteins in your dataset is {actual_max_size}"
                         f", but this model was trained with a max of {expected_max_size} "
                         "proteins. If you would like to proceed, set "
-                        "`fragment_large_genomes=True` (or at the command line, set --fragment-oversized-genomes)"
+                        "`fragment_large_genomes=True` (or at the command line, set "
+                        "--fragment_oversized_genomes true)"
                     )
                 )
 
             if self.graph_type == "scaffold":
+                # fragmenting scaffolds from multiscaffold genomes
                 self.graph_type = "fragmented scaffold"
             else:
+                # else all genomes are single scaffold, but we fragmented them
                 self.graph_type = "fragment"
             self.datamodule.dataset.fragment(expected_max_size, inplace=True)
 
@@ -181,12 +245,14 @@ class Predictor:
         )
         return earray
 
-    def _init_storage(self) -> dict[Predictor.OutputType, tb.EArray]:
+    def _init_storage(self) -> dict["Predictor.OutputType", tb.EArray]:
         return {
             name: self._create_earray(name) for name in get_args(Predictor.OutputType)
         }
 
-    def _init_in_memory_storage(self) -> dict[Predictor.OutputType, list[torch.Tensor]]:
+    def _init_in_memory_storage(
+        self,
+    ) -> dict["Predictor.OutputType", list[torch.Tensor]]:
         return {name: list() for name in get_args(Predictor.OutputType)}
 
     def _init_storages(self):
@@ -295,10 +361,14 @@ class Predictor:
         # to a python caller
 
         node_embeddings = torch.cat(self.in_memory_storage.pop("node"))
-        self._return_value["node"] = node_embeddings
 
-        attn = torch.cat(self.in_memory_storage["attn"])
-        self._return_value["attn"] = attn
+        self._return_value["protein"] = node_embeddings
+
+        # this attn is for pooling ptns within a scaffold
+        # so if pst is a protein only model, it won't exist
+        if self.model.is_genomic:
+            attn = torch.cat(self.in_memory_storage["attn"])
+            self._return_value["attn"] = attn
 
         # this is called after reducing the embeddings to the desired level
         # so self.in_memory_storage will have the appropriate keys for
