@@ -1,14 +1,12 @@
-from __future__ import annotations
-
 import logging
 from collections.abc import Iterable
 from functools import cached_property
-from typing import Any, overload
+from typing import Any, Sequence, Set, overload
 
 import tables as tb
 import torch
 from more_itertools import all_equal
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 from torch_geometric.data import Batch
 from torch_geometric.utils import scatter
 from typing_extensions import deprecated
@@ -702,6 +700,12 @@ class GenomeDataset(
                 "and this is not a registered feature"
             ) from e
 
+    @classmethod
+    def _init_arg_names(cls) -> Set[str]:
+        import inspect
+
+        return set(inspect.signature(cls).parameters.keys())
+
     ### backwards compatibility --- all marked as deprecated
 
     @property
@@ -792,3 +796,21 @@ class GenomeDataset(
     def genome_label(self) -> torch.Tensor:
         """Genome label for each scaffold, shape: [num scaffolds]"""
         return self.scaffold_genome_label
+
+
+# only used for type hints
+class SubsetGenomeDataset(Subset[GenomeGraphBatch]):
+    dataset: GenomeDataset
+    indices: Sequence[int]
+
+    def __init__(self, dataset: GenomeDataset, indices: Sequence[int]):
+        super().__init__(dataset, indices)
+
+
+class GenomeSubset(SubsetGenomeDataset):
+    def __getitem__(self, idx):
+        # self.indices points to genome indices, which doesn't work with GenomeDataset.__getitem__
+        
+        return self.dataset.get_genome(self.indices[idx])
+    
+    
