@@ -1,235 +1,89 @@
-from __future__ import annotations
-
+from enum import Enum
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Generic, Literal, Optional, Set, Type, TypeVar, cast
 
 import torch
-from lightning_cv import CrossValidationDataModule
-from lightning_cv.split import ImbalancedLeaveOneGroupOut
-from pydantic import BaseModel, Field
-from sklearn.model_selection import GroupKFold
-from torch.utils.data import DataLoader
+from lightning import LightningDataModule
+from lightning_cv.data import CrossValidationDataModuleMixin
 
-from pst.data.dataset import _SENTINEL_FRAGMENT_SIZE, FeatureLevel, GenomeDataset
-from pst.data.utils import compute_group_frequency_weights
-from pst.typing import EdgeIndexStrategy
-
-CVStragegies = Literal["ImbalancedLeaveOneGroupOut", "GroupKFold"]
-
-
-class DataConfig(BaseModel):
-    file: Path = Field(
-        ...,
-        description=(
-            "input protein embeddings file in `pst graphify` .h5 file format. See the wiki for "
-            "more information if manually creating this file. Otherwise, the `pst graphify`"
-            "workflow will create this file correctly."
-        ),
-    )
-    batch_size: int = Field(
-        32, description="batch size in number of genomes", le=128, multiple_of=2
-    )
-    train_on_full: bool = Field(
-        False,
-        description=(
-            "whether to train a single model on the full input data. When not specified, the "
-            "default is to train multiple models with cross validation"
-        ),
-    )
-    pin_memory: bool = Field(
-        True, description="whether to pin memory onto a CUDA GPU or not"
-    )
-    num_workers: int = Field(0, description="additional cpu workers to load data", ge=0)
-    edge_strategy: EdgeIndexStrategy = Field(
-        "chunked",
-        description=(
-            "strategy to create 'edges' between protein nodes in a genome graph. "
-            "chunked = split genomes in --chunk-size chunks. sparse = remove "
-            "interactions longer than --threshold. full = fully connected graph "
-            "like a regular transformer."
-        ),
-    )
-    chunk_size: int = Field(
-        30,
-        description=(
-            "size of sub-chunks to break genomes into if using --edge_strategy chunked. This is "
-            "the range of protein-protein neighborhoods within a contiguous scaffold. This is "
-            "different from --fragment-size, which controls artificially fragmenting scaffolds "
-            "before protein-protein neighborhoods are calculated. Protein-protein neighborhoods "
-            "are only calculated within a contiguous scaffold (happens AFTER --fragment-size "
-            "fragmenting)"
-        ),
-        ge=15,
-        le=50,
-    )
-    threshold: int = Field(
-        -1,
-        description=(
-            "range of protein interactions if using --edge_strategy [chunked|sparse]"
-        ),
-    )
-    log_inverse: bool = Field(
-        False, description="take the log of inverse class freqs as weights"
-    )
-    fragment_size: int = Field(
-        _SENTINEL_FRAGMENT_SIZE,
-        description=(
-            "artificially break scaffolds into fragments that have no more than this many "
-            "proteins. This is different from --chunk-size, which controls the range of "
-            "protein-protein neighborhoods within a contiguous scaffold. This value simulates "
-            "smaller scaffolds before protein-protein neighborhoods are calculated. Setting "
-            "this value can reduce the memory burden, especially for large genomes like bacteria "
-            "that encode thousands of proteins. Default is -1, which means NO fragmentation."
-            "During INFERENCE or FINETUNING ONLY, if this value is not -1, the dataset will be "
-            "be automatically fragmented into fragments of this --max-proteins size (if "
-            "--fragment-oversized-genomes used), which may still use too much memory, so consider "
-            "setting this to be smaller than --max-proteins"
-        ),
-    )
-    cv_strategy: CVStragegies = Field(
-        "ImbalancedLeaveOneGroupOut",
-        description=(
-            "cross validation strategy to use for training. The default is described in the "
-            "original PST manuscript. Custom strategies should be implemented with custom code "
-            "instead of using the CLI of pst for now."
-        ),
-    )
-
+from pst.data.config import (
+    CrossValDataConfig,
+    CrossValidationType,
+    CVStrategies,
+    DataConfig,
+)
+from pst.data.dataset import FeatureLevel, GenomeDataset, SubsetGenomeDataset
+from pst.data.loader import EmptyDataLoader, GenomeDataLoader
+from pst.data.split import random_split
+from pst.typing import KwargType
+from pst.utils._signatures import _resolve_config_type_from_init
 
 _StageType = Literal["fit", "test", "predict"]
+_BaseConfigType = TypeVar("_BaseConfigType", bound=DataConfig)
 
 
-class GenomeDataModule(CrossValidationDataModule):
+class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
     _LOGGABLE_HPARAMS = {
         "batch_size",
         "edge_strategy",
         "chunk_size",
         "threshold",
         "log_inverse",
-        "train_on_full",
         "fragment_size",
+        "dataloader",  # just log name
     }
 
-    def __init__(self, config: DataConfig, **kwargs) -> None:
-        self.config = config
-        self.dataset = GenomeDataset(
-            file=config.file,
-            edge_strategy=config.edge_strategy,
-            chunk_size=config.chunk_size,
-            threshold=config.threshold,
-            fragment_size=config.fragment_size,
-        )
+    config: _BaseConfigType
+    dataset: GenomeDataset
+    train_dataset: GenomeDataset | SubsetGenomeDataset
+    val_dataset: Optional[GenomeDataset | SubsetGenomeDataset]
+    test_dataset: GenomeDataset
+    predict_dataset: GenomeDataset
 
-        try:
-            scaffold_class_id = self.dataset.get_registered_feature("class_id")
-        # missing class_id feature
-        except KeyError:
-            self._HAS_CLASS_ID = False
-
-            # just create one for now - for the main PST, this is not needed for inference or
-            # finetuning with other objectives
-            # however, it is required for training/tuning
-            scaffold_class_id = torch.zeros(
-                self.dataset.num_scaffolds, dtype=torch.long
-            )
-        else:
-            self._HAS_CLASS_ID = True
-            class_weights = compute_group_frequency_weights(
-                scaffold_class_id, log_inverse=config.log_inverse
-            )
-            self.dataset.register_feature(
-                "weight", class_weights, feature_level="scaffold"
-            )
-
-        if config.cv_strategy == "ImbalancedLeaveOneGroupOut":
-            cv = ImbalancedLeaveOneGroupOut
-            cv_config = {"groups": scaffold_class_id}
-        elif config.cv_strategy == "GroupKFold":
-            cv = GroupKFold
-            n_splits = int(scaffold_class_id.max().item()) + 1
-            if n_splits < 2:
-                raise ValueError(
-                    "GroupKFold requires at least 2 unique groups to split on"
-                )
-            cv_config = {"n_splits": n_splits}
-        else:
-            raise ValueError(f"Unknown cross validation strategy: {config.cv_strategy}")
-
-        super().__init__(
-            dataset=self.dataset,
-            batch_size=config.batch_size,
-            cross_validator=cv,  # type: ignore
-            cross_validator_config=cv_config,
-            collate_fn=self.dataset.collate_indices,
-            group_attr="class_id",
-            **kwargs,
-        )
-
-        # shared / global dataloader kwargs, but they can still be updated
-        self.dataloader_kwargs = kwargs
-
-        self.save_hyperparameters(config.model_dump(include=self._LOGGABLE_HPARAMS))
-
-    def setup(self, stage: _StageType):
-        if stage == "fit":
-            if not self._HAS_CLASS_ID:
-                # TODO: this is too coupled with PST?
-                raise ValueError(
-                    "No `class_id` feature found in dataset. This is required for training triplet-loss PST with imbalanced taxonomic data."
-                )
-            if self.config.train_on_full:
-                # train final model with all data
-                self.train_dataset = self.dataset
-            else:
-                # train with cross validation
-                # sets self.data_manager module which keeps track of the folds
-                super().setup("fit")
-        elif stage == "test":
-            self.test_dataset = self.dataset
-        elif stage == "predict":
-            self.predict_dataset = self.dataset
-
-    def simple_dataloader(self, dataset: GenomeDataset, **kwargs) -> DataLoader:
-        kwargs = self._overwrite_dataloader_kwargs(**kwargs)
-        kwargs["dataset"] = dataset
-        kwargs["batch_size"] = self.batch_size
-        kwargs["collate_fn"] = dataset.collate
-        return DataLoader(**kwargs)
-
-    def train_dataloader(self, **kwargs) -> DataLoader:
-        return self.simple_dataloader(self.train_dataset, **kwargs)
-
-    def test_dataloader(self, **kwargs) -> DataLoader:
-        return self.simple_dataloader(self.test_dataset, **kwargs)
-
-    def predict_dataloader(self, **kwargs) -> DataLoader:
-        return self.simple_dataloader(self.predict_dataset, **kwargs)
-
-    @classmethod
-    def from_pretrained(
-        cls,
-        checkpoint_path: str | Path,
-        data_file: str | Path,
-        command_line_config: Optional[DataConfig] = None,
-        **kwargs,
+    def __init__(
+        self,
+        config: _BaseConfigType,
+        extra_save_hyperparameters: Optional[Set[str]] = None,
+        **dataloader_kwargs,
     ):
-        ckpt = torch.load(checkpoint_path, map_location="cpu")
-        config = DataConfig.model_construct(
-            file=Path(data_file), **ckpt["datamodule_hyper_parameters"]
+        if self._is_base_class():
+            raise TypeError(
+                "GenomeDataModuleMixin should not be instantiated directly. Use a concrete "
+                "subclass."
+            )
+
+        expected_config_type = self._resolve_config_type()
+        if not isinstance(config, expected_config_type):
+            raise TypeError(
+                f"Expected config of type {expected_config_type}, got {type(config)}"
+            )
+
+        super().__init__()
+
+        self.dataset: GenomeDataset = GenomeDataset(
+            **config.to_dict(include=GenomeDataset._init_arg_names())
         )
+        self.config = config
+        self.batch_size = config.batch_size
+        self.dataloader_kwargs = dataloader_kwargs
+        self._dataloader = self.config.dataloader.value
 
-        # allow users to update config from command line
-        # this is most significant for batch size and fragment size
-        # edge creation strategy should have been tuned and shouldn't be updated
-        if command_line_config is not None:
-            ALLOWED_KEYS = {"batch_size", "fragment_size"}
-            for key in ALLOWED_KEYS:
-                # check if they were set from cli
-                if key in command_line_config.model_fields_set:
-                    # if so, update the config
-                    setattr(config, key, getattr(command_line_config, key))
+        if extra_save_hyperparameters is None:
+            extra_save_hyperparameters = set()
 
-        return cls(config, **kwargs)
+        # save enums as the key str name
+        # for the configs, I already implemented auto converting enum keys to the enum type
+        save_hparams = {
+            k: v if not isinstance(v, Enum) else v.name
+            for k, v in self.config.to_dict(
+                include=self._LOGGABLE_HPARAMS | extra_save_hyperparameters
+            ).items()
+        }
+
+        self.save_hyperparameters(save_hparams)
+
+    def _overwrite_dataloader_kwargs(self, **new_dataloader_kwargs):
+        return self.dataloader_kwargs | new_dataloader_kwargs
 
     def register_feature(
         self,
@@ -239,3 +93,263 @@ class GenomeDataModule(CrossValidationDataModule):
         feature_level: FeatureLevel,
     ):
         self.dataset.register_feature(name, data, feature_level=feature_level)
+
+    @classmethod
+    def _resolve_config_type(cls) -> Type[_BaseConfigType]:
+        data_config_type = _resolve_config_type_from_init(
+            cls, config_name="config", default=DataConfig
+        )
+
+        return cast(Type[_BaseConfigType], data_config_type)
+
+    def _is_base_class(self) -> bool:
+        return self.__class__.__name__ == GenomeDataModuleMixin.__name__
+
+    #### lightning datamodule methods
+    def setup(self, stage: _StageType):
+        if stage == "fit":
+            if self.config.validation is None:
+                self.train_dataset = self.dataset
+                self.val_dataset = None
+            elif self.config.validation == "random":
+                split_kwargs: KwargType = dict(dataset=self.dataset, lengths=[0.8, 0.2])
+                # 80:20 split
+                if self._dataloader is GenomeDataLoader:
+                    split_kwargs["split_level"] = "genome"
+                else:
+                    split_kwargs["split_level"] = "scaffold"
+
+                # this will handle if we are splitting on scaffolds or genomes
+                self.train_dataset, self.val_dataset = random_split(**split_kwargs)
+            else:
+                self.train_dataset = self.dataset
+
+                # must be a path
+                init_kwargs = self.config.to_dict(
+                    include=GenomeDataset._init_arg_names()
+                )
+
+                del init_kwargs["file"]
+
+                self.val_dataset = GenomeDataset(
+                    file=self.config.validation, **init_kwargs
+                )
+        elif stage == "test":
+            self.test_dataset = self.dataset
+        elif stage == "predict":
+            self.predict_dataset = self.dataset
+
+    def simple_dataloader(self, dataset: GenomeDataset | SubsetGenomeDataset, **kwargs):
+        kwargs = self._overwrite_dataloader_kwargs(**kwargs)
+        kwargs["dataset"] = dataset
+        if self._dataloader is not GenomeDataLoader:
+            kwargs["collate_fn"] = GenomeDataset.collate
+        kwargs["batch_size"] = self.batch_size
+        return self._dataloader(**kwargs)
+
+    def train_dataloader(self, **kwargs):
+        return self.simple_dataloader(self.train_dataset, **kwargs)
+
+    def val_dataloader(self, **kwargs):
+        if self.val_dataset is not None:
+            return self.simple_dataloader(self.val_dataset, **kwargs)
+
+        # val loop will be a no op
+        return EmptyDataLoader()
+
+    def test_dataloader(self, **kwargs):
+        return self.simple_dataloader(self.test_dataset, **kwargs)
+
+    def predict_dataloader(self, **kwargs):
+        return self.simple_dataloader(self.predict_dataset, **kwargs)
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        checkpoint_path: str | Path,
+        data_file: str | Path,
+        batch_size: Optional[int] = None,
+        fragment_size: Optional[int] = None,
+        **kwargs,
+    ):
+        ckpt = torch.load(checkpoint_path, map_location="cpu")
+        hparams: KwargType = ckpt["datamodule_hyper_parameters"]
+        hparams["file"] = data_file
+        config_type = cls._resolve_config_type()
+        # need to convert str names of enums to the actual enum
+        hparams = config_type._convert_str_to_enum(hparams)
+        config = config_type.from_dict(hparams)
+
+        # allow these to be changed irrespective of what is in the checkpoint
+        # so these can be passed from the command line
+        if batch_size is not None:
+            config.batch_size = batch_size
+
+        if fragment_size is not None:
+            config.fragment_size = fragment_size
+
+        return cls(config, **kwargs)
+
+    def __repr__(self) -> str:
+        clsname = self.__class__.__name__
+        return f"{clsname}(config={self.config})"
+
+    def summarize(self) -> str:
+        num_proteins = self.dataset.num_proteins
+        num_genomes = self.dataset.num_genomes
+        num_scaffolds = self.dataset.num_scaffolds
+        num_features = len(self.dataset._registered_features)
+        embedding_dim = self.dataset.feature_dim
+
+        clsname = self.__class__.__name__
+        summary = [
+            f"{clsname}:",
+            f"  - protein embeddings: ({num_proteins}, {embedding_dim})",
+            f"  - {num_genomes=}",
+            f"  - {num_scaffolds=}",
+            f"  - {num_features=}",
+        ]
+
+        return "\n".join(summary)
+
+
+## THIS IS WITHOUT CV
+class GenomeDataModule(GenomeDataModuleMixin[DataConfig]):
+    def __init__(self, config: DataConfig, **dataloader_kwargs):
+        super().__init__(config, **dataloader_kwargs)
+
+
+### THIS IS WITH CV
+class _CrossValGenomeDataModule(
+    GenomeDataModuleMixin[CrossValDataConfig],
+):
+    def __init__(self, config: CrossValDataConfig, **dataloader_kwargs):
+        super().__init__(
+            config,
+            extra_save_hyperparameters={"cv_strategy", "cv_type", "cv_var_name"},
+            **dataloader_kwargs,
+        )
+
+
+class CrossValGenomeDataModule(
+    CrossValidationDataModuleMixin, _CrossValGenomeDataModule
+):
+    def __init__(self, config: CrossValDataConfig, **dataloader_kwargs):
+        _CrossValGenomeDataModule.__init__(self, config, **dataloader_kwargs)
+
+        cross_validator_config, dataset_size, group_attr_name, label_attr_name = (
+            self._setup_cross_validation()
+        )
+
+        CrossValidationDataModuleMixin.__init__(
+            self,
+            dataset=self.dataset,
+            batch_size=self.batch_size,
+            cross_validator=self.config.cv_strategy.value,  # type: ignore
+            cross_validator_config=cross_validator_config,
+            dataset_size=dataset_size,
+            dataloader_type=self.config.dataloader.value,
+            y_attr=label_attr_name,
+            group_attr=group_attr_name,
+            **self.dataloader_kwargs,
+        )
+
+    def setup(self, stage: _StageType):
+        if stage != "fit":
+            raise RuntimeError("CrossValGenomeDataModule only supports 'fit' stage")
+
+        # there is no need for any additional setup since the cross validation splitter
+        # has already been setup during initialization
+
+    def _get_group_data(self, group_attr_name: str) -> tuple[str, torch.Tensor]:
+        # this is for backwards compatibility where `class_id`
+        # in the original training datasets was used as the grouping var
+        backup_name = "class_id"
+        if group_attr_name not in self.dataset._registered_features:
+            if backup_name not in self.dataset._registered_features:
+                raise ValueError(
+                    f"Group attribute {group_attr_name} not found in dataset features: "
+                    f"{self.dataset._registered_features.keys()}. This should be registered in "
+                    "the graph-formatted .h5 data file as a feature. If you do not need cross "
+                    "validation, then you should use the `GenomeDataModule` instead."
+                )
+            group_attr_name = backup_name
+
+        return group_attr_name, self.dataset.get_registered_feature(group_attr_name)
+
+    def _get_label_data(self, label_attr_name: str) -> torch.Tensor:
+        if label_attr_name not in self.dataset._registered_features:
+            raise ValueError(
+                f"Label attribute {label_attr_name} not found in dataset features: "
+                f"{self.dataset._registered_features.keys()}. This should be registered in the "
+                "graph-formatted .h5 data file as a feature."
+            )
+
+        return self.dataset.get_registered_feature(label_attr_name)
+
+    def _sanitize_cv_var_name(
+        self,
+    ):
+        if self.config.cv_type == CrossValidationType.both:
+            if (
+                "," not in self.config.cv_var_name
+                or self.config.cv_var_name.count(",") != 1
+            ):
+                raise ValueError(
+                    f"Expected a comma-separated list of label,group for cv_var_name when using "
+                    f"`both` cv_type, got {self.config.cv_var_name}"
+                )
+        elif "," in self.config.cv_var_name:
+            raise ValueError(
+                "A ',' was detected in the cv_var_name, indicating that the cv split is "
+                "happening on both a target label AND a group label. If that is the case, "
+                f"then you should use the `both` cv_type instead of `{self.config.cv_type.value}`."
+            )
+
+    def _check_cv_strategy_and_val_type(self):
+        cv_type = self.config.cv_type.value
+        expected_cv_strategies: set[CVStrategies] = getattr(
+            CVStrategies, f"{cv_type}_methods"
+        )()
+
+        if self.config.cv_strategy not in expected_cv_strategies:
+            raise ValueError(
+                f"Cross validation strategy {self.config.cv_strategy} is not compatible with "
+                f"cross validation type {cv_type}. Expected one of: {expected_cv_strategies}"
+            )
+
+    def _setup_cross_validation(self):
+        self._check_cv_strategy_and_val_type()
+        cross_validator_config: KwargType = dict()
+
+        # TODO: what if these need to be programmatically set? not sure what use case that would be
+        if self.config.cv_type == CrossValidationType.group:
+            group_attr_name, group_id = self._get_group_data(self.config.cv_var_name)
+            label_attr_name = None
+
+            if self.config.cv_strategy == CVStrategies.ImbalancedLeaveOneGroupOut:
+                cross_validator_config["groups"] = group_id
+            elif self.config.cv_strategy == CVStrategies.GroupKFold:
+                cross_validator_config["n_splits"] = int(group_id.unique().numel())
+
+        elif self.config.cv_type == CrossValidationType.label:
+            label_attr_name = self.config.cv_var_name
+            group_attr_name = None
+            label_id = self._get_label_data(self.config.cv_var_name)
+            # only allowed cv strategy is StratifiedKFold
+            cross_validator_config["n_splits"] = int(label_id.unique().numel())
+        else:
+            label_attr_name, group_attr_name = self.config.cv_var_name.split(",")
+            group_attr_name, group_id = self._get_group_data(group_attr_name)
+            label_id = self._get_label_data(label_attr_name)
+
+            # only allowed cv strategy is StratifiedGroupKFold
+            # we are going to split on the groups but try to keep label props balanced
+            cross_validator_config["n_splits"] = int(group_id.unique().numel())
+
+        if self.config.dataloader is GenomeDataLoader:
+            dataset_size = self.dataset.num_genomes
+        else:
+            dataset_size = self.dataset.num_scaffolds
+
+        return cross_validator_config, dataset_size, group_attr_name, label_attr_name
