@@ -1,20 +1,46 @@
-from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Literal, Union
 
-from lightning_cv import BaseModelConfig as _BaseModelConfig
-from pydantic import BaseModel, Field
+from jsonargparse.typing import (
+    NonNegativeInt,
+    OpenUnitInterval,
+    PositiveFloat,
+    PositiveInt,
+    restricted_number_type,
+)
 
 from pst.typing import NO_NEGATIVES_MODES
+from pst.utils.dataclass_utils import DataclassValidatorMixin, validated_field
 
 MAX_PROTEINS_PER_GENOME = 2048
 
 
-class AugmentationConfig(BaseModel):
-    sample_rate: float = Field(
-        0.5, description="PointSwap sampler swapping rate", gt=0.0, lt=1.0
-    )
+@dataclass
+class BaseAugmentationConfig(DataclassValidatorMixin):
+    """This is used to pass arguments to setting up the augmentation function.
+
+    Subclass this if you need to pass additional arguments to the augmentation function.
+    """
+
+    pass
 
 
-class BaseLossConfig(BaseModel):
+@dataclass
+class AugmentationConfig(BaseAugmentationConfig):
+    """AUGMENTATION
+
+    using PointSwap.
+
+    Attributes:
+        sample_rate (float): PointSwap sampler swapping rate in (0.0, 1.0)
+    """
+
+    sample_rate: float = validated_field(0.5, validator=OpenUnitInterval)
+    """PointSwap sampler swapping rate in (0.0, 1.0)"""
+
+
+@dataclass
+class BaseLossConfig(DataclassValidatorMixin):
     """This is used to pass arguments to setting up the loss function.
 
     Subclass this if you need to pass additional arguments to the loss function.
@@ -23,117 +49,272 @@ class BaseLossConfig(BaseModel):
     pass
 
 
+@dataclass
 class WeightedLossConfig(BaseLossConfig):
-    sample_scale: float = Field(
-        7.0,
-        description=(
-            "exponential decay scale factor for weighting  samples during triplet, contrastive, or relational loss"
-        ),
-        gt=0.0,
-    )
+    """Base config for weighted loss functions that need a weight scale factor.
 
-
-class GenomeTripletLossConfig(WeightedLossConfig):
-    margin: float = Field(0.1, description="triplet loss margin", gt=0.0)
-    no_negatives_mode: NO_NEGATIVES_MODES = Field(
-        "closest_to_positive",
-        description="mode to handle event of no semihard negative sample existing",
-    )
-
-
-class OptimizerConfig(BaseModel):
-    lr: float = Field(1e-3, description="learning rate", ge=1e-5, le=1e-1)
-    weight_decay: float = Field(
-        0.0, description="optimizer weight decay", ge=0.0, le=1e-1
-    )
-    betas: tuple[float, float] = Field((0.9, 0.999), description="optimizer betas")
-    warmup_steps: int = Field(0, description="number of warmup steps", ge=0)
-    use_scheduler: bool = Field(
-        False, description="whether or not to use a linearly decaying scheduler"
-    )
-
-
-class BaseModelConfig(_BaseModelConfig):
-    """Base config for all ProteinSetTransformer models.
-
-    This can be used as is, but subclassing can be used to add additional parameters.
-    Additionally, a custom loss config can be passed to the loss field when subclassing to
-    overwrite the default loss config.
+    Attributes:
+        sample_scale (float): exponential decay scale factor for weighting samples during triplet, contrastive, or relational loss
     """
 
-    in_dim: int = Field(
-        -1, description="input dimension, default is to use the dataset dimension"
-    )
-    out_dim: int = Field(
-        -1, description="output dimension, default is to use the input dimension"
-    )
-    num_heads: int = Field(4, description="number of attention heads", gt=0)
-    n_enc_layers: int = Field(5, description="number of encoder layers", gt=0)
-    embed_scale: int = Field(
-        4,
-        description=(
-            "scale factor for positional and strand embeddings. These embeddings will be "
-            "of size in_dim/n, ie higher number means smaller embeddings."
-        ),
-        ge=1,
-        le=8,
-    )
-    dropout: float = Field(
-        0.5, description="dropout proportion for individual weights", ge=0.0, lt=1.0
-    )
-    layer_dropout: float = Field(
-        0.0, description="dropout proportion for entire layers", ge=0.0, lt=1.0
-    )
-    proj_cat: bool = Field(
-        False,
-        description=(
-            "whether to project the concatenated pLM, positional, and strand embeddings "
-            "back to the original dimensionality"
-        ),
-    )
-    max_proteins: int = Field(
-        MAX_PROTEINS_PER_GENOME,
-        description=(
-            "maximum number of proteins per genome. This affects the possible size of the "
-            "positional embeddings and does not need to be the actual maximum number of "
-            "proteins in the dataset. The actual maximum number of proteins just needs to be "
-            "less than or equal to this value. Increasing this value will lead to increases in "
-            "model size equal to this value * embedding_dim / embed_scale * 4 bytes."
-        ),
-    )
-    compile: bool = Field(False, description="compile model using torch.compile")
-    optimizer: OptimizerConfig
-    loss: BaseLossConfig
-    augmentation: AugmentationConfig
-
-    @classmethod
-    def default(cls):
-        schema = dict()
-        for key, field in cls.model_fields.items():
-            if isinstance(field.annotation, type):
-                if isinstance(field.annotation, BaseModel) or issubclass(
-                    field.annotation, BaseModel
-                ):
-                    # field is a pydantic model
-                    # NOTE: does not handle any nesting below this...
-                    value = field.annotation.model_construct()
-                else:
-                    value = field.get_default()
-
-                schema[key] = value
-
-        return cls.model_validate(schema)
+    sample_scale: float = validated_field(7.0, validator=PositiveFloat)
+    """exponential decay scale factor for weighting samples during triplet, contrastive, or 
+    relational loss"""
 
 
-class ModelConfig(BaseModelConfig):
-    loss: GenomeTripletLossConfig
+@dataclass
+class GenomeTripletLossConfig(WeightedLossConfig):
+    """LOSS
+
+    Triplet loss with exponential decay weighting.
+
+    Attributes:
+        margin (float): triplet loss margin
+        no_negatives_mode (NO_NEGATIVES_MODES): mode to handle event of no semihard negative
+            sample existing
+    """
+
+    margin: float = validated_field(0.1, validator=PositiveFloat)
+    """triplet loss margin"""
+
+    no_negatives_mode: NO_NEGATIVES_MODES = "closest_to_positive"
+    """mode to handle event of no semihard negative sample existing"""
 
 
+LearningRate = restricted_number_type(
+    "LearningRate",
+    float,
+    [(">=", 1e-5), ("<=", 1e-1)],
+    docstring="learning rate in [1e-5, 1e-1]",
+)
+
+WeightDecay = restricted_number_type(
+    "WeightDecay",
+    float,
+    [(">=", 0.0), ("<=", 1e-1)],
+    docstring="optimizer weight decay in [0.0, 1e-1]",
+)
+
+
+@dataclass
+class OptimizerConfig(DataclassValidatorMixin):
+    """OPTIMIZER
+    for constructing a `torch.optim.AdamW` optimizer.
+
+    Attributes:
+        lr (float): learning rate
+        weight_decay (float): optimizer weight decay
+        betas (tuple[float, float]): optimizer betas
+        warmup_steps (int): number of warmup steps
+        use_scheduler (bool): whether or not to use a linearly decaying scheduler
+    """
+
+    lr: float = validated_field(1e-3, validator=LearningRate)
+    """learning rate"""
+    weight_decay: float = validated_field(0.0, validator=WeightDecay)
+    """optimizer weight decay"""
+    betas: tuple[float, float] = (0.9, 0.999)
+    """optimizer betas"""
+    warmup_steps: int = validated_field(0, validator=NonNegativeInt)
+    """number of warmup steps"""
+    use_scheduler: bool = False
+    """whether or not to use a linearly decaying scheduler"""
+
+
+LeftClosedRightOpenUnitInterval = restricted_number_type(
+    "LeftClosedRightOpenUnitInterval",
+    float,
+    [(">=", 0.0), ("<", 1.0)],
+    docstring="float in [0.0, 1.0)",
+)
+
+
+@dataclass
+class BaseModelConfig(DataclassValidatorMixin):
+    """MODEL
+
+    Base config for all PST models, genomic or protein. This can be used as is, but subclassing
+    can be used to add additional parameters. Additionally, custom loss and augmentation
+    configs can be passed to the respective fields when subclassing. The subfields in the loss
+    field are passed as additional arguments to the `setup_objective` function.
+
+    Attributes:
+        in_dim (int): input dimension
+        out_dim (int): output dimension, default is to use the input dimension
+        num_heads (int): number of attention heads
+        n_enc_layers (int): number of encoder layers
+        embed_scale (int): scale factor for positional and strand embeddings
+        dropout (float): dropout rate for individual weight parameters, [0.0, 1.0)
+        layer_dropout (float): dropout rate for entire layers, [0.0, 1.0)
+        proj_cat (bool): whether to project the concatenated pLM, positional, and strand embeddings
+        max_proteins (int): maximum number of proteins in a scaffold
+        compile (bool): whether to compile the model with `torch.compile`
+        optimizer (OptimizerConfig): OPTIMIZER
+        loss (BaseLossConfig): LOSS
+        augmentation (BaseAugmentationConfig): AUGMENTATION
+    """
+
+    # the above is used for inherited docstrings
+
+    # however the attribute docstrings are used for IDEs,
+    # while jsonargparse can use either depending on the situation
+    in_dim: int
+    """input dimension"""
+
+    out_dim: int = -1
+    """output dimension, default is to use the input dimension"""
+
+    num_heads: int = validated_field(4, validator=PositiveInt)
+    """number of attention heads"""
+
+    n_enc_layers: int = validated_field(5, validator=PositiveInt)
+    """number of encoder layers"""
+
+    embed_scale: int = validated_field(4, validator=PositiveInt)
+    """scale factor for positional and strand embeddings"""
+
+    dropout: float = validated_field(0.0, validator=LeftClosedRightOpenUnitInterval)
+    """dropout rate for individual weight parameters, [0.0, 1.0)"""
+
+    layer_dropout: float = validated_field(
+        0.0, validator=LeftClosedRightOpenUnitInterval
+    )
+    """dropout rate for entire layers, [0.0, 1.0)"""
+
+    proj_cat: bool = False
+    """whether to project the concatenated pLM, positional, and strand embeddings"""
+
+    max_proteins: int = validated_field(MAX_PROTEINS_PER_GENOME, validator=PositiveInt)
+    """maximum number of proteins in a scaffikd"""
+
+    compile: bool = False
+    """whether to compile the model with `torch.compile`"""
+
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    """OPTIMIZER
+    
+    config to setup a `torch.optim.AdamW` optimizer
+    """
+
+    loss: BaseLossConfig = field(default_factory=BaseLossConfig)
+    """LOSS"""
+
+    augmentation: BaseAugmentationConfig = field(default_factory=BaseAugmentationConfig)
+    """AUGMENTATION"""
+
+    def _validate_dimensions(self, attr: Literal["in_dim", "out_dim"]):
+        value = getattr(self, attr)
+        if value != -1 and value <= 0:
+            raise ValueError(f"{attr} must be > 0 if specified")
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        for attr in ["in_dim", "out_dim"]:
+            self._validate_dimensions(attr)  # type: ignore
+
+        if (self.in_dim % self.num_heads) != 0:
+            raise ValueError("in_dim must be divisible by num_heads if provided")
+
+    def _get_original_dims(self) -> tuple[int, int]:
+        """
+        Get the original embedding dimensions before concatenation of positional and strand
+        embeddings.
+
+        The added dimension is: `D = 2 * embed_scale`
+        So, the formula for the dim expansion is: `new_in_dim = 2 * D + in_dim`
+        Thus, the formula for undoing this is: `in_dim = (new_in_dim * embed_scale) / (2 + embed_scale)
+
+        Args:
+            config (BaseModelConfig): the model config
+
+        Returns:
+            tuple[int, int]: the original input and output dimensions
+        """
+
+        new_in_dim = self.in_dim
+        embed_scale = self.embed_scale
+
+        original_in_dim = (new_in_dim * embed_scale) // (2 + embed_scale)
+
+        if self.in_dim == self.out_dim:
+            original_out_dim = original_in_dim
+        else:
+            original_out_dim = self.out_dim
+
+        return original_in_dim, original_out_dim
+
+    def _undo_dim_expansion(self):
+        """
+        The original input dimensions are expanded by PST models due to concatenating position
+        and strand embeddings. This may need to be undone in certain cases, such as updating
+        a pre-existing model's config, which would require creating a new model.
+
+        This method undoes the dimension expansion in place.
+        """
+        original_in_dim, original_out_dim = self._get_original_dims()
+
+        self.in_dim = original_in_dim
+        self.out_dim = original_out_dim
+
+
+# TODO: this should be renamed to triplet_loss_config
+@dataclass
+class GenomeTripletLossModelConfig(BaseModelConfig):
+    """MODEL
+
+    Model config for PST models that use triplet loss and PointSwap augmentation.
+
+    Attributes:
+        loss (GenomeTripletLossConfig): LOSS
+        augmentation (AugmentationConfig): AUGMENTATION using PointSwap
+    """
+
+    loss: GenomeTripletLossConfig = field(default_factory=GenomeTripletLossConfig)
+    """LOSS"""
+
+    augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
+    """AUGMENTATION using PointSwap"""
+
+
+MaskingRate = restricted_number_type(
+    "MaskingRate",
+    float,
+    [(">=", 0.0), ("<", 0.5)],
+    docstring="masking rate for MLM in [0.0, 0.5)",
+)
+
+
+@dataclass
 class MaskedLanguageModelingLossConfig(WeightedLossConfig):
-    masking_rate: float = Field(
-        0.15, gt=0.0, lt=0.5, description="masking rate for MLM"
-    )
+    """LOSS
+
+    Loss config for masked language modeling.
+
+    Attributes:
+        masking_rate (float): masking rate for MLM in [0.0, 0.5).
+    """
+
+    masking_rate: float = validated_field(0.15, validator=MaskingRate)
+    """masking rate for MLM"""
 
 
+@dataclass
 class MaskedLanguageModelingConfig(BaseModelConfig):
-    loss: MaskedLanguageModelingLossConfig
+    """MODEL
+
+    Model config for PSTs that use masked language modeling loss.
+
+    Attributes:
+        loss (MaskedLanguageModelingLossConfig): LOSS
+    """
+
+    loss: MaskedLanguageModelingLossConfig = field(
+        default_factory=MaskedLanguageModelingLossConfig
+    )
+    """LOSS"""
+
+
+UnionModelConfig = Union[
+    BaseModelConfig, GenomeTripletLossModelConfig, MaskedLanguageModelingConfig
+]
