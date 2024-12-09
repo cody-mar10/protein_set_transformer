@@ -1,67 +1,86 @@
-from __future__ import annotations
-
 import logging
 from functools import partial
 
-import lightning_cv as lcv
 import optuna
+from lightning_cv.tuning import Tuner  # TODO: update imports
 from lightning_cv.tuning.callbacks import OptunaHyperparameterLogger
 
-from pst.data.modules import GenomeDataModule
+from pst.data.config import CrossValDataConfig
+from pst.data.modules import CrossValGenomeDataModule
+from pst.nn.base import BaseModelTypes
+from pst.nn.config import BaseModelConfig
+from pst.nn.modules import ProteinSetTransformer
 from pst.training.tuning.optuna import OptunaIntegration
 from pst.training.utils.cv import init_trainer_config
-from pst.training.utils.dim import check_feature_dim
-from pst.utils.auto import auto_resolve_model_type
-from pst.utils.cli.modes import TuningMode
+from pst.training.utils.pst import _add_group_weights
+from pst.utils.cli.experiment import ExperimentArgs
+from pst.utils.cli.trainer import TrainerArgs
+from pst.utils.cli.tuning import TuningArgs
 
 logger = logging.getLogger(__name__)
 
 
-def _optimize(trial: optuna.Trial, tuner: lcv.tuning.Tuner) -> float:
+class _PatchedTuner(Tuner):
+    # this is to patch in the weights for PST for backwards compatibility
+
+    def _create_datamodule(self):
+        datamodule = super()._create_datamodule()
+
+        if self.model_type is ProteinSetTransformer:
+            _add_group_weights(datamodule)  # type: ignore
+
+        return datamodule
+
+
+def _optimize(trial: optuna.Trial, tuner: Tuner) -> float:
     return tuner.tune(trial=trial)
 
 
-def tune(config: TuningMode):
+def tune(
+    model_type: BaseModelTypes,
+    model_cfg: BaseModelConfig,
+    data: CrossValDataConfig,
+    trainer_cfg: TrainerArgs,
+    experiment: ExperimentArgs,
+    tuning: TuningArgs,
+):
     logger.info("Tuning hyperparameters with cross validation.")
-    check_feature_dim(config)
 
     ### CV TRAINER INIT
     trainer_config = init_trainer_config(
-        config,
+        model_cfg,
+        experiment,
+        trainer_cfg,
         checkpoint=True,
         early_stopping=True,
         timer=True,
         add_logger=False,  # Tuner adds logger
     )
 
-    model_type = auto_resolve_model_type(config.experiment.pst_model_type)
-
     ### CV TUNER INIT
-    tuner = lcv.tuning.Tuner(
+    tuner = _PatchedTuner(
         model_type=model_type,  # type: ignore
-        model_config=config.model,
-        datamodule_type=GenomeDataModule,  # type: ignore
-        datamodule_config=config.data,
+        model_config=model_cfg,
+        datamodule_type=CrossValGenomeDataModule,  # type: ignore
+        datamodule_config=data,
         trainer_config=trainer_config,
-        logdir=config.trainer.default_root_dir,
-        experiment_name=config.experiment.name,
-        hparam_config_file=config.experiment.config,
+        logdir=trainer_cfg.default_root_dir,
+        experiment_name=experiment.name,
+        hparam_config_file=tuning.config,
     )
 
     ### OPTUNA STUDY
     integration = OptunaIntegration(
         expt_name=tuner.experiment_name,
         default_root_dir=tuner.logdir,
-        **config.tuning.model_dump(
-            exclude={"config", "parallel"},
-        ),
+        **tuning.to_dict(exclude={"config", "parallel"}),
     )
 
     optimize = partial(_optimize, tuner=tuner)
     integration.register_callbacks(
         OptunaHyperparameterLogger(
-            root_dir=config.trainer.default_root_dir,
-            expt_name=config.experiment.name,
+            root_dir=trainer_cfg.default_root_dir,
+            expt_name=experiment.name,
         )
     )
 
