@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import lightning as L
 from lightning.pytorch.callbacks import (
     Callback,
@@ -8,17 +6,20 @@ from lightning.pytorch.callbacks import (
     ModelCheckpoint,
 )
 
-from pst.training.debug import LGradientLogger
+from pst.nn.config import BaseModelConfig
 from pst.training.utils.constants import (
     CHECKPOINT_EVERY_N_EPOCHS,
     MIN_DELTA,
     STOPPING_THRESHOLD,
 )
-from pst.utils.cli.modes import TrainingMode
+from pst.utils.cli.trainer import TrainerArgs
 
 
 def get_callbacks(
-    config: TrainingMode, checkpoint: bool = True, early_stopping: bool = True
+    trainer_cfg: TrainerArgs,
+    checkpoint: bool = True,
+    early_stopping: bool = True,
+    monitor: str = "train_loss",
 ) -> list[Callback]:
     callbacks: list[Callback] = list()
 
@@ -27,9 +28,9 @@ def get_callbacks(
             ModelCheckpoint(
                 filename="{epoch}_{train_loss:.3f}",
                 save_last=True,
-                save_top_k=config.experiment.save_top_k,
+                save_top_k=trainer_cfg.extra.save_top_k,
                 every_n_epochs=CHECKPOINT_EVERY_N_EPOCHS,
-                monitor="train_loss",
+                monitor=monitor,
                 mode="min",
             )
         )
@@ -38,13 +39,13 @@ def get_callbacks(
         callbacks.append(
             EarlyStopping(
                 monitor="train_loss",
-                patience=config.experiment.patience,
+                patience=trainer_cfg.extra.patience,
                 verbose=True,
                 mode="min",
                 check_finite=True,
                 strict=True,
                 stopping_threshold=STOPPING_THRESHOLD,
-                min_delta=config.experiment.min_delta or MIN_DELTA,
+                min_delta=trainer_cfg.extra.min_delta or MIN_DELTA,
             )
         )
 
@@ -52,27 +53,29 @@ def get_callbacks(
 
 
 def init_lightning_trainer(
-    config: TrainingMode,
+    model_cfg: BaseModelConfig,
+    trainer_cfg: TrainerArgs,
     checkpoint: bool = True,
     early_stopping: bool = True,
+    monitor: str = "train_loss",
 ) -> L.Trainer:
     callbacks = get_callbacks(
-        config, checkpoint=checkpoint, early_stopping=early_stopping
+        trainer_cfg=trainer_cfg,
+        checkpoint=checkpoint,
+        early_stopping=early_stopping,
+        monitor=monitor,
     )
 
-    if config.model.optimizer.use_scheduler:
+    if model_cfg.optimizer.use_scheduler:
         callbacks.append(
             LearningRateMonitor(logging_interval="epoch", log_momentum=True)
         )
 
-    if config.experiment.log_gradients:
-        callbacks.append(LGradientLogger())
-
     trainer = L.Trainer(
         # want max time value, not enum
-        max_time=config.trainer.max_time.value,
+        max_time=trainer_cfg.max_time.value,
+        precision=trainer_cfg.precision.value,
         callbacks=callbacks,
-        **config.trainer.model_dump(exclude={"max_time"}),
-        detect_anomaly=config.experiment.detect_anomaly,
+        **trainer_cfg.to_dict(exclude={"max_time", "extra", "precision"}),
     )
     return trainer

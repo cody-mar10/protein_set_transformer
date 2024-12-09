@@ -10,7 +10,7 @@ from lightning_cv.callbacks.lr_monitor import LearningRateMonitor
 from lightning_cv.callbacks.stopping import EarlyStopping
 from lightning_cv.callbacks.timer import Timer
 
-from pst.training.debug import debugify
+from pst.nn.config import BaseModelConfig
 from pst.training.utils.constants import (
     BUFFER,
     CHECKPOINT_EVERY_N_EPOCHS,
@@ -18,14 +18,14 @@ from pst.training.utils.constants import (
     STOPPING_THRESHOLD,
     TIMER_STOP_INTERVAL,
 )
-from pst.utils.cli.modes import TrainingMode
+from pst.utils.cli.experiment import ExperimentArgs
 from pst.utils.cli.trainer import TrainerArgs
 
 log = logging.getLogger(__name__)
 
 
 def get_callbacks(
-    config: TrainingMode,
+    trainer_cfg: TrainerArgs,
     checkpoint: bool = True,
     early_stopping: bool = True,
     timer: bool = True,
@@ -36,7 +36,7 @@ def get_callbacks(
         callbacks.append(
             ModelCheckpoint(
                 save_last=True,
-                save_top_k=config.experiment.save_top_k,
+                save_top_k=trainer_cfg.extra.save_top_k,
                 every_n_epochs=CHECKPOINT_EVERY_N_EPOCHS,
             )
         )
@@ -44,19 +44,19 @@ def get_callbacks(
     if early_stopping:
         callbacks.append(
             EarlyStopping(
-                patience=config.experiment.patience,
+                patience=trainer_cfg.extra.patience,
                 verbose=True,
                 mode="min",
                 check_finite=True,
                 stopping_threshold=STOPPING_THRESHOLD,
-                min_delta=config.experiment.min_delta or MIN_DELTA,
+                min_delta=trainer_cfg.extra.min_delta or MIN_DELTA,
             )
         )
 
     if timer:
         callbacks.append(
             Timer(
-                duration=config.trainer.max_time.value,
+                duration=trainer_cfg.max_time.value,
                 buffer=BUFFER,
                 interval=TIMER_STOP_INTERVAL,
             )
@@ -77,12 +77,12 @@ def get_trainer_config(
         limit_val_batches=trainer_args.limit_val_batches or 1.0,
         checkpoint_dir=trainer_args.default_root_dir,
         grad_accum_steps=trainer_args.accumulate_grad_batches,
-        **trainer_args.model_dump(
+        precision=trainer_args.precision.value,
+        accelerator=trainer_args.accelerator.value,
+        strategy=trainer_args.strategy.value,
+        **trainer_args.to_dict(
             include={
-                "accelerator",
-                "strategy",
                 "devices",
-                "precision",
                 "max_epochs",
                 "gradient_clipping_algorithm",
                 "gradient_clip_val",
@@ -93,41 +93,36 @@ def get_trainer_config(
 
 
 def init_trainer_config(
-    config: TrainingMode,
+    model_cfg: BaseModelConfig,
+    experiment: ExperimentArgs,
+    trainer_cfg: TrainerArgs,
     checkpoint: bool = True,
     early_stopping: bool = True,
     timer: bool = True,
     add_logger: bool = True,
 ) -> CrossValidationTrainerConfig:
     callbacks = get_callbacks(
-        config,
+        trainer_cfg,
         checkpoint,
         early_stopping,
         timer,
     )
 
-    if config.model.optimizer.use_scheduler:
+    if model_cfg.optimizer.use_scheduler:
         callbacks.append(LearningRateMonitor())
 
     if add_logger:
         logger = CSVLogger(
-            root_dir=config.trainer.default_root_dir,
-            name=config.experiment.name,
+            root_dir=trainer_cfg.default_root_dir,
+            name=experiment.name,
         )
     else:
         logger = None
 
     trainer_config = get_trainer_config(
-        config.trainer,
+        trainer_cfg,
         callbacks,
         logger,
     )
-
-    if config.experiment.log_gradients:
-        log.warning(
-            "Logging gradients is on, and will be written to disk, which may take up a "
-            "lot of space."
-        )
-        debugify(trainer_config, config.trainer)
 
     return trainer_config
