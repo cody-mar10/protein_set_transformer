@@ -3,31 +3,45 @@ import logging
 from pst import data, nn, predict, training, utils
 
 # public API
+from pst.data.config import CrossValDataConfig, DataConfig
 from pst.data.dataset import GenomeDataset
 from pst.data.graph import GenomeGraph
-from pst.data.loader import GenomeDataLoader
-from pst.data.modules import DataConfig, GenomeDataModule
+from pst.data.loader import GenomeDataLoader, ScaffoldDataLoader
+from pst.data.modules import CrossValGenomeDataModule, GenomeDataModule
 from pst.nn.base import BaseProteinSetTransformer, BaseProteinSetTransformerEncoder
-from pst.nn.config import BaseLossConfig, BaseModelConfig, ModelConfig
-from pst.nn.modules import ProteinSetTransformer, ProteinSetTransformerEncoder
+from pst.nn.config import (
+    BaseLossConfig,
+    BaseModelConfig,
+    GenomeTripletLossModelConfig,
+    MaskedLanguageModelingConfig,
+)
+from pst.nn.modules import (
+    MLMProteinSetTransformer,
+    ProteinSetTransformer,
+    ProteinSetTransformerEncoder,
+)
 from pst.typing import GenomeGraphBatch, MaskedGenomeGraphBatch
 
 __all__ = [
+    "CrossValDataConfig",
+    "DataConfig",
     "GenomeDataset",
     "GenomeGraph",
     "GenomeDataLoader",
-    "DataConfig",
+    "ScaffoldDataLoader",
+    "CrossValGenomeDataModule",
     "GenomeDataModule",
     "BaseProteinSetTransformer",
     "BaseProteinSetTransformerEncoder",
     "BaseLossConfig",
     "BaseModelConfig",
-    "ModelConfig",
+    "GenomeTripletLossModelConfig",
+    "MaskedLanguageModelingConfig",
     "ProteinSetTransformer",
     "ProteinSetTransformerEncoder",
+    "MLMProteinSetTransformer",
     "GenomeGraphBatch",
     "MaskedGenomeGraphBatch",
 ]
 
 _logger = logging.getLogger(__name__)
-
