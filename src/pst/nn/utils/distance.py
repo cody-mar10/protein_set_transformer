@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import torch
 from einops import reduce
 from torch_scatter import segment_mean_csr, segment_min_csr

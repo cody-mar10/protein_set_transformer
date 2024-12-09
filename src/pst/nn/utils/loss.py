@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import einops
 import torch
 import torch.nn as nn
@@ -94,7 +92,6 @@ class AugmentedWeightedTripletLoss(nn.Module):
 
 
 class MaskedLanguageModelingLoss(nn.Module):
-    # TODO: add option for positive sampling
     def forward(
         self,
         y_pred: torch.Tensor,

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import NamedTuple, TypedDict
 
 import tables as tb
@@ -147,6 +145,12 @@ def compute_group_frequency_weights(
     return weights
 
 
+class RegisteredFeature(NamedTuple):
+    name: str
+    data: torch.Tensor
+    feature_level: FeatureLevel
+
+
 class _ScaffoldFeatureFragmentedData(TypedDict):
     scaffold_part_of_multiscaffold: torch.Tensor
     scaffold_registry: list[RegisteredFeature]
@@ -157,9 +161,3 @@ class _FragmentedData(_ScaffoldFeatureFragmentedData):
     scaffold_ptr: torch.Tensor
     scaffold_genome_label: torch.Tensor
     scaffold_label: torch.Tensor
-
-
-class RegisteredFeature(NamedTuple):
-    name: str
-    data: torch.Tensor
-    feature_level: FeatureLevel

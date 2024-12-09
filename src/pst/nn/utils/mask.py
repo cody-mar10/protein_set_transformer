@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from copy import deepcopy
 from typing import cast
 
@@ -58,7 +56,7 @@ def mask_batch(
     masked_embeddings_wo_pos_or_strand = batch.x[node_mask]
     batch.x[node_mask] = 0.0
 
-    batch.masked_embeddings = masked_embeddings_wo_pos_or_strand
-    batch.node_mask = node_mask
+    setattr(batch, "masked_embeddings", masked_embeddings_wo_pos_or_strand)
+    setattr(batch, "node_mask", node_mask)
 
     return cast(MaskedGenomeGraphBatch, batch)

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from itertools import chain
 
 import esm
@@ -12,6 +10,7 @@ from pst.embed.model import BatchType
 class SequenceDataset(Dataset):
     """Sequence dataset that pre-batches input sequences by number of tokens"""
 
+    # TODO: should create custom FastaBatchedDataset to read seqs and remove stop codons
     def __init__(
         self, data: esm.FastaBatchedDataset, alphabet: esm.Alphabet, batch_size: int
     ) -> None:
