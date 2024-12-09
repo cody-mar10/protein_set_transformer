@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import torch
 from torch import nn
 from torch_geometric.nn import MLP, GraphNorm
@@ -35,6 +33,7 @@ class SetTransformerEncoder(nn.Module):
                 out_channels=out_dim,
                 heads=num_heads,
                 dropout=dropout,
+                add_self_loops=False,
             )
             self.layers.append(layer)
             start_dim = out_dim
