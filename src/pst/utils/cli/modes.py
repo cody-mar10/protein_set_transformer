@@ -1,62 +1,66 @@
-from __future__ import annotations
+from pathlib import Path
 
-import pydantic_argparse
-
-from pst.data.modules import DataConfig
-from pst.embed import EmbedArgs
-from pst.nn.config import (
-    GenomeTripletLossConfig,
-    MaskedLanguageModelingConfig,
-    MaskedLanguageModelingLossConfig,
-    ModelConfig,
-)
-from pst.utils.cli.download import DownloadArgs
-from pst.utils.cli.experiment import ExperimentArgs
-from pst.utils.cli.finetune import FinetuningArgs
-from pst.utils.cli.graphify import GraphifyArgs
-from pst.utils.cli.predict import PredictArgs
-from pst.utils.cli.trainer import TrainerArgs
-from pst.utils.cli.tuning import TuningArgs
+from pst.embed.main import ModelArgs as EmbedModelArgs
+from pst.embed.main import TrainerArgs as EmbedTrainerArgs
+from pst.embed.main import embed
+from pst.utils.cli import download, graphify
+from pst.utils.download import DryadDownloader
+from pst.utils.graphify import to_graph_format
 
 
-# take all args for all loss configs so they are available at cli
-class _UnionLossConfig(GenomeTripletLossConfig, MaskedLanguageModelingLossConfig):
-    pass
+class EmbedMode:
+    def embed(
+        self,
+        input: Path,
+        outdir: Path,
+        model: EmbedModelArgs,
+        trainer: EmbedTrainerArgs,
+    ):
+        """Embed protein sequences using ESM-2
+
+        Args:
+            input (Path): input protein fasta file with stop codons removed
+            outdir (Path): output directory
+            model (ModelArgs): MODEL
+            trainer (TrainerArgs): TRAINER
+        """
+        embed(input, outdir, model, trainer)
 
 
-# take all args for all model configs so they are available at cli
-# NOTE: cannot have fields of same name refer to different things
-class UnionModelConfig(ModelConfig, MaskedLanguageModelingConfig):
-    loss: _UnionLossConfig
+class GraphifyMode:
+    def graphify(self, io: graphify.IOArgs, optional: graphify.OptionalArgs):
+        """Pre-processing mode to convert raw ESM2 protein embeddings into a graph-formatted
+        dataset for use with other PST modes."""
+        to_graph_format(io, optional)
 
 
-class TrainingMode(pydantic_argparse.BaseCommand):
-    model: UnionModelConfig
-    data: DataConfig
-    trainer: TrainerArgs
-    experiment: ExperimentArgs
+class DownloadMode:
+    def download(
+        self,
+        manuscript: download.ManuscriptDataArgs,
+        cluster: download.ClusterArgs,
+        model: download.ModelArgs,
+        embeddings: download.EmbeddingsArgs,
+        all: bool = False,
+        outdir: Path = Path("pstdata"),
+    ):
+        """Download mode to download data and trained models from DRYAD
 
+        Args:
+            manuscript (ManuscriptDataArgs): MANUSCRIPT DATA
+            cluster (ClusterArgs): CLUSTER DATA
+            model (ModelArgs): TRAINED MODELS
+            embeddings (EmbeddingsArgs): EMBEDDINGS
+            all (bool, optional): Download all data from the DRYAD repository.
+            outdir (Path, optional): Output directory to save files.
+        """
 
-class TuningMode(TrainingMode):
-    tuning: TuningArgs
-
-
-class InferenceMode(TrainingMode):
-    predict: PredictArgs
-
-
-class FinetuningMode(TrainingMode):
-    finetuning: FinetuningArgs
-
-
-class PreprocessingMode(pydantic_argparse.BaseCommand):
-    graphify: GraphifyArgs
-
-
-class DownloadMode(pydantic_argparse.BaseCommand):
-    download: DownloadArgs
-
-
-class EmbedMode(pydantic_argparse.BaseCommand):
-
-    embed: EmbedArgs
+        downloader = DryadDownloader(
+            manuscript=manuscript,
+            cluster=cluster,
+            model=model,
+            embeddings=embeddings,
+            all=all,
+            outdir=outdir,
+        )
+        downloader.download()
