@@ -1,18 +1,18 @@
-from __future__ import annotations
-
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 import esm
 import lightning as L
 import torch
-from pydantic import BaseModel, Field, FilePath
+from jsonargparse.typing import PositiveInt
 from torch.utils.data import DataLoader
 
 from pst.embed.data import SequenceDataset
-from pst.embed.model import ESM2
+from pst.embed.model import ESM2, ESM2Models
 from pst.embed.writer import PredictionWriter
+from pst.utils.dataclass_utils import DataclassValidatorMixin, validated_field
 
 
 def resolve_torch_hub_path() -> Path:
@@ -35,49 +35,51 @@ def resolve_torch_hub_path() -> Path:
 _TORCH_HUB_PATH = resolve_torch_hub_path()
 
 
-class ModelArgs(BaseModel):
-    esm: ESM2.MODELVALUES = Field("esm2_t6_8M", description="ESM-2 model key")
-    batch_size: int = Field(
-        1024, description="batch size in number of tokens (amino acids)"
-    )
-    torch_hub: Path = Field(
-        _TORCH_HUB_PATH,
-        description="path to the checkpoints/ directory with downloaded models",
-    )
+@dataclass
+class ModelArgs(DataclassValidatorMixin):
+    esm: ESM2Models = ESM2Models.esm2_t6_8M
+    """ESM-2 model key"""
+
+    batch_size: int = validated_field(1024, validator=PositiveInt)
+    """batch size in number of tokens (amino acids)"""
+
+    torch_hub: Path = _TORCH_HUB_PATH
+    """path to the checkpoints/ directory with downloaded models"""
 
 
-class TrainerArgs(BaseModel):
-    devices: int = Field(1, description="number of cpus/gpus to use")
-    accelerator: Literal["cpu", "gpu", "auto"] = Field(
-        "auto", description="type of device to use"
-    )
-    precision: Literal[64, 32, 16, "bf16"] = Field(
-        default=32, description="floating point precision"
-    )
+@dataclass
+class TrainerArgs(DataclassValidatorMixin):
+    devices: int = validated_field(1, validator=PositiveInt)
+    """number of cpus/gpus to use"""
+
+    accelerator: Literal["cpu", "gpu", "auto"] = "auto"
+    """type of device to use"""
+
+    precision: Literal[64, 32, 16, "bf16-mixed"] = 32
+    """floating point precision"""
 
 
-class EmbedArgs(BaseModel):
-    input: FilePath = Field(
-        description="input protein fasta file, stop codons must be removed"
-    )
-    outdir: Path = Field(Path("output"), description="output directory")
-    model: ModelArgs
-    trainer: TrainerArgs
+def embed(input: Path, outdir: Path, model_cfg: ModelArgs, trainer_cfg: TrainerArgs):
+    """Embed protein sequences using ESM-2
 
+    Args:
+        input (Path): input protein fasta file with stop codons removed
+        outdir (Path): output directory
+        model_cfg (ModelArgs): MODEL
+        trainer_cfg (TrainerArgs): TRAINER
+    """
+    outdir.mkdir(parents=True, exist_ok=True)
 
-def embed(args: EmbedArgs):
-    args.outdir.mkdir(parents=True, exist_ok=True)
-
-    torch.hub.set_dir(args.model.torch_hub)
+    torch.hub.set_dir(model_cfg.torch_hub)
     L.seed_everything(111)
 
-    model = ESM2.from_model_name(args.model.esm)
+    model = ESM2.from_model_name(model_cfg.esm)
     data = SequenceDataset(
-        data=esm.FastaBatchedDataset.from_file(args.input),
+        data=esm.FastaBatchedDataset.from_file(input),
         alphabet=model.alphabet,
-        batch_size=args.model.batch_size,
+        batch_size=model_cfg.batch_size,
     )
-    writer = PredictionWriter(outdir=args.outdir, model=model, dataset=data)
+    writer = PredictionWriter(outdir=outdir, model=model, dataset=data)
     dataloader = DataLoader(
         dataset=data,
         # dataset is already pre-batched
@@ -87,19 +89,19 @@ def embed(args: EmbedArgs):
         collate_fn=SequenceDataset.collate_token_batches,
     )
 
-    if args.trainer.accelerator == "auto":
-        args.trainer.accelerator = "gpu" if torch.cuda.is_available() else "cpu"
+    if trainer_cfg.accelerator == "auto":
+        trainer_cfg.accelerator = "gpu" if torch.cuda.is_available() else "cpu"
 
-    if args.trainer.accelerator == "cpu":
-        torch.set_num_threads(args.trainer.devices)
-        args.trainer.precision = 32
-        args.trainer.devices = 1
+    if trainer_cfg.accelerator == "cpu":
+        torch.set_num_threads(trainer_cfg.devices)
+        trainer_cfg.precision = 32
+        trainer_cfg.devices = 1
 
     trainer = L.Trainer(
         enable_checkpointing=False,
         callbacks=[writer],
         logger=False,
-        **args.trainer.model_dump(),
+        **trainer_cfg.to_dict(),
     )
 
     trainer.predict(model=model, dataloaders=dataloader, return_predictions=False)

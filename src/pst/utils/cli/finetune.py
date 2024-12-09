@@ -1,14 +1,14 @@
-from __future__ import annotations
-
+from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import Field
 
-from pst.utils.cli.predict import PredictArgs
+@dataclass
+class FinetuningArgs:
+    checkpoint: Path
+    """pre-trained model checkpoint"""
 
+    outdir: Path = Path("output")
+    """finetuning output directory"""
 
-# basically shares same fields with PredictArgs
-# but need to change descriptions
-class FinetuningArgs(PredictArgs):
-    checkpoint: Path = Field(..., description="pre-trained model checkpoint")
-    outdir: Path = Field(Path("output"), description="finetuning output directory")
+    fragment_oversized_genomes: bool = False
+    """fragment oversized genomes up to the max size of the model's positional embedding LUT"""

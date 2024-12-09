@@ -1,14 +1,15 @@
-from __future__ import annotations
-
+from dataclasses import dataclass
 from pathlib import Path
 
-from pydantic import BaseModel, Field
 
+@dataclass
+class PredictArgs:
+    checkpoint: Path
+    """model checkpoint during inference"""
 
-class PredictArgs(BaseModel):
-    checkpoint: Path = Field(..., description="model checkpoint during inference")
-    outdir: Path = Field(Path("output"), description="inference output directory")
-    fragment_oversized_genomes: bool = Field(
-        False,
-        description="fragment oversized genomes that encode more proteins than the model was trained to expect",
-    )
+    outdir: Path = Path("output")
+    """inference output directory"""
+
+    fragment_oversized_genomes: bool = False
+    """fragment oversized genomes that encode more proteins than the model was trained to 
+    expect"""

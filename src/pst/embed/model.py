@@ -1,6 +1,5 @@
-from __future__ import annotations
-
-from typing import Literal, cast
+from enum import Enum
+from typing import cast
 
 import esm
 import lightning as L
@@ -8,28 +7,31 @@ import torch
 
 BatchType = tuple[list[str], list[str], torch.Tensor]
 
+_ESM2MODELS = {
+    "esm2_t48_15B": esm.pretrained.esm2_t48_15B_UR50D,
+    "esm2_t36_3B": esm.pretrained.esm2_t36_3B_UR50D,
+    "esm2_t33_650M": esm.pretrained.esm2_t33_650M_UR50D,
+    "esm2_t30_150M": esm.pretrained.esm2_t30_150M_UR50D,
+    "esm2_t12_35M": esm.pretrained.esm2_t12_35M_UR50D,
+    "esm2_t6_8M": esm.pretrained.esm2_t6_8M_UR50D,
+}
+
+
+class ESM2Models(str, Enum):
+    esm2_t48_15B = "esm2_t48_15B"
+    esm2_t36_3B = "esm2_t36_3B"
+    esm2_t33_650M = "esm2_t33_650M"
+    esm2_t30_150M = "esm2_t30_150M"
+    esm2_t12_35M = "esm2_t12_35M"
+    esm2_t6_8M = "esm2_t6_8M"
+
+    def get_model(self):
+        return _ESM2MODELS[self.value]
+
 
 # Prediction only
 class ESM2(L.LightningModule):
-    MODELS = {
-        "esm2_t48_15B": esm.pretrained.esm2_t48_15B_UR50D,
-        "esm2_t36_3B": esm.pretrained.esm2_t36_3B_UR50D,
-        "esm2_t33_650M": esm.pretrained.esm2_t33_650M_UR50D,
-        "esm2_t30_150M": esm.pretrained.esm2_t30_150M_UR50D,
-        "esm2_t12_35M": esm.pretrained.esm2_t12_35M_UR50D,
-        "esm2_t6_8M": esm.pretrained.esm2_t6_8M_UR50D,
-    }
-
-    MODELVALUES = Literal[
-        "esm2_t48_15B",
-        "esm2_t36_3B",
-        "esm2_t33_650M",
-        "esm2_t30_150M",
-        "esm2_t12_35M",
-        "esm2_t6_8M",
-    ]
-
-    LAYERS_TO_MODELNAME = {
+    LAYERS_TO_MODELNAME: dict[int, str] = {
         6: "esm2_t6_8M",
         48: "esm2_t48_15B",
         36: "esm2_t36_3B",
@@ -65,8 +67,8 @@ class ESM2(L.LightningModule):
         return seq_rep
 
     @classmethod
-    def from_model_name(cls, model_name: ESM2.MODELVALUES) -> "ESM2":
-        model_loader = ESM2.MODELS[model_name]
+    def from_model_name(cls, model_name: ESM2Models):
+        model_loader = model_name.get_model()
         esm_model, alphabet = model_loader()
         esm_model = cast(esm.ESM2, esm_model)
         return cls(model=esm_model, alphabet=alphabet)

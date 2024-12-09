@@ -1,1 +1,1 @@
-from pst.embed.main import EmbedArgs, embed
+from pst.embed.main import ModelArgs, TrainerArgs, embed
