@@ -12,3 +12,4 @@ build/
 *.err
 *.tsv
 *.parquet
+src/**/*.h5
