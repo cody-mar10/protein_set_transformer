@@ -1,67 +1,175 @@
-from __future__ import annotations
-
+import importlib.metadata
 import logging
+from dataclasses import fields, is_dataclass
+from typing import Generic, Type, TypeVar
 
-import lightning as L
-import torch
-from torch.autograd.anomaly_mode import set_detect_anomaly
+from docstring_parser import DocstringStyle
+from jsonargparse import CLI, set_docstring_parse_options
 
 from pst import _logger as logger
-from pst.embed import embed
-from pst.predict import model_inference
-from pst.training import cv, finetune, full
-from pst.training.tuning import tuning
-from pst.utils.cli import Args, parse_args
-from pst.utils.cli.modes import FinetuningMode, InferenceMode, TrainingMode, TuningMode
-from pst.utils.download import download
-from pst.utils.graphify import to_graph_format
+from pst.data.config import CrossValDataConfig, DataConfig
+from pst.nn.base import BaseModels, BaseModelTypes
+from pst.nn.config import BaseModelConfig as _SimpleModelConfig
+from pst.nn.config import GenomeTripletLossModelConfig as _GenomeTripletLossModelConfig
+from pst.nn.config import MaskedLanguageModelingConfig as _MaskedLanguageModelingConfig
+from pst.nn.modules import ProteinSetTransformer
+from pst.predict.predict import PredictMode
+from pst.training import cv, full
+from pst.training.finetune import FinetuneMode
+from pst.training.tuning import tuning as tuning_module
+from pst.utils.cli.experiment import ExperimentArgs
+from pst.utils.cli.modes import DownloadMode, EmbedMode, GraphifyMode
+from pst.utils.cli.trainer import TrainerArgs
+from pst.utils.cli.tuning import TuningArgs
+from pst.utils.dataclass_utils import model_dump
 from pst.utils.history import update_config_from_history
 
-_SEED = 111
-# logger = logging.getLogger(__name__)
+# these are needed for dynamic dispatch
+
+T_dc = TypeVar("T_dc", bound=_SimpleModelConfig)
 
 
-def train_main(args: TrainingMode):
-    args = update_config_from_history(args)
-    if args.data.train_on_full:
-        full.train_with_all_data(args)
-    else:
-        L.seed_everything(_SEED)
-        cv.train_with_cross_validation(args)
+class _BaseModelConfig(Generic[T_dc]):
+
+    @classmethod
+    def _config_type(cls) -> Type[T_dc]:
+        return cls.__base__  # type: ignore
+
+    def to_dataclass(self) -> T_dc:
+        dc = self._config_type()
+        if not is_dataclass(dc):
+            raise TypeError(f"{dc} is not a dataclass")
+
+        init_args = dict()
+
+        for field in fields(dc):
+            value = getattr(self, field.name)
+            if is_dataclass(value):
+                value = model_dump(value)
+
+            init_args[field.name] = value
+
+        return dc.from_dict(init_args)
 
 
-def tune_main(args: TuningMode):
-    # this is for hyperparameter tuning
-    tuning.tune(args)
+class SimpleModelConfig(_SimpleModelConfig, _BaseModelConfig[_SimpleModelConfig]):
+    pass
 
 
-def test_main(args: Args):
-    raise NotImplementedError
+class TripletLossModelConfig(
+    _GenomeTripletLossModelConfig, _BaseModelConfig[_GenomeTripletLossModelConfig]
+):
+    pass
 
 
-def predict_main(args: InferenceMode):
-    L.seed_everything(_SEED)
-    model_inference(args, True, True, False)
+class MaskedLanguageModelingConfig(
+    _MaskedLanguageModelingConfig, _BaseModelConfig[_MaskedLanguageModelingConfig]
+):
+    pass
 
 
-def finetune_main(args: FinetuningMode):
-    # set lightning trainer dir to --outdir
-    args.trainer.default_root_dir = args.finetuning.outdir
-    finetune.finetune(args)
+class Main(DownloadMode, GraphifyMode, EmbedMode, PredictMode, FinetuneMode):
+    """pst CLI to train new PSTs, tune hyperparameters, predict with a pretrained PST, and
+    finetune a pretrained PST. Additional utilities to embed protein sequences with ESM2,
+    graphify the raw ESM2 protein embeddings for use with PST, and download data and trained
+    models from DRYAD"""
 
+    def _check_model_and_config_type(
+        self, model_type: BaseModelTypes, model_cfg: _SimpleModelConfig
+    ):
+        expected_model_config_type = model_type._resolve_model_config_type()
+        if not isinstance(model_cfg, expected_model_config_type):
+            raise TypeError(
+                f"model config must be of type {expected_model_config_type}. Received {type(model_cfg)}"
+            )
 
-def _check_cpu_accelerator(config: TrainingMode):
-    if config.trainer.accelerator == "cpu":
-        threads = config.trainer.devices
-        config.trainer.precision = "32"
-        torch.set_num_threads(threads)
-        config.trainer.devices = 1
-        config.trainer.strategy = "auto"
+    def _log_mode(self, mode: str):
+        logger.info(f"Running {mode} mode")
 
+    def train(
+        self,
+        model: BaseModels,
+        data: DataConfig,
+        trainer: TrainerArgs,
+        experiment: ExperimentArgs,
+    ):
+        """PST simple training mode WITHOUT cross validation"""
+        self._log_mode("train")
 
-def _validate_accelerator(config: TrainingMode):
-    if config.trainer.accelerator == "auto":
-        config.trainer.accelerator = "gpu" if torch.cuda.is_available() else "cpu"
+        if experiment.best_trial is not None:
+            # since we are possibly changing the model config, we need to keep track of the dims
+            # jsonargparse auto constructs the model, which expands the in/out dims based on the
+            # size of the positional embeddings, but we need to undo this expansion
+            # we also need to capture the unexpanded dims BEFORE updating the config, since the
+            # new config will have the expanded dims with the old config's embed_scale, so the
+            # math will be wrong
+            model_cfg: _SimpleModelConfig
+            model_cfg = model.config
+            original_in_dim, original_out_dim = model_cfg._get_original_dims()
+            model_cfg, data = update_config_from_history(
+                model_config=model_cfg,
+                data_config=data,
+                history_file=experiment.best_trial,
+                tuning_config_def=experiment.config,
+            )
+
+            if model_cfg != model.config:
+                model_type = type(model)
+                # undo dim expansion
+                model_cfg.in_dim = original_in_dim
+                model_cfg.out_dim = original_out_dim
+                model = model_type(model_cfg)
+
+        full.train(model, data, trainer)
+
+    def cv(
+        self,
+        model_type: BaseModelTypes,
+        model: _BaseModelConfig,
+        data: CrossValDataConfig,
+        trainer: TrainerArgs,
+        experiment: ExperimentArgs,
+    ):
+        """PST mode for training with cross validation"""
+        self._log_mode("cv")
+        model_cfg: _SimpleModelConfig = model.to_dataclass()
+
+        if experiment.best_trial is not None:
+            model_cfg, data = update_config_from_history(
+                model_config=model_cfg,
+                data_config=data,
+                history_file=experiment.best_trial,
+                tuning_config_def=experiment.config,
+            )
+
+        self._check_model_and_config_type(model_type=model_type, model_cfg=model_cfg)
+        cv.train_with_cross_validation(model_type, model_cfg, data, trainer, experiment)
+
+    def tune(
+        self,
+        model: _BaseModelConfig,
+        data: CrossValDataConfig,
+        trainer: TrainerArgs,
+        experiment: ExperimentArgs,
+        tuning: TuningArgs,
+        model_type: BaseModelTypes = ProteinSetTransformer,
+    ):
+        """PST hyperparameter tuning mode with cross validation
+
+        Args:
+            model: MODEL
+            data: DATA
+            trainer: TRAINER
+            experiment: EXPERIMENT
+            tuning: TUNING
+            model_type (BaseModelTypes): PST model type. Defaults to
+                `ProteinSetTransformer`.
+        """
+        self._log_mode("tune")
+        model_cfg: _SimpleModelConfig = model.to_dataclass()
+        self._check_model_and_config_type(model_type=model_type, model_cfg=model_cfg)
+
+        tuning_module.tune(model_type, model_cfg, data, trainer, experiment, tuning)
 
 
 def _setup_logger():
@@ -77,45 +185,13 @@ def _setup_logger():
 
 
 def main():
-    args = parse_args()
+    set_docstring_parse_options(style=DocstringStyle.GOOGLE, attribute_docstrings=True)
     _setup_logger()
-
-    if args.graphify is not None:
-        to_graph_format(args.graphify.graphify)
-        return
-    elif args.download is not None:
-        download(args.download.download)
-        return
-    elif args.embed is not None:
-        embed(args.embed.embed)
-        return
-    elif args.train is not None:
-        config = args.train
-        fn = train_main
-    elif args.tune is not None:
-        config = args.tune
-        fn = tune_main
-    elif args.predict is not None:
-        config = args.predict
-        fn = predict_main
-    elif args.finetune is not None:
-        config = args.finetune
-        fn = finetune_main
-    else:
-        # should not really get here since argparsing should already catch this
-        raise RuntimeError("Invalid run mode passed.")
-
-    _validate_accelerator(config)
-    _check_cpu_accelerator(config)
-
-    with set_detect_anomaly(config.experiment.detect_anomaly):
-        if config.experiment.detect_anomaly:
-            logger.warning(
-                "Anomaly detection mode is on. This will be slow since the autograd "
-                "engine has to check for gradient anomalies."
-            )
-
-        fn(config)  # type: ignore
+    CLI(
+        Main,
+        as_positional=False,
+        version=importlib.metadata.version("ptn-set-transformer"),
+    )
 
 
 if __name__ == "__main__":
