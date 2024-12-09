@@ -1,18 +1,84 @@
-from __future__ import annotations
-
+import ast
 import gzip
+import inspect
 import re
 import shutil
 import tarfile
 import zipfile
+from dataclasses import asdict, fields
 from functools import partial
+from itertools import pairwise
 from pathlib import Path
+from textwrap import dedent
 
 import requests
-from pydantic import BaseModel
 from tqdm import tqdm
 
-from pst.utils.cli.download import DownloadArgs
+from pst.utils.cli.download import (
+    ClusterArgs,
+    EmbeddingsArgs,
+    ManuscriptDataArgs,
+    ModelArgs,
+)
+
+
+def get_class_attribute_docs(cls):
+    """Get docstrings of an class attribute assigned after the attribute definition.
+
+    Example:
+    ```python
+    from dataclasses import dataclass
+
+    @dataclass
+    class A:
+        a: int
+        '''This is a docstring for a'''
+
+        b: str
+        '''This is a docstring for b'''
+
+    >>> get_class_attribute_docs(A)
+    {'a': 'This is a docstring for a', 'b': 'This is a docstring for b'}
+    ```
+    """
+
+    # from here: https://davidism.com/attribute-docstrings/
+
+    cls_node = ast.parse(dedent(inspect.getsource(cls))).body[0]
+
+    if not isinstance(cls_node, ast.ClassDef):
+        raise TypeError("Expected a class definition")
+
+    docstrings: dict[str, str] = {}
+
+    # Consider each pair of nodes.
+    for a, b in pairwise(cls_node.body):
+        # Must be an assignment then a constant string.
+        if (
+            not isinstance(a, ast.Assign | ast.AnnAssign)
+            or not isinstance(b, ast.Expr)
+            or not isinstance(b.value, ast.Constant)
+            or not isinstance(b.value.value, str)
+        ):
+            continue
+
+        doc = inspect.cleandoc(b.value.value)
+
+        if isinstance(a, ast.Assign):
+            # An assignment can have multiple targets (a = b = v).
+            targets = a.targets
+        else:
+            # An annotated assignment only has one target.
+            targets = [a.target]
+
+        for target in targets:
+            # Must be assigning to a plain name.
+            if not isinstance(target, ast.Name):
+                continue
+
+            docstrings[target.id] = " ".join(line.rstrip() for line in doc.split("\n"))
+
+    return docstrings
 
 
 class DryadDownloader:
@@ -20,34 +86,62 @@ class DryadDownloader:
     DRYAD_DOI_REST_API = r"doi%3A10.5061%2Fdryad.d7wm37q8w"
     DRYAD_REST_API = "https://datadryad.org/api/v2"
 
-    def __init__(self, args: DownloadArgs):
-        self.args = args
+    def __init__(
+        self,
+        manuscript: ManuscriptDataArgs,
+        cluster: ClusterArgs,
+        model: ModelArgs,
+        embeddings: EmbeddingsArgs,
+        all: bool,
+        outdir: Path,
+    ):
+        self.args = {
+            "manuscript": manuscript,
+            "cluster": cluster,
+            "model": model,
+            "embeddings": embeddings,
+        }
+
+        self.download_all = all
+
+        self._validate_downloads()
+
+        self.outdir = outdir
         self.filename_map = self.field2filename()
 
         self._session: requests.Session | None = None
+
+    def _validate_downloads(self):
+        if self.download_all:
+            return
+
+        for dc in self.args.values():
+            if any(asdict(dc).values()):
+                return
+
+        raise ValueError("No data to download. Please specify at least one download.")
 
     def field2filename(self) -> dict[str, str]:
         filenames: dict[str, str] = dict()
         file_pattern = re.compile(r"\((.*)\)$")
 
-        for fieldname, fieldvalue in self.args:
-            if isinstance(fieldvalue, BaseModel):
-                for subfieldname, info in fieldvalue.model_fields.items():
-                    desc: str = info.description  # type: ignore
-                    filenames[subfieldname] = file_pattern.findall(desc)[0]
+        for dc in self.args.values():
+            docstrings = get_class_attribute_docs(dc.__class__)
+            for fieldname, desc in docstrings.items():
+                filenames[fieldname] = file_pattern.findall(desc)[0]
 
         return filenames
 
     def get_files_to_download(self) -> list[str]:
         files: list[str] = list()
 
-        download_all = self.args.all
+        for dc in self.args.values():
+            for field in fields(dc):
+                fieldname = field.name
+                fieldvalue = getattr(dc, fieldname)
 
-        for field, fieldvalue in self.args:
-            if isinstance(fieldvalue, BaseModel):
-                for subfield, subfieldvalue in fieldvalue:
-                    if subfieldvalue or download_all:
-                        files.append(self.filename_map[subfield])
+                if fieldvalue or self.download_all:
+                    files.append(self.filename_map[fieldname])
 
         return files
 
@@ -91,17 +185,17 @@ class DryadDownloader:
         n_files = len(files_to_download)
 
         BLOCK_SIZE = 1024
-        self.args.outdir.mkdir(parents=True, exist_ok=True)
+        self.outdir.mkdir(parents=True, exist_ok=True)
 
         print(
-            f"Downloading {n_files} file{'s' if n_files > 1 else ''} to {self.args.outdir}"
+            f"Downloading {n_files} file{'s' if n_files > 1 else ''} to {self.outdir}"
         )
 
         for idx, file in enumerate(files_to_download):
             file_id = file_ids[file]
             url = f"{self.DRYAD_REST_API}/files/{file_id}/download"
 
-            output = self.args.outdir.joinpath(file)
+            output = self.outdir.joinpath(file)
 
             response = self.session.get(url, stream=True)
             file_size = int(response.headers.get("content-length", 0))
@@ -152,7 +246,7 @@ class DryadDownloader:
             basename = file.stem
 
         with openfn(file) as fobj:
-            fobj.extractall(path=self.args.outdir)
+            fobj.extractall(path=self.outdir)
 
         # need to check if any inner files are compressed
         output = parentdir.joinpath(basename)
@@ -170,7 +264,7 @@ class DryadDownloader:
     ):
         for file in downloaded_files:
             if add_outdir:
-                path = self.args.outdir.joinpath(file)
+                path = self.outdir.joinpath(file)
             else:
                 path = Path(file)
 
@@ -185,11 +279,6 @@ class DryadDownloader:
                     path, zipped=True, delete_original=delete_original
                 )
 
-        for file in self.args.outdir.glob("*"):
+        for file in self.outdir.glob("*"):
             if file.name == "__MACOSX":
                 shutil.rmtree(file)
-
-
-def download(args: DownloadArgs):
-    downloader = DryadDownloader(args)
-    downloader.download()

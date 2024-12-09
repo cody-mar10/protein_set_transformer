@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import logging
 from collections import defaultdict
 from dataclasses import dataclass
@@ -11,7 +9,7 @@ import tables as tb
 
 from pst.data import dataset
 from pst.data.utils import H5_FILE_COMPR_FILTERS
-from pst.utils.cli.graphify import GraphifyArgs
+from pst.utils.cli.graphify import IOArgs, OptionalArgs
 
 # silence the dataset logger which would report detection of multi-scaffold datasets
 dataset.logger.setLevel("ERROR")
@@ -257,22 +255,22 @@ def merge_graph_files(files: list[Path], output: Path):
         file.unlink()
 
 
-def to_graph_format(args: GraphifyArgs):
-    if args.optional.scaffold_map_file is not None:
+def to_graph_format(io: IOArgs, optional: OptionalArgs):
+    if optional.scaffold_map_file is not None:
         # scaffold -> genome mapping
-        scaffold_map = tsv_to_dict(args.optional.scaffold_map_file)
+        scaffold_map = tsv_to_dict(optional.scaffold_map_file)
     else:
         scaffold_map = dict()
 
-    if args.optional.strand_file is not None:
+    if optional.strand_file is not None:
         # protein -> strand mapping
-        strand_map = tsv_to_dict(args.optional.strand_file)
+        strand_map = tsv_to_dict(optional.strand_file)
     else:
         strand_map = dict()
 
-    if args.inputs.multi_input_map is not None:
+    if io.multi_input_map is not None:
         outputs: list[Path] = []
-        with args.inputs.multi_input_map.open() as fp:
+        with io.multi_input_map.open() as fp:
             for line in fp:
                 fasta_file, file = line.rstrip().split("\t")
                 output = single_file_to_graph_format(
@@ -280,22 +278,20 @@ def to_graph_format(args: GraphifyArgs):
                     fasta_file=Path(fasta_file),
                     scaffold_map=scaffold_map,
                     strand_map=strand_map,
-                    loc=args.inputs.loc,
+                    loc=io.loc,
                     output=None,
                 )
                 outputs.append(output)
 
-        merge_graph_files(
-            outputs, args.inputs.output or Path("combined_dataset.graphfmt.h5")
-        )
-    elif args.inputs.fasta_file is not None and args.inputs.file is not None:
+        merge_graph_files(outputs, io.output or Path("combined_dataset.graphfmt.h5"))
+    elif io.fasta_file is not None and io.file is not None:
         output = single_file_to_graph_format(
-            file=args.inputs.file,
-            fasta_file=args.inputs.fasta_file,
+            file=io.file,
+            fasta_file=io.fasta_file,
             scaffold_map=scaffold_map,
             strand_map=strand_map,
-            loc=args.inputs.loc,
-            output=args.inputs.output,
+            loc=io.loc,
+            output=io.output,
         )
         logging.info(f"Created graph-formatted dataset at {output}")
     else:
