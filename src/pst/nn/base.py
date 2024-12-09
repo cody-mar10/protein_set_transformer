@@ -1,20 +1,8 @@
-from __future__ import annotations
-
 import sys
 from collections.abc import Mapping
 from functools import cached_property
 from pathlib import Path
-from typing import (
-    Any,
-    Callable,
-    Generic,
-    Literal,
-    Optional,
-    Type,
-    TypeVar,
-    cast,
-    get_type_hints,
-)
+from typing import Any, Callable, Generic, Literal, Optional, Type, TypeVar, Union, cast
 
 if sys.version_info >= (3, 11):  # pragma: >=3.11 cover
     from typing import Self
@@ -36,6 +24,7 @@ from pst.typing import (
     MaskedGenomeGraphBatch,
     OptTensor,
 )
+from pst.utils._signatures import _resolve_config_type_from_init
 
 _STAGE_TYPE = Literal["train", "val", "test"]
 _FIXED_POINTSWAP_RATE = "FIXED_POINTSWAP_RATE"
@@ -175,30 +164,35 @@ class _BaseProteinSetTransformer(
 
     # keep track of all the valid pretrained model names
     PRETRAINED_MODEL_NAMES = set()
+    config: _BaseConfigT
 
     # NOTE: do not change the name of the config var in all subclasses
     def __init__(self, config: _BaseConfigT, model_type: Type[_ModelT]) -> None:
-        # 2048 ptns should be large enough for probably all viruses
+        expected_config_type = self._resolve_model_config_type()
+        if not isinstance(config, expected_config_type):
+            raise ValueError(
+                f"Model config {config} is not the expected type {expected_config_type}"
+            )
+
         super().__init__(
             in_dim=config.in_dim,
             embed_scale=config.embed_scale,
             max_size=config.max_proteins,
         )
+
         if config.out_dim == -1:
             config.out_dim = config.in_dim
 
-        # the pydantic implementation of deepcopy causes problems with
-        # lightning.Fabric, which does not appear to be deep copyable
-        # so we can just serialize/deserialize to get a deep copy
-        # NOTE: if fabric is not None, it will be shared
-        # but that is probably desired since that would likely be in a
-        # cross validation use case
-        self.config = config.model_validate(config.model_dump())
+        # deep copy so that embedding size changes do not affect the original config
+        # this really only matters for interactive sessions
+        self.config = config.clone(deep=True)
 
         # need all new models to set _FIXED_POINTSWAP_RATE to True
         # this way we know that saved models are using the correct sample rate
+        # NOTE: regarding changes to embed dim, this should save the initial values
+        # BEFORE the dimension changes
         self.save_hyperparameters(
-            self.config.model_dump(exclude={"fabric"}) | {_FIXED_POINTSWAP_RATE: True}
+            self.config.to_dict(exclude={"fabric"}) | {_FIXED_POINTSWAP_RATE: True}
         )
 
         self.config.in_dim += self.extra_embedding_dim
@@ -218,14 +212,13 @@ class _BaseProteinSetTransformer(
 
         self.optimizer_cfg = config.optimizer
         self.augmentation_cfg = config.augmentation
-        self.fabric = config.fabric
 
-        self.criterion = self.setup_objective(**config.loss.model_dump())
+        self.criterion = self.setup_objective(**self.config.loss.to_dict())
 
     def _setup_model(
         self, model_type: Type[_ModelT], include: Optional[set[str]] = None, **kwargs
     ) -> _ModelT:
-        model = model_type(**self.config.model_dump(include=include), **kwargs)
+        model = model_type(**self.config.to_dict(include=include), **kwargs)
         if self.config.compile:
             model: _ModelT = torch.compile(model)  # type: ignore
 
@@ -280,6 +273,7 @@ class _BaseProteinSetTransformer(
             if self.fabric is None:
                 self.estimated_steps = self.trainer.estimated_stepping_batches
 
+            # TODO: i dont think self.estimated_steps exists without a trainer?
             scheduler = get_linear_schedule_with_warmup(
                 optimizer=optimizer,
                 num_warmup_steps=self.optimizer_cfg.warmup_steps,
@@ -512,21 +506,9 @@ class _BaseProteinSetTransformer(
 
     @classmethod
     def _resolve_model_config_type(cls) -> Type[_BaseConfigT]:
-        # try to get the model config type from the type annotation in the __init__ method
-        type_hints = get_type_hints(cls.__init__)
-
-        if "config" not in type_hints:
-            # no type hint for the config parameter - just use default
-            model_config_type = BaseModelConfig
-        else:
-            # get the type hint for the config parameter
-            model_config_type = type_hints["config"]
-
-            # for these base classes, the type hint is a TypeVar, so check that
-            if issubclass(type(model_config_type), TypeVar):
-                # the type hint is a TypeVar, so just use the default
-                model_config_type = BaseModelConfig
-
+        model_config_type = _resolve_config_type_from_init(
+            cls, config_name="config", default=BaseModelConfig
+        )
         return cast(Type[_BaseConfigT], model_config_type)
 
     def _try_load_state_dict(
@@ -649,7 +631,7 @@ class _BaseProteinSetTransformer(
             else:
                 ckpt["hyper_parameters"][key] = value
 
-        model_config = model_config_type.model_validate(ckpt["hyper_parameters"])
+        model_config = model_config_type.from_dict(ckpt["hyper_parameters"])
 
         try:
             model = cls(config=model_config, model_type=model_type)
@@ -927,3 +909,14 @@ class BaseProteinSetTransformerEncoder(
         )
 
         return cast(EdgeAttnOutput, result)
+
+
+BaseModelTypes = Union[
+    Type[BaseProteinSetTransformer],
+    Type[BaseProteinSetTransformerEncoder],
+]
+
+BaseModels = Union[
+    BaseProteinSetTransformer,
+    BaseProteinSetTransformerEncoder,
+]
