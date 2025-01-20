@@ -1,7 +1,5 @@
 import logging
 
-from pst import data, nn, predict, training, utils
-
 # public API
 from pst.data.config import CrossValDataConfig, DataConfig
 from pst.data.dataset import GenomeDataset
