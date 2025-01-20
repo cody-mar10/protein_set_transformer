@@ -2,8 +2,7 @@ import logging
 from functools import partial
 
 import optuna
-from lightning_cv.tuning import Tuner  # TODO: update imports
-from lightning_cv.tuning.callbacks import OptunaHyperparameterLogger
+from lightning_cv.tuning import OptunaHyperparameterLogger, Tuner
 
 from pst.data.config import CrossValDataConfig
 from pst.data.modules import CrossValGenomeDataModule
@@ -59,9 +58,9 @@ def tune(
 
     ### CV TUNER INIT
     tuner = _PatchedTuner(
-        model_type=model_type,  # type: ignore
+        model_type=model_type,
         model_config=model_cfg,
-        datamodule_type=CrossValGenomeDataModule,  # type: ignore
+        datamodule_type=CrossValGenomeDataModule,
         datamodule_config=data,
         trainer_config=trainer_config,
         logdir=trainer_cfg.default_root_dir,
