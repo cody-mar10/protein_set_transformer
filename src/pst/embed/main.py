@@ -1,18 +1,18 @@
 import os
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 import esm
 import lightning as L
 import torch
-from jsonargparse.typing import PositiveInt
+from attrs import define, field
 from torch.utils.data import DataLoader
 
 from pst.embed.data import SequenceDataset
 from pst.embed.model import ESM2, ESM2Models
 from pst.embed.writer import PredictionWriter
-from pst.utils.dataclass_utils import DataclassValidatorMixin, validated_field
+from pst.utils.attrs.dataclass_utils import AttrsDataclassUtilitiesMixin
+from pst.utils.attrs.validators import positive_int
 
 
 def resolve_torch_hub_path() -> Path:
@@ -35,21 +35,21 @@ def resolve_torch_hub_path() -> Path:
 _TORCH_HUB_PATH = resolve_torch_hub_path()
 
 
-@dataclass
-class ModelArgs(DataclassValidatorMixin):
+@define
+class ModelArgs(AttrsDataclassUtilitiesMixin):
     esm: ESM2Models = ESM2Models.esm2_t6_8M
     """ESM-2 model key"""
 
-    batch_size: int = validated_field(1024, validator=PositiveInt)
+    batch_size: int = field(default=1024, validator=positive_int)
     """batch size in number of tokens (amino acids)"""
 
     torch_hub: Path = _TORCH_HUB_PATH
     """path to the checkpoints/ directory with downloaded models"""
 
 
-@dataclass
-class TrainerArgs(DataclassValidatorMixin):
-    devices: int = validated_field(1, validator=PositiveInt)
+@define
+class TrainerArgs(AttrsDataclassUtilitiesMixin):
+    devices: int = field(default=1, validator=positive_int)
     """number of cpus/gpus to use"""
 
     accelerator: Literal["cpu", "gpu", "auto"] = "auto"

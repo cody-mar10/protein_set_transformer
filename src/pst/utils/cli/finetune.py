@@ -1,10 +1,13 @@
-from dataclasses import dataclass
 from pathlib import Path
 
+from attrs import define, field
 
-@dataclass
+from pst.utils.attrs.validators import file_exists
+
+
+@define
 class FinetuningArgs:
-    checkpoint: Path
+    checkpoint: Path = field(validator=file_exists)
     """pre-trained model checkpoint"""
 
     outdir: Path = Path("output")

@@ -1,10 +1,13 @@
-from dataclasses import dataclass
 from pathlib import Path
 
+from attrs import define, field
 
-@dataclass
+from pst.utils.attrs.validators import file_exists
+
+
+@define
 class PredictArgs:
-    checkpoint: Path
+    checkpoint: Path = field(validator=file_exists)
     """model checkpoint during inference"""
 
     outdir: Path = Path("output")

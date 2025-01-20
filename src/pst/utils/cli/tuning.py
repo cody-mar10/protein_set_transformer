@@ -1,24 +1,28 @@
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from jsonargparse.typing import NonNegativeInt, PositiveInt
+from attrs import define, field
 
-from pst.utils.dataclass_utils import DataclassValidatorMixin, validated_field
+from pst.utils.attrs.dataclass_utils import AttrsDataclassUtilitiesMixin
+from pst.utils.attrs.validators import (
+    file_exists,
+    non_negative_int,
+    optionally_existing_file,
+    positive_int,
+)
 
 
-@dataclass
-class TuningArgs(DataclassValidatorMixin):
+@define
+class TuningArgs(AttrsDataclassUtilitiesMixin):
     """TUNING
 
     Hyperparameter tuning configuration.
     """
 
-    # TODO: this makes most sense here.... 
-    config: Path
+    config: Path = field(validator=file_exists)
     """config toml file to specify which hyperparameters to tune with optuna"""
 
-    n_trials: int = validated_field(1, validator=PositiveInt)
+    n_trials: int = field(default=1, validator=positive_int)
     """number of tuning trials to run"""
 
     prune: bool = True
@@ -27,11 +31,11 @@ class TuningArgs(DataclassValidatorMixin):
     parallel: bool = False
     """NOT IMPL: whether to run tuning trials in parallel if multiple GPUs are available"""
 
-    tuning_dir: Optional[Path] = None
+    tuning_dir: Optional[Path] = field(default=None, validator=optionally_existing_file)
     """tuning directory path that stores optuna SQL history databases"""
 
-    pruning_warmup_steps: int = validated_field(3, validator=PositiveInt)
+    pruning_warmup_steps: int = field(default=3, validator=positive_int)
     """number of epochs before pruning can start"""
 
-    pruning_warmup_trials: int = validated_field(1, validator=NonNegativeInt)
+    pruning_warmup_trials: int = field(default=1, validator=non_negative_int)
     """number of trials allowed to complete before pruning can start"""

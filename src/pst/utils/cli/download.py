@@ -1,7 +1,7 @@
-from dataclasses import dataclass
+from attrs import define
 
 
-@dataclass
+@define
 class ManuscriptDataArgs:
     """MANUSCRIPT DATA"""
 
@@ -26,7 +26,7 @@ class ManuscriptDataArgs:
     """download supplementary tables (supplementary_tables.zip)"""
 
 
-@dataclass
+@define
 class ClusterArgs:
     """CLUSTER DATA"""
 
@@ -37,7 +37,7 @@ class ClusterArgs:
     """download protein cluster labels (protein_clusters.tar.gz)"""
 
 
-@dataclass
+@define
 class ModelArgs:
     """PRETRAINED MODELS"""
 
@@ -45,7 +45,7 @@ class ModelArgs:
     "download trained vPST models (trained_models.tar.gz)"
 
 
-@dataclass
+@define
 class EmbeddingsArgs:
     """EMBEDDINGS"""
 

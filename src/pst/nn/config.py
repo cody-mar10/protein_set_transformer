@@ -1,22 +1,22 @@
-from dataclasses import dataclass, field
-from typing import Literal, Union
+from typing import Union
 
-from jsonargparse.typing import (
-    NonNegativeInt,
-    OpenUnitInterval,
-    PositiveFloat,
-    PositiveInt,
-    restricted_number_type,
-)
+from attrs import Attribute, define, field, validators
 
 from pst.typing import NO_NEGATIVES_MODES
-from pst.utils.dataclass_utils import DataclassValidatorMixin, validated_field
+from pst.utils.attrs.dataclass_utils import AttrsDataclassUtilitiesMixin
+from pst.utils.attrs.validators import (
+    non_negative_int,
+    open_unit_interval,
+    optional_positive_int,
+    positive_float,
+    positive_int,
+)
 
 MAX_PROTEINS_PER_GENOME = 2048
 
 
-@dataclass
-class BaseAugmentationConfig(DataclassValidatorMixin):
+@define
+class BaseAugmentationConfig(AttrsDataclassUtilitiesMixin):
     """This is used to pass arguments to setting up the augmentation function.
 
     Subclass this if you need to pass additional arguments to the augmentation function.
@@ -25,7 +25,8 @@ class BaseAugmentationConfig(DataclassValidatorMixin):
     pass
 
 
-@dataclass
+# TODO: rename to PointSwapAugmentationConfig
+@define
 class AugmentationConfig(BaseAugmentationConfig):
     """AUGMENTATION
 
@@ -35,12 +36,12 @@ class AugmentationConfig(BaseAugmentationConfig):
         sample_rate (float): PointSwap sampler swapping rate in (0.0, 1.0)
     """
 
-    sample_rate: float = validated_field(0.5, validator=OpenUnitInterval)
+    sample_rate: float = field(default=0.5, validator=open_unit_interval)
     """PointSwap sampler swapping rate in (0.0, 1.0)"""
 
 
-@dataclass
-class BaseLossConfig(DataclassValidatorMixin):
+@define
+class BaseLossConfig(AttrsDataclassUtilitiesMixin):
     """This is used to pass arguments to setting up the loss function.
 
     Subclass this if you need to pass additional arguments to the loss function.
@@ -49,7 +50,7 @@ class BaseLossConfig(DataclassValidatorMixin):
     pass
 
 
-@dataclass
+@define
 class WeightedLossConfig(BaseLossConfig):
     """Base config for weighted loss functions that need a weight scale factor.
 
@@ -57,13 +58,13 @@ class WeightedLossConfig(BaseLossConfig):
         sample_scale (float): exponential decay scale factor for weighting samples during triplet, contrastive, or relational loss
     """
 
-    sample_scale: float = validated_field(7.0, validator=PositiveFloat)
+    sample_scale: float = field(default=7.0, validator=positive_float)
     """exponential decay scale factor for weighting samples during triplet, contrastive, or 
     relational loss"""
 
 
-@dataclass
-class GenomeTripletLossConfig(WeightedLossConfig):
+@define
+class TripletLossConfig(WeightedLossConfig):
     """LOSS
 
     Triplet loss with exponential decay weighting.
@@ -74,30 +75,24 @@ class GenomeTripletLossConfig(WeightedLossConfig):
             sample existing
     """
 
-    margin: float = validated_field(0.1, validator=PositiveFloat)
+    margin: float = field(default=0.1, validator=positive_float)
     """triplet loss margin"""
 
     no_negatives_mode: NO_NEGATIVES_MODES = "closest_to_positive"
     """mode to handle event of no semihard negative sample existing"""
 
 
-LearningRate = restricted_number_type(
-    "LearningRate",
-    float,
-    [(">=", 1e-5), ("<=", 1e-1)],
-    docstring="learning rate in [1e-5, 1e-1]",
+learning_rate_validator = validators.and_(
+    validators.instance_of(float), validators.ge(1e-5), validators.le(1e-1)
 )
 
-WeightDecay = restricted_number_type(
-    "WeightDecay",
-    float,
-    [(">=", 0.0), ("<=", 1e-1)],
-    docstring="optimizer weight decay in [0.0, 1e-1]",
+weight_decay_validator = validators.and_(
+    validators.instance_of(float), validators.ge(0.0), validators.le(1e-1)
 )
 
 
-@dataclass
-class OptimizerConfig(DataclassValidatorMixin):
+@define
+class OptimizerConfig(AttrsDataclassUtilitiesMixin):
     """OPTIMIZER
     for constructing a `torch.optim.AdamW` optimizer.
 
@@ -109,28 +104,38 @@ class OptimizerConfig(DataclassValidatorMixin):
         use_scheduler (bool): whether or not to use a linearly decaying scheduler
     """
 
-    lr: float = validated_field(1e-3, validator=LearningRate)
+    lr: float = field(default=1e-3, validator=learning_rate_validator)
     """learning rate"""
-    weight_decay: float = validated_field(0.0, validator=WeightDecay)
+    weight_decay: float = field(default=0.0, validator=weight_decay_validator)
     """optimizer weight decay"""
     betas: tuple[float, float] = (0.9, 0.999)
     """optimizer betas"""
-    warmup_steps: int = validated_field(0, validator=NonNegativeInt)
+    warmup_steps: int = field(default=0, validator=non_negative_int)
     """number of warmup steps"""
     use_scheduler: bool = False
     """whether or not to use a linearly decaying scheduler"""
 
 
-LeftClosedRightOpenUnitInterval = restricted_number_type(
-    "LeftClosedRightOpenUnitInterval",
-    float,
-    [(">=", 0.0), ("<", 1.0)],
-    docstring="float in [0.0, 1.0)",
+left_closed_right_open_unit_interval = validators.and_(
+    validators.instance_of(float), validators.ge(0.0), validators.lt(1.0)
 )
 
 
-@dataclass
-class BaseModelConfig(DataclassValidatorMixin):
+def _in_dim_evenly_divisible_by_num_heads(
+    instance: "BaseModelConfig", attribute: Attribute, value: int
+):
+    if (value % instance.num_heads) != 0:
+        raise ValueError(
+            f"in_dim must be divisible by num_heads. Received: in_dim={value} and "
+            f"num_heads={instance.num_heads}"
+        )
+
+
+_in_dim_validator = validators.and_(positive_int, _in_dim_evenly_divisible_by_num_heads)
+
+
+@define
+class BaseModelConfig(AttrsDataclassUtilitiesMixin):
     """MODEL
 
     Base config for all PST models, genomic or protein. This can be used as is, but subclassing
@@ -158,63 +163,52 @@ class BaseModelConfig(DataclassValidatorMixin):
 
     # however the attribute docstrings are used for IDEs,
     # while jsonargparse can use either depending on the situation
-    in_dim: int
+    in_dim: int = field(validator=_in_dim_validator)
     """input dimension"""
 
-    out_dim: int = -1
+    out_dim: int = field(default=-1, validator=optional_positive_int)
     """output dimension, default is to use the input dimension"""
 
-    num_heads: int = validated_field(4, validator=PositiveInt)
+    num_heads: int = field(default=4, validator=positive_int)
     """number of attention heads"""
 
-    n_enc_layers: int = validated_field(5, validator=PositiveInt)
+    n_enc_layers: int = field(default=5, validator=positive_int)
     """number of encoder layers"""
 
-    embed_scale: int = validated_field(4, validator=PositiveInt)
+    embed_scale: int = field(
+        default=4, validator=validators.and_(positive_int, validators.in_({1, 2, 4, 8}))
+    )
     """scale factor for positional and strand embeddings"""
 
-    dropout: float = validated_field(0.0, validator=LeftClosedRightOpenUnitInterval)
+    dropout: float = field(default=0.0, validator=left_closed_right_open_unit_interval)
     """dropout rate for individual weight parameters, [0.0, 1.0)"""
 
-    layer_dropout: float = validated_field(
-        0.0, validator=LeftClosedRightOpenUnitInterval
+    layer_dropout: float = field(
+        default=0.0, validator=left_closed_right_open_unit_interval
     )
     """dropout rate for entire layers, [0.0, 1.0)"""
 
     proj_cat: bool = False
     """whether to project the concatenated pLM, positional, and strand embeddings"""
 
-    max_proteins: int = validated_field(MAX_PROTEINS_PER_GENOME, validator=PositiveInt)
+    max_proteins: int = field(default=MAX_PROTEINS_PER_GENOME, validator=positive_int)
     """maximum number of proteins in a scaffikd"""
 
     compile: bool = False
     """whether to compile the model with `torch.compile`"""
 
-    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    optimizer: OptimizerConfig = field(factory=OptimizerConfig)
     """OPTIMIZER
     
     config to setup a `torch.optim.AdamW` optimizer
     """
 
-    loss: BaseLossConfig = field(default_factory=BaseLossConfig)
+    loss: BaseLossConfig = field(factory=BaseLossConfig)
     """LOSS"""
 
-    augmentation: BaseAugmentationConfig = field(default_factory=BaseAugmentationConfig)
-    """AUGMENTATION"""
-
-    def _validate_dimensions(self, attr: Literal["in_dim", "out_dim"]):
-        value = getattr(self, attr)
-        if value != -1 and value <= 0:
-            raise ValueError(f"{attr} must be > 0 if specified")
-
-    def __post_init__(self):
-        super().__post_init__()
-
-        for attr in ["in_dim", "out_dim"]:
-            self._validate_dimensions(attr)  # type: ignore
-
-        if (self.in_dim % self.num_heads) != 0:
-            raise ValueError("in_dim must be divisible by num_heads if provided")
+    # jsonargparse has problems when a sub attrs.define dataclass has no init args
+    # augmentation: BaseAugmentationConfig = field(factory=BaseAugmentationConfig)
+    # """AUGMENTATION"""
 
     def _get_original_dims(self) -> tuple[int, int]:
         """
@@ -257,35 +251,52 @@ class BaseModelConfig(DataclassValidatorMixin):
         self.in_dim = original_in_dim
         self.out_dim = original_out_dim
 
+    # def __attrs_post_init__(self):
+    #     # validate args with cattrs deserialization
+    #     ser = self.to_dict()
 
-# TODO: this should be renamed to triplet_loss_config
-@dataclass
-class GenomeTripletLossModelConfig(BaseModelConfig):
+    #     deser = self.__class__.from_dict(ser)
+
+    #     if deser != self:
+    #         raise ValueError(
+    #             f"Failed to validate arguments. Constructed: {self}\nExpected: {deser}"
+    #         )
+
+
+@define
+class ProteinTripletLossModelConfig(BaseModelConfig):
+    """MODEL
+
+    Model config for protein PST models that use triplet loss.
+
+    Attributes:
+        loss (TripletLossConfig): LOSS
+    """
+
+    loss: TripletLossConfig = field(factory=TripletLossConfig)
+    """LOSS"""
+
+
+@define
+class GenomeTripletLossModelConfig(ProteinTripletLossModelConfig):
     """MODEL
 
     Model config for PST models that use triplet loss and PointSwap augmentation.
 
     Attributes:
-        loss (GenomeTripletLossConfig): LOSS
         augmentation (AugmentationConfig): AUGMENTATION using PointSwap
     """
 
-    loss: GenomeTripletLossConfig = field(default_factory=GenomeTripletLossConfig)
-    """LOSS"""
-
-    augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
+    augmentation: AugmentationConfig = field(factory=AugmentationConfig)
     """AUGMENTATION using PointSwap"""
 
 
-MaskingRate = restricted_number_type(
-    "MaskingRate",
-    float,
-    [(">=", 0.0), ("<", 0.5)],
-    docstring="masking rate for MLM in [0.0, 0.5)",
+masking_rate = validators.and_(
+    validators.instance_of(float), validators.ge(0.0), validators.lt(0.5)
 )
 
 
-@dataclass
+@define
 class MaskedLanguageModelingLossConfig(WeightedLossConfig):
     """LOSS
 
@@ -295,11 +306,11 @@ class MaskedLanguageModelingLossConfig(WeightedLossConfig):
         masking_rate (float): masking rate for MLM in [0.0, 0.5).
     """
 
-    masking_rate: float = validated_field(0.15, validator=MaskingRate)
+    masking_rate: float = field(default=0.15, validator=masking_rate)
     """masking rate for MLM"""
 
 
-@dataclass
+@define
 class MaskedLanguageModelingConfig(BaseModelConfig):
     """MODEL
 
@@ -310,11 +321,13 @@ class MaskedLanguageModelingConfig(BaseModelConfig):
     """
 
     loss: MaskedLanguageModelingLossConfig = field(
-        default_factory=MaskedLanguageModelingLossConfig
+        factory=MaskedLanguageModelingLossConfig
     )
     """LOSS"""
 
 
 UnionModelConfig = Union[
-    BaseModelConfig, GenomeTripletLossModelConfig, MaskedLanguageModelingConfig
+    ProteinTripletLossModelConfig,
+    GenomeTripletLossModelConfig,
+    MaskedLanguageModelingConfig,
 ]
