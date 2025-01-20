@@ -1,7 +1,6 @@
 import importlib.metadata
 import logging
-from dataclasses import fields, is_dataclass
-from typing import Generic, Type, TypeVar
+from typing import Generic, TypeVar
 
 from docstring_parser import DocstringStyle
 from jsonargparse import CLI, set_docstring_parse_options
@@ -21,51 +20,33 @@ from pst.utils.cli.experiment import ExperimentArgs
 from pst.utils.cli.modes import DownloadMode, EmbedMode, GraphifyMode
 from pst.utils.cli.trainer import TrainerArgs
 from pst.utils.cli.tuning import TuningArgs
-from pst.utils.dataclass_utils import model_dump
 from pst.utils.history import update_config_from_history
 
-# these are needed for dynamic dispatch
+# these are needed for dynamic dispatch for modes that require a model config and not a model itself
 
 T_dc = TypeVar("T_dc", bound=_SimpleModelConfig)
 
 
-class _BaseModelConfig(Generic[T_dc]):
+class _ModelConfigWrapper(Generic[T_dc]):
+    config: T_dc
 
-    @classmethod
-    def _config_type(cls) -> Type[T_dc]:
-        return cls.__base__  # type: ignore
-
-    def to_dataclass(self) -> T_dc:
-        dc = self._config_type()
-        if not is_dataclass(dc):
-            raise TypeError(f"{dc} is not a dataclass")
-
-        init_args = dict()
-
-        for field in fields(dc):
-            value = getattr(self, field.name)
-            if is_dataclass(value):
-                value = model_dump(value)
-
-            init_args[field.name] = value
-
-        return dc.from_dict(init_args)
+    def __init__(self, config: T_dc):
+        self.config = config
 
 
-class SimpleModelConfig(_SimpleModelConfig, _BaseModelConfig[_SimpleModelConfig]):
-    pass
+class SimpleModelConfig(_ModelConfigWrapper[_SimpleModelConfig]):
+    def __init__(self, config: _SimpleModelConfig):
+        super().__init__(config)
 
 
-class TripletLossModelConfig(
-    _GenomeTripletLossModelConfig, _BaseModelConfig[_GenomeTripletLossModelConfig]
-):
-    pass
+class TripletLossModelConfig(_ModelConfigWrapper[_GenomeTripletLossModelConfig]):
+    def __init__(self, config: _GenomeTripletLossModelConfig):
+        super().__init__(config)
 
 
-class MaskedLanguageModelingConfig(
-    _MaskedLanguageModelingConfig, _BaseModelConfig[_MaskedLanguageModelingConfig]
-):
-    pass
+class MaskedLanguageModelingConfig(_ModelConfigWrapper[_MaskedLanguageModelingConfig]):
+    def __init__(self, config: _MaskedLanguageModelingConfig):
+        super().__init__(config)
 
 
 class Main(DownloadMode, GraphifyMode, EmbedMode, PredictMode, FinetuneMode):
@@ -124,15 +105,15 @@ class Main(DownloadMode, GraphifyMode, EmbedMode, PredictMode, FinetuneMode):
 
     def cv(
         self,
-        model_type: BaseModelTypes,
-        model: _BaseModelConfig,
+        model: _ModelConfigWrapper,
         data: CrossValDataConfig,
         trainer: TrainerArgs,
         experiment: ExperimentArgs,
+        model_type: BaseModelTypes = ProteinSetTransformer,
     ):
         """PST mode for training with cross validation"""
         self._log_mode("cv")
-        model_cfg: _SimpleModelConfig = model.to_dataclass()
+        model_cfg = model.config
 
         if experiment.best_trial is not None:
             model_cfg, data = update_config_from_history(
@@ -141,13 +122,15 @@ class Main(DownloadMode, GraphifyMode, EmbedMode, PredictMode, FinetuneMode):
                 history_file=experiment.best_trial,
                 tuning_config_def=experiment.config,
             )
+            # NOTE: don't need to update config dims because config hasn't
+            # been attached to a model yet, so no dim expansion
 
         self._check_model_and_config_type(model_type=model_type, model_cfg=model_cfg)
         cv.train_with_cross_validation(model_type, model_cfg, data, trainer, experiment)
 
     def tune(
         self,
-        model: _BaseModelConfig,
+        model: _ModelConfigWrapper,
         data: CrossValDataConfig,
         trainer: TrainerArgs,
         experiment: ExperimentArgs,
@@ -166,7 +149,7 @@ class Main(DownloadMode, GraphifyMode, EmbedMode, PredictMode, FinetuneMode):
                 `ProteinSetTransformer`.
         """
         self._log_mode("tune")
-        model_cfg: _SimpleModelConfig = model.to_dataclass()
+        model_cfg = model.config
         self._check_model_and_config_type(model_type=model_type, model_cfg=model_cfg)
 
         tuning_module.tune(model_type, model_cfg, data, trainer, experiment, tuning)
