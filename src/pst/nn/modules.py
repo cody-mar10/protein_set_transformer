@@ -7,7 +7,11 @@ from pst.nn.base import (
     BaseProteinSetTransformer,
     BaseProteinSetTransformerEncoder,
 )
-from pst.nn.config import GenomeTripletLossModelConfig, MaskedLanguageModelingConfig
+from pst.nn.config import (
+    GenomeTripletLossModelConfig,
+    MaskedLanguageModelingConfig,
+    ProteinTripletLossModelConfig,
+)
 from pst.nn.utils.distance import (
     pairwise_euclidean_distance,
     stacked_batch_chamfer_distance,
@@ -24,17 +28,6 @@ from pst.nn.utils.sampling import (
     positive_sampling,
 )
 from pst.typing import GenomeGraphBatch
-
-
-def _adjust_checkpoint_inplace(ckpt: dict[str, Any]):
-    # there was an old error when computing the pointswap rate to be 1 - expected
-    # the code has been changed (see commit 82b0698)
-    # however, old checkpoints will have the previous value, which needs to be adjusted
-    if ckpt["hyper_parameters"].pop(_FIXED_POINTSWAP_RATE, None) is None:
-        # key not present = old model
-        # so need to adjust the sample rate
-        curr_rate = ckpt["hyper_parameters"]["augmentation"]["sample_rate"]
-        ckpt["hyper_parameters"]["augmentation"]["sample_rate"] = 1.0 - curr_rate
 
 
 class ProteinSetTransformer(BaseProteinSetTransformer[GenomeTripletLossModelConfig]):
@@ -176,15 +169,15 @@ class ProteinSetTransformer(BaseProteinSetTransformer[GenomeTripletLossModelConf
         # there was an old error when computing the pointswap rate to be 1 - expected
         # the code has been changed (see commit 82b0698)
         # however, old checkpoints will have the previous value, which needs to be adjusted
-        if ckpt["hyper_parameters"].pop(_FIXED_POINTSWAP_RATE, None) is None:
+        hparams = ckpt["hyper_parameters"]["config"]
+        if hparams.pop(_FIXED_POINTSWAP_RATE, None) is None:
             # key not present = old model
             # so need to adjust the sample rate
-            curr_rate = ckpt["hyper_parameters"]["augmentation"]["sample_rate"]
-            ckpt["hyper_parameters"]["augmentation"]["sample_rate"] = 1.0 - curr_rate
+            curr_rate = hparams["augmentation"]["sample_rate"]
+            hparams["augmentation"]["sample_rate"] = 1.0 - curr_rate
 
         # move sample_scale and no_negatives_mode to the loss field
         # if they are part of the augmentation field
-        hparams = ckpt["hyper_parameters"]
         for hparam_name in ("sample_scale", "no_negatives_mode"):
             if hparam_name in hparams["augmentation"]:
                 hparams["loss"][hparam_name] = hparams["augmentation"].pop(hparam_name)
@@ -207,9 +200,9 @@ class ProteinSetTransformer(BaseProteinSetTransformer[GenomeTripletLossModelConf
 
 
 class ProteinSetTransformerEncoder(
-    BaseProteinSetTransformerEncoder[GenomeTripletLossModelConfig]
+    BaseProteinSetTransformerEncoder[ProteinTripletLossModelConfig]
 ):
-    def __init__(self, config: GenomeTripletLossModelConfig):
+    def __init__(self, config: ProteinTripletLossModelConfig):
         super().__init__(config=config)
 
     def setup_objective(self, margin: float, **kwargs) -> WeightedTripletLoss:
@@ -273,9 +266,9 @@ class ProteinSetTransformerEncoder(
     def _adjust_checkpoint_inplace(ckpt: dict[str, Any]):
         # move sample_scale and no_negatives_mode to the loss field
         # if they are part of the augmentation field
-        hparams = ckpt["hyper_parameters"]
+        hparams = ckpt["hyper_parameters"]["config"]
 
-        if "augmentation" in hparams:
+        if "augmentation" in hparams and hparams["augmentation"]:
             for hparam_name in ("sample_scale", "no_negatives_mode"):
                 if hparam_name in hparams["augmentation"]:
                     hparams["loss"][hparam_name] = hparams["augmentation"].pop(
