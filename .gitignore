@@ -6,7 +6,7 @@ dist/
 src/**/*.ipynb
 .vscode/
 build/
-.mypy_cache/
+.*cache/
 *.out
 *.log
 *.err
