@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ptn-set-transformer"
-version = "2.0.0"
+version = "2.1.0"
 authors = [{ name = "Cody Martin", email = "codycmar10@gmail.com" }]
 description = "Training and inference on protein sets (genomes)"
 readme = "README.md"
@@ -23,18 +23,23 @@ dependencies = [
     "torch_scatter",
     "numpy<2.0",
     "more-itertools",
-    "lightning-cv[tune]>=1.0",
-    "jsonargparse[signatures]>=4.28",
-    "dataclass-wizard>=0.28",
+    "lightning-cv[tune]>=1.0",                          
+    "optuna>=3.1",
+    "jsonargparse[signatures]>=4.35.1",                 # must have my PR merged
     "einops",
     "requests",
     "tqdm",
     "fair-esm==2.0.0",
     "scikit-learn",
+    "typing-extensions>=4.11; python_version < '3.10'",
+    "attrs>=24.2",
+    "cattrs>=24.1",
 ]
 
 [project.optional-dependencies]
-tune = ["optuna>=3.1", "sqlite-utils"]
+test = ["pytest>=8.3", "pytest-cov"]
+build = ["ruff", "mypy", "isort", "covdefaults"]
+dev = ["ptn-set-transformer[build]", "ptn-set-transformer[test]"]
 
 [project.scripts]
 pst = "pst:main.main"
@@ -51,5 +56,16 @@ line-length = 90
 [tool.ruff.per-file-ignores]
 "__init__.py" = ["F401"] # allow unused imports in `__init__.py`
 
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
 [tool.coverage.run]
 plugins = ["covdefaults"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit", "tests/integration"]
+filterwarnings = [
+    # ignore lightning warnings since it is a 3rd party lib
+    "ignore:.*pkg_resources.declare_namespace",
+    "ignore:.*pkg_resources is deprecated:DeprecationWarning",
+]
