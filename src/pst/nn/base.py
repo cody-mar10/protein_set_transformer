@@ -2,7 +2,7 @@ import sys
 from collections.abc import Mapping
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Callable, Generic, Literal, Optional, Type, TypeVar, Union, cast
+from typing import Any, Callable, Generic, Literal, Optional, TypeVar, Union, cast
 
 if sys.version_info >= (3, 11):  # pragma: >=3.11 cover
     from typing import Self
@@ -167,7 +167,7 @@ class _BaseProteinSetTransformer(
     config: _BaseConfigT
 
     # NOTE: do not change the name of the config var in all subclasses
-    def __init__(self, config: _BaseConfigT, model_type: Type[_ModelT]) -> None:
+    def __init__(self, config: _BaseConfigT, model_type: type[_ModelT]) -> None:
         expected_config_type = self._resolve_model_config_type()
         if not isinstance(config, expected_config_type):
             raise ValueError(
@@ -183,6 +183,9 @@ class _BaseProteinSetTransformer(
         if config.out_dim == -1:
             config.out_dim = config.in_dim
 
+        # only needed for saving/loading models
+        self.original_config = config
+
         # deep copy so that embedding size changes do not affect the original config
         # this really only matters for interactive sessions
         self.config = config.clone(deep=True)
@@ -192,7 +195,7 @@ class _BaseProteinSetTransformer(
         # NOTE: regarding changes to embed dim, this should save the initial values
         # BEFORE the dimension changes
         self.save_hyperparameters(
-            self.config.to_dict(exclude={"fabric"}) | {_FIXED_POINTSWAP_RATE: True}
+            {_FIXED_POINTSWAP_RATE: True, "config": self.original_config.to_dict()}
         )
 
         self.config.in_dim += self.extra_embedding_dim
@@ -210,13 +213,10 @@ class _BaseProteinSetTransformer(
         self.model = self.setup_model(model_type)
         self.is_genomic = isinstance(self.model, SetTransformer)
 
-        self.optimizer_cfg = config.optimizer
-        self.augmentation_cfg = config.augmentation
-
         self.criterion = self.setup_objective(**self.config.loss.to_dict())
 
     def _setup_model(
-        self, model_type: Type[_ModelT], include: Optional[set[str]] = None, **kwargs
+        self, model_type: type[_ModelT], include: Optional[set[str]] = None, **kwargs
     ) -> _ModelT:
         model = model_type(**self.config.to_dict(include=include), **kwargs)
         if self.config.compile:
@@ -224,7 +224,7 @@ class _BaseProteinSetTransformer(
 
         return model
 
-    def setup_model(self, model_type: Type[_ModelT]) -> _ModelT:
+    def setup_model(self, model_type: type[_ModelT]) -> _ModelT:
         # for some reason, typehinting hates if this is part of the if directly
         condition = issubclass(model_type, SetTransformer)
 
@@ -264,19 +264,19 @@ class _BaseProteinSetTransformer(
     def configure_optimizers(self) -> dict[str, Any]:
         optimizer = torch.optim.AdamW(
             params=self.parameters(),
-            lr=self.optimizer_cfg.lr,
-            betas=self.optimizer_cfg.betas,
-            weight_decay=self.optimizer_cfg.weight_decay,
+            lr=self.config.optimizer.lr,
+            betas=self.config.optimizer.betas,
+            weight_decay=self.config.optimizer.weight_decay,
         )
         config: dict[str, Any] = {"optimizer": optimizer}
-        if self.optimizer_cfg.use_scheduler:
+        if self.config.optimizer.use_scheduler:
             if self.fabric is None:
                 self.estimated_steps = self.trainer.estimated_stepping_batches
 
             # TODO: i dont think self.estimated_steps exists without a trainer?
             scheduler = get_linear_schedule_with_warmup(
                 optimizer=optimizer,
-                num_warmup_steps=self.optimizer_cfg.warmup_steps,
+                num_warmup_steps=self.config.optimizer.warmup_steps,
                 num_training_steps=self.estimated_steps,
             )
             config["lr_scheduler"] = {
@@ -330,6 +330,7 @@ class _BaseProteinSetTransformer(
         **kwargs,
     ) -> torch.Tensor:
         loss = self(batch=batch, **kwargs)
+        # TODO: is this correct for batch size?
         batch_size = batch.num_proteins.numel()
         # if fabric attached, it will handle logging
         if self.fabric is None:
@@ -505,11 +506,11 @@ class _BaseProteinSetTransformer(
         raise NotImplementedError
 
     @classmethod
-    def _resolve_model_config_type(cls) -> Type[_BaseConfigT]:
+    def _resolve_model_config_type(cls) -> type[_BaseConfigT]:
         model_config_type = _resolve_config_type_from_init(
             cls, config_name="config", default=BaseModelConfig
         )
-        return cast(Type[_BaseConfigT], model_config_type)
+        return cast(type[_BaseConfigT], model_config_type)
 
     def _try_load_state_dict(
         self, state_dict: dict[str, torch.Tensor], strict: bool = True
@@ -563,8 +564,8 @@ class _BaseProteinSetTransformer(
     def from_pretrained(
         cls,
         pretrained_model_name_or_path: str | Path,
-        model_type: Type[_ModelT],
-        model_config_type: Optional[Type[_BaseConfigT]] = None,
+        model_type: type[_ModelT],
+        model_config_type: Optional[type[_BaseConfigT]] = None,
         strict: bool = True,
         **update_kwargs,
     ) -> Self:
@@ -624,14 +625,16 @@ class _BaseProteinSetTransformer(
         # need to merge ckpt["hyper_parameters"] with update_kwargs with nested dicts
         # however, there should only be 2 nesting levels if present
 
+        hparams = ckpt["hyper_parameters"]["config"]
+
         for key, value in update_kwargs.items():
             if isinstance(value, Mapping):
                 for subkey, subvalue in value.items():
-                    ckpt["hyper_parameters"][key][subkey] = subvalue
+                    hparams[key][subkey] = subvalue
             else:
-                ckpt["hyper_parameters"][key] = value
+                hparams[key] = value
 
-        model_config = model_config_type.from_dict(ckpt["hyper_parameters"])
+        model_config = model_config_type.from_dict(hparams)
 
         try:
             model = cls(config=model_config, model_type=model_type)
@@ -697,7 +700,6 @@ class BaseProteinSetTransformer(
         node_mask: OptTensor = None,
         return_attention_weights: bool = False,
     ) -> GraphAttnOutput:
-        # GraphAttnOutput
         output: GraphAttnOutput = self.model(
             x=x,
             edge_index=edge_index,
@@ -911,12 +913,13 @@ class BaseProteinSetTransformerEncoder(
         return cast(EdgeAttnOutput, result)
 
 
+# these must have the encoder first
 BaseModelTypes = Union[
-    Type[BaseProteinSetTransformer],
-    Type[BaseProteinSetTransformerEncoder],
+    type[BaseProteinSetTransformerEncoder],
+    type[BaseProteinSetTransformer],
 ]
 
 BaseModels = Union[
-    BaseProteinSetTransformer,
     BaseProteinSetTransformerEncoder,
+    BaseProteinSetTransformer,
 ]
