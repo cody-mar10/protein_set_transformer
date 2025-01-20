@@ -7,7 +7,7 @@ from torch_geometric.data import Data
 
 from pst.typing import EdgeIndexStrategy, OptTensor
 
-_DEFAULT_EDGE_STRATEGY = "chunked"
+_DEFAULT_EDGE_STRATEGY = EdgeIndexStrategy.chunked
 _DEFAULT_CHUNK_SIZE = 30
 _SENTINEL_THRESHOLD = -1
 _DEFAULT_THRESHOLD = 30
@@ -148,7 +148,7 @@ class GenomeGraph(Data):
         edge_strategy: EdgeIndexStrategy, chunk_size: int, threshold: int
     ) -> EdgeIndexCreateFn:
         kwargs = dict()
-        if edge_strategy == "sparse":
+        if edge_strategy == EdgeIndexStrategy.sparse:
             if threshold <= 1:
                 errmsg = (
                     f"Passed {edge_strategy=}, which requires the `threshold`"
@@ -157,7 +157,7 @@ class GenomeGraph(Data):
                 raise ValueError(errmsg)
             kwargs["threshold"] = threshold
             edge_create_fn = GenomeGraph.create_sparse_graph
-        elif edge_strategy == "chunked":
+        elif edge_strategy == EdgeIndexStrategy.chunked:
             kwargs["threshold"] = threshold
             kwargs["chunk_size"] = chunk_size
             edge_create_fn = GenomeGraph.create_chunked_graph

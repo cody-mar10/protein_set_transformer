@@ -1,5 +1,6 @@
+from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Literal, NamedTuple, Optional, Protocol, Tuple, Union
+from typing import Any, Literal, NamedTuple, Optional, Protocol, TypeVar, Union
 
 from numpy import float32
 from numpy.typing import NDArray
@@ -8,7 +9,7 @@ from torch import Tensor
 FilePath = Union[str, Path]
 
 NO_NEGATIVES_MODES = Literal["closest_to_positive", "closest_to_anchor"]
-PairTensor = Tuple[Tensor, Tensor]
+PairTensor = tuple[Tensor, Tensor]
 OptTensor = Optional[Tensor]
 
 
@@ -31,7 +32,10 @@ class MaskedGenomeGraphBatch(GenomeGraphBatch):
     masked_embeddings: Tensor
 
 
-EdgeIndexStrategy = Literal["full", "sparse", "chunked"]
+class EdgeIndexStrategy(str, Enum):
+    full = "full"
+    sparse = "sparse"
+    chunked = "chunked"
 
 
 # layer.py types
@@ -48,4 +52,5 @@ class GraphAttnOutput(NamedTuple):
 
 NumpyFloat32 = NDArray[float32]
 
-KwargType = Dict[str, Any]
+KwargType = dict[str, Any]
+_T = TypeVar("_T")
