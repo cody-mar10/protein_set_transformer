@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Iterable
 from functools import cached_property
-from typing import Any, Sequence, Set, overload
+from typing import Any, Sequence, overload
 
 import tables as tb
 import torch
@@ -441,6 +441,8 @@ class GenomeDataset(
         # this is needed since the scatter-style reductions will create
         # empty slots in any reduction tensors that will not be of the correct size
 
+        # TODO: there is a bug when collate genome batches instead of scaffold batches
+        # since .get_genome uses this fn all genome labels become 0...
         _, rel_scaffold_label = databatch.scaffold_label.unique(
             sorted=False, return_inverse=True
         )
@@ -701,7 +703,7 @@ class GenomeDataset(
             ) from e
 
     @classmethod
-    def _init_arg_names(cls) -> Set[str]:
+    def _init_arg_names(cls) -> set[str]:
         import inspect
 
         return set(inspect.signature(cls).parameters.keys())
@@ -810,7 +812,5 @@ class SubsetGenomeDataset(Subset[GenomeGraphBatch]):
 class GenomeSubset(SubsetGenomeDataset):
     def __getitem__(self, idx):
         # self.indices points to genome indices, which doesn't work with GenomeDataset.__getitem__
-        
+
         return self.dataset.get_genome(self.indices[idx])
-    
-    
