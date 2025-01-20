@@ -1,6 +1,6 @@
 import logging
 
-import lightning_cv as lcv
+from lightning_cv import CrossValidationTrainer as CVTrainer
 
 from pst.data.config import CrossValDataConfig
 from pst.data.modules import CrossValGenomeDataModule
@@ -39,10 +39,7 @@ def train_with_cross_validation(
     if model_type is ProteinSetTransformer:
         _add_group_weights(datamodule)
 
-    trainer = lcv.CrossValidationTrainer(
-        model_type=model_type,  # type: ignore
-        config=trainer_config,
-    )
+    trainer = CVTrainer(model_type=model_type, config=trainer_config)
 
     actual_max_size = datamodule.dataset.max_size
     expected_max_size = model_cfg.max_proteins
