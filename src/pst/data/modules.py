@@ -1,17 +1,11 @@
-from enum import Enum
 from pathlib import Path
-from typing import Generic, Literal, Optional, Set, Type, TypeVar, cast
+from typing import Generic, Literal, Optional, TypeVar, cast
 
 import torch
 from lightning import LightningDataModule
-from lightning_cv.data import CrossValidationDataModuleMixin
+from lightning_cv import CrossValidationDataModuleMixin
 
-from pst.data.config import (
-    CrossValDataConfig,
-    CrossValidationType,
-    CVStrategies,
-    DataConfig,
-)
+from pst.data.config import CrossValDataConfig, CrossValidationType, CVStrategies, DataConfig
 from pst.data.dataset import FeatureLevel, GenomeDataset, SubsetGenomeDataset
 from pst.data.loader import EmptyDataLoader, GenomeDataLoader
 from pst.data.split import random_split
@@ -30,7 +24,7 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
         "threshold",
         "log_inverse",
         "fragment_size",
-        "dataloader",  # just log name
+        "dataloader",
     }
 
     config: _BaseConfigType
@@ -43,7 +37,7 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
     def __init__(
         self,
         config: _BaseConfigType,
-        extra_save_hyperparameters: Optional[Set[str]] = None,
+        extra_save_hyperparameters: Optional[set[str]] = None,
         **dataloader_kwargs,
     ):
         if self._is_base_class():
@@ -54,9 +48,7 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
 
         expected_config_type = self._resolve_config_type()
         if not isinstance(config, expected_config_type):
-            raise TypeError(
-                f"Expected config of type {expected_config_type}, got {type(config)}"
-            )
+            raise TypeError(f"Expected config of type {expected_config_type}, got {type(config)}")
 
         super().__init__()
 
@@ -71,16 +63,14 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
         if extra_save_hyperparameters is None:
             extra_save_hyperparameters = set()
 
-        # save enums as the key str name
-        # for the configs, I already implemented auto converting enum keys to the enum type
-        save_hparams = {
-            k: v if not isinstance(v, Enum) else v.name
-            for k, v in self.config.to_dict(
-                include=self._LOGGABLE_HPARAMS | extra_save_hyperparameters
-            ).items()
-        }
+        included_hparams = self._LOGGABLE_HPARAMS.union(extra_save_hyperparameters)
 
-        self.save_hyperparameters(save_hparams)
+        # must convert enums to str to be able to write hparams
+        # deserialization of strs back to their enum members is handled automatically
+        # by attrs
+        self.save_hyperparameters(
+            self.config.to_dict(include=included_hparams, convert_enum_to_str=True)
+        )
 
     def _overwrite_dataloader_kwargs(self, **new_dataloader_kwargs):
         return self.dataloader_kwargs | new_dataloader_kwargs
@@ -95,12 +85,12 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
         self.dataset.register_feature(name, data, feature_level=feature_level)
 
     @classmethod
-    def _resolve_config_type(cls) -> Type[_BaseConfigType]:
+    def _resolve_config_type(cls) -> type[_BaseConfigType]:
         data_config_type = _resolve_config_type_from_init(
             cls, config_name="config", default=DataConfig
         )
 
-        return cast(Type[_BaseConfigType], data_config_type)
+        return cast(type[_BaseConfigType], data_config_type)
 
     def _is_base_class(self) -> bool:
         return self.__class__.__name__ == GenomeDataModuleMixin.__name__
@@ -125,15 +115,11 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
                 self.train_dataset = self.dataset
 
                 # must be a path
-                init_kwargs = self.config.to_dict(
-                    include=GenomeDataset._init_arg_names()
-                )
+                init_kwargs = self.config.to_dict(include=GenomeDataset._init_arg_names())
 
                 del init_kwargs["file"]
 
-                self.val_dataset = GenomeDataset(
-                    file=self.config.validation, **init_kwargs
-                )
+                self.val_dataset = GenomeDataset(file=self.config.validation, **init_kwargs)
         elif stage == "test":
             self.test_dataset = self.dataset
         elif stage == "predict":
@@ -152,6 +138,7 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
 
     def val_dataloader(self, **kwargs):
         if self.val_dataset is not None:
+            kwargs["shuffle"] = False
             return self.simple_dataloader(self.val_dataset, **kwargs)
 
         # val loop will be a no op
@@ -176,8 +163,6 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
         hparams: KwargType = ckpt["datamodule_hyper_parameters"]
         hparams["file"] = data_file
         config_type = cls._resolve_config_type()
-        # need to convert str names of enums to the actual enum
-        hparams = config_type._convert_str_to_enum(hparams)
         config = config_type.from_dict(hparams)
 
         # allow these to be changed irrespective of what is in the checkpoint
@@ -231,9 +216,7 @@ class _CrossValGenomeDataModule(
         )
 
 
-class CrossValGenomeDataModule(
-    CrossValidationDataModuleMixin, _CrossValGenomeDataModule
-):
+class CrossValGenomeDataModule(CrossValidationDataModuleMixin, _CrossValGenomeDataModule):
     def __init__(self, config: CrossValDataConfig, **dataloader_kwargs):
         _CrossValGenomeDataModule.__init__(self, config, **dataloader_kwargs)
 
@@ -245,7 +228,7 @@ class CrossValGenomeDataModule(
             self,
             dataset=self.dataset,
             batch_size=self.batch_size,
-            cross_validator=self.config.cv_strategy.value,  # type: ignore
+            cross_validator=self.config.cv_strategy.value,
             cross_validator_config=cross_validator_config,
             dataset_size=dataset_size,
             dataloader_type=self.config.dataloader.value,
@@ -291,10 +274,7 @@ class CrossValGenomeDataModule(
         self,
     ):
         if self.config.cv_type == CrossValidationType.both:
-            if (
-                "," not in self.config.cv_var_name
-                or self.config.cv_var_name.count(",") != 1
-            ):
+            if "," not in self.config.cv_var_name or self.config.cv_var_name.count(",") != 1:
                 raise ValueError(
                     f"Expected a comma-separated list of label,group for cv_var_name when using "
                     f"`both` cv_type, got {self.config.cv_var_name}"
@@ -308,9 +288,7 @@ class CrossValGenomeDataModule(
 
     def _check_cv_strategy_and_val_type(self):
         cv_type = self.config.cv_type.value
-        expected_cv_strategies: set[CVStrategies] = getattr(
-            CVStrategies, f"{cv_type}_methods"
-        )()
+        expected_cv_strategies: set[CVStrategies] = getattr(CVStrategies, f"{cv_type}_methods")()
 
         if self.config.cv_strategy not in expected_cv_strategies:
             raise ValueError(
