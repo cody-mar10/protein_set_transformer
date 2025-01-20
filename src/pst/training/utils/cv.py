@@ -4,11 +4,13 @@ from typing import Optional
 from lightning.fabric.loggers.csv_logs import CSVLogger
 from lightning.fabric.loggers.logger import Logger
 from lightning_cv import CrossValidationTrainerConfig
-from lightning_cv.callbacks.base import Callback as Callback
-from lightning_cv.callbacks.checkpoint import ModelCheckpoint
-from lightning_cv.callbacks.lr_monitor import LearningRateMonitor
-from lightning_cv.callbacks.stopping import EarlyStopping
-from lightning_cv.callbacks.timer import Timer
+from lightning_cv.callbacks import (
+    Callback,
+    EarlyStopping,
+    LearningRateMonitor,
+    ModelCheckpoint,
+    Timer,
+)
 
 from pst.nn.config import BaseModelConfig
 from pst.training.utils.constants import (
