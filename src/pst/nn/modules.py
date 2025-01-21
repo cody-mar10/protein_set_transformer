@@ -12,21 +12,14 @@ from pst.nn.config import (
     MaskedLanguageModelingConfig,
     ProteinTripletLossModelConfig,
 )
-from pst.nn.utils.distance import (
-    pairwise_euclidean_distance,
-    stacked_batch_chamfer_distance,
-)
+from pst.nn.utils.distance import pairwise_euclidean_distance, stacked_batch_chamfer_distance
 from pst.nn.utils.loss import (
     AugmentedWeightedTripletLoss,
     MaskedLanguageModelingLoss,
     WeightedTripletLoss,
 )
 from pst.nn.utils.mask import mask_batch
-from pst.nn.utils.sampling import (
-    negative_sampling,
-    point_swap_sampling,
-    positive_sampling,
-)
+from pst.nn.utils.sampling import negative_sampling, point_swap_sampling, positive_sampling
 from pst.typing import GenomeGraphBatch
 
 
@@ -41,9 +34,7 @@ class ProteinSetTransformer(BaseProteinSetTransformer[GenomeTripletLossModelConf
     def setup_objective(self, margin: float, **kwargs) -> AugmentedWeightedTripletLoss:
         return AugmentedWeightedTripletLoss(margin=margin)
 
-    def forward(
-        self, batch: GenomeGraphBatch, augment_data: bool = True
-    ) -> torch.Tensor:
+    def forward(self, batch: GenomeGraphBatch, augment_data: bool = True) -> torch.Tensor:
         """Forward pass using Point Swap augmentation (during training only) with a triplet loss function."""
 
         # adding positional and strand embeddings lead to those dominating the plm signal
@@ -58,9 +49,7 @@ class ProteinSetTransformer(BaseProteinSetTransformer[GenomeTripletLossModelConf
 
         # calculate chamfer distance only based on the plm embeddings
         # want to maximize that signal over strand and positional embeddings
-        setwise_dist, item_flow = stacked_batch_chamfer_distance(
-            batch=batch.x, ptr=batch.ptr
-        )
+        setwise_dist, item_flow = stacked_batch_chamfer_distance(batch=batch.x, ptr=batch.ptr)
         setwise_dist_std = setwise_dist.std()
 
         #### REAL DATA ####
@@ -169,8 +158,16 @@ class ProteinSetTransformer(BaseProteinSetTransformer[GenomeTripletLossModelConf
         # there was an old error when computing the pointswap rate to be 1 - expected
         # the code has been changed (see commit 82b0698)
         # however, old checkpoints will have the previous value, which needs to be adjusted
-        hparams = ckpt["hyper_parameters"]["config"]
-        if hparams.pop(_FIXED_POINTSWAP_RATE, None) is None:
+        hparams = ckpt["hyper_parameters"]
+        fixed_pointswap_rate = hparams.pop(_FIXED_POINTSWAP_RATE, None)
+
+        # needed for backwards compatibility
+        # the model config is stored in the "config" key
+        # in future versions
+        if "config" in hparams:
+            hparams = hparams["config"]
+
+        if fixed_pointswap_rate is None:
             # key not present = old model
             # so need to adjust the sample rate
             curr_rate = hparams["augmentation"]["sample_rate"]
@@ -199,9 +196,7 @@ class ProteinSetTransformer(BaseProteinSetTransformer[GenomeTripletLossModelConf
 ######### Protein-level models #########
 
 
-class ProteinSetTransformerEncoder(
-    BaseProteinSetTransformerEncoder[ProteinTripletLossModelConfig]
-):
+class ProteinSetTransformerEncoder(BaseProteinSetTransformerEncoder[ProteinTripletLossModelConfig]):
     def __init__(self, config: ProteinTripletLossModelConfig):
         super().__init__(config=config)
 
@@ -271,14 +266,10 @@ class ProteinSetTransformerEncoder(
         if "augmentation" in hparams and hparams["augmentation"]:
             for hparam_name in ("sample_scale", "no_negatives_mode"):
                 if hparam_name in hparams["augmentation"]:
-                    hparams["loss"][hparam_name] = hparams["augmentation"].pop(
-                        hparam_name
-                    )
+                    hparams["loss"][hparam_name] = hparams["augmentation"].pop(hparam_name)
 
 
-class MLMProteinSetTransformer(
-    BaseProteinSetTransformerEncoder[MaskedLanguageModelingConfig]
-):
+class MLMProteinSetTransformer(BaseProteinSetTransformerEncoder[MaskedLanguageModelingConfig]):
     # inherit from Encoder class since we don't actually need the decoder
     # but to get genome representations, we can just average
 
@@ -289,9 +280,7 @@ class MLMProteinSetTransformer(
         # not sure it matters that much since it should only be used to call the loss fn
         self.criterion = cast(MaskedLanguageModelingLoss, self.criterion)
 
-    def setup_objective(
-        self, masking_rate: float, **kwargs
-    ) -> MaskedLanguageModelingLoss:
+    def setup_objective(self, masking_rate: float, **kwargs) -> MaskedLanguageModelingLoss:
         # dont actually need masking rate for the loss since that is handled by data processing
         return MaskedLanguageModelingLoss()
 
