@@ -261,7 +261,10 @@ class ProteinSetTransformerEncoder(BaseProteinSetTransformerEncoder[ProteinTripl
     def _adjust_checkpoint_inplace(ckpt: dict[str, Any]):
         # move sample_scale and no_negatives_mode to the loss field
         # if they are part of the augmentation field
-        hparams = ckpt["hyper_parameters"]["config"]
+        hparams = ckpt["hyper_parameters"]
+
+        if "config" in hparams:
+            hparams = hparams["config"]
 
         if "augmentation" in hparams and hparams["augmentation"]:
             for hparam_name in ("sample_scale", "no_negatives_mode"):
