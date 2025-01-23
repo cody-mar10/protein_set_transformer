@@ -10,9 +10,15 @@ Cody Martin, Anthony Gitter, and Karthik Anantharaman.
 
 ## Installation
 
-We plan to create a `pip`-installable package in the future but are having issues with a custom fork dependency.
+You can try simply doing:
 
-For now, you can install the software dependencies of PST using a combination of `mamba` and `pip`, which should take no more than 5 minutes.
+```bash
+pip install ptn-set-transformer
+```
+
+But I prefer to manually setup the PyTorch installation to control CPU/GPU availability.
+
+This full installation can be achieved with `mamba` and `pip`, which should take no more than 5 minutes.
 
 Note: you will likely need to link your git command line interface with an online github account. Follow [this link](https://docs.github.com/en/get-started/getting-started-with-git/set-up-git#setting-up-git) for help setting up git at the command line.
 
@@ -23,14 +29,7 @@ Note: you will likely need to link your git command line interface with an onlin
 mamba create -n pst -c pytorch -c pyg -c conda-forge 'python<3.12' 'pytorch>=2.0' cpuonly pyg pytorch-scatter
 
 mamba activate pst
-
-# install latest updates from this repository
-# best to clone the repo since you may want to run the test demo
-git clone https://github.com/cody-mar10/protein_set_transformer.git
-
-cd protein_set_transformer
-
-pip install . #<- notice the [dot]
+pip install ptn-set-transformer
 ```
 
 ### With GPUs
@@ -40,14 +39,7 @@ pip install . #<- notice the [dot]
 mamba create -n pst -c pytorch -c nvidia -c pyg -c conda-forge 'python<3.12' 'pytorch>=2.0' pytorch-cuda=11.8 pyg pytorch-scatter
 
 mamba activate pst
-
-# install latest updates from this repository
-# best to clone the repo since you may want to run the test demo
-git clone https://github.com/cody-mar10/protein_set_transformer.git
-
-cd protein_set_transformer
-
-pip install . #<- notice the [dot]
+pip install ptn-set-transformer
 ```
 
 ### Installing for training a new PST
