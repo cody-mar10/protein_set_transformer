@@ -10,8 +10,8 @@ class PredictArgs:
     checkpoint: Path = field(validator=file_exists)
     """model checkpoint during inference"""
 
-    outdir: Path = Path("output")
-    """inference output directory"""
+    output: Path = Path("predictions.h5")
+    """inference output H5 file"""
 
     fragment_oversized_genomes: bool = False
     """fragment oversized genomes that encode more proteins than the model was trained to 
