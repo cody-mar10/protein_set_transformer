@@ -29,11 +29,7 @@ class AcceleratorOpts(str, Enum):
         instance = EnumConverter.convert(instance, AcceleratorOpts)
 
         if instance == AcceleratorOpts.auto:
-            return (
-                AcceleratorOpts.gpu
-                if torch.cuda.is_available()
-                else AcceleratorOpts.cpu
-            )
+            return AcceleratorOpts.gpu if torch.cuda.is_available() else AcceleratorOpts.cpu
         return instance
 
 
@@ -129,14 +125,10 @@ class TrainerArgs(AttrsDataclassUtilitiesMixin):
     max_epochs: int = field(default=1000, validator=positive_int)
     """max number of training epochs"""
 
-    precision: PrecisionOpts = enum_field(
-        enum_cls=PrecisionOpts, default=PrecisionOpts.bf16
-    )
+    precision: PrecisionOpts = enum_field(enum_cls=PrecisionOpts, default=PrecisionOpts.bf16)
     """floating point precision"""
 
-    strategy: StrategyOpts = enum_field(
-        enum_cls=StrategyOpts, default=StrategyOpts.auto
-    )
+    strategy: StrategyOpts = enum_field(enum_cls=StrategyOpts, default=StrategyOpts.auto)
     """parallelized training strategy"""
 
     gradient_clip_algorithm: Optional[GradClipAlgOpts] = "norm"
@@ -176,6 +168,8 @@ class TrainerArgs(AttrsDataclassUtilitiesMixin):
             torch.set_num_threads(threads)
             self.devices = 1
             self.strategy = StrategyOpts.auto
+        else:
+            torch.set_num_threads(1)
 
     def __attrs_post_init__(self):
         self._check_cpu_accelerator()

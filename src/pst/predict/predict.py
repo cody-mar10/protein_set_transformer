@@ -148,8 +148,9 @@ class Predictor:
 
         self.setup()
 
-        if self.device.type == "cpu":
-            torch.set_num_threads(devices)
+        # don't accidentally use CPU threads when GPUs available
+        # there are some components to batching that will use CPU threads...so just in case
+        torch.set_num_threads(devices if self.device.type == "cpu" else 1)
 
         self.filters = H5_FILE_COMPR_FILTERS
         self._file = tb.File(self.predict_cfg.output, "w", filters=self.filters)  # type: ignore
