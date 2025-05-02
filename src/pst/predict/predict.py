@@ -31,6 +31,8 @@ class PredictMode:
         batch_size: Optional[int] = None,
         fragment_size: Optional[int] = None,
         lazy: bool = False,
+        return_protein_embeddings: bool = True,
+        return_genome_embeddings: bool = True,
     ) -> Optional[dict[str, torch.Tensor]]:
         """PST predict mode for predicting with a pretrained Protein Set Transformer
 
@@ -51,6 +53,10 @@ class PredictMode:
                 but may be slower. If False, the dataset will be fully loaded into memory
                 before prediction. --lazy true is HIGHLY recommended for large microbial datasets.
                 Defaults to False.
+            return_protein_embeddings (bool, optional): whether to return protein embeddings.
+                Defaults to True.
+            return_genome_embeddings (bool, optional): whether to return genome embeddings.
+                Defaults to True.
         """
         model_inference(
             model_type=model_type,
@@ -61,9 +67,9 @@ class PredictMode:
             batch_size=batch_size,
             fragment_size=fragment_size,
             lazy=lazy,
-            node_embeddings=True,
-            graph_embeddings=True,
-            return_predictions=True,
+            node_embeddings=return_protein_embeddings,
+            graph_embeddings=return_genome_embeddings,
+            return_predictions=False,  # don't store in mem if using CLI
         )
 
 
@@ -154,6 +160,12 @@ class Predictor:
 
         self.node_embeddings = node_embeddings
         self.graph_embeddings = graph_embeddings
+
+        if not self.node_embeddings and not self.graph_embeddings:
+            raise ValueError(
+                "At least one of node_embeddings and graph_embeddings must be True. Otherwise, no embeddings will be returned or stored."
+            )
+
         self.return_predictions = return_predictions
         self.allow_genome_fragmenting = self.predict_cfg.fragment_oversized_genomes
 
@@ -471,7 +483,9 @@ class Predictor:
 
             if self.graph_embeddings:
                 self.append(name="graph", data=graph_output.out)
-                if graph_output.attn is not None:
+
+                # don't include if not adding the protein embeddings
+                if graph_output.attn is not None and self.node_embeddings:
                     self.append(name="attn", data=graph_output.attn)
 
         reduced_embeddings: dict[str, torch.Tensor] = dict()
@@ -505,6 +519,7 @@ class Predictor:
             self._add_reduced_embeddings_to_storages(name, embedding)
 
         self._rename_graph_embedding_node_in_h5_file()
+        self._cleanup_h5_file()
 
         self.close()
 
@@ -517,3 +532,8 @@ class Predictor:
     def close(self):
         self._file.close()
         self.datamodule.teardown("predict")
+
+    def _cleanup_h5_file(self):
+        for node in self._file.walk_nodes("/", classname="Array"):
+            if node.shape[0] == 0:  # type: ignore
+                self._file.remove_node(node)
