@@ -6,7 +6,7 @@ from lightning import LightningDataModule
 from lightning_cv import CrossValidationDataModuleMixin
 
 from pst.data.config import CrossValDataConfig, CrossValidationType, CVStrategies, DataConfig
-from pst.data.dataset import FeatureLevel, GenomeDataset, SubsetGenomeDataset
+from pst.data.dataset import FeatureLevel, GenomeDataset, LazyGenomeDataset, SubsetGenomeDataset
 from pst.data.loader import EmptyDataLoader, GenomeDataLoader
 from pst.data.split import random_split
 from pst.typing import KwargType
@@ -52,7 +52,9 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
 
         super().__init__()
 
-        self.dataset: GenomeDataset = GenomeDataset(
+        dataset_cls = LazyGenomeDataset if config.lazy else GenomeDataset
+
+        self.dataset: GenomeDataset = dataset_cls(
             **config.to_dict(include=GenomeDataset._init_arg_names())
         )
         self.config = config
@@ -125,6 +127,10 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
         elif stage == "predict":
             self.predict_dataset = self.dataset
 
+    def teardown(self, stage: str) -> None:
+        if isinstance(self.dataset, LazyGenomeDataset):
+            self.dataset._file.close()
+
     def simple_dataloader(self, dataset: GenomeDataset | SubsetGenomeDataset, **kwargs):
         kwargs = self._overwrite_dataloader_kwargs(**kwargs)
         kwargs["dataset"] = dataset
@@ -157,6 +163,7 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
         data_file: str | Path,
         batch_size: Optional[int] = None,
         fragment_size: Optional[int] = None,
+        lazy: bool = False,
         **kwargs,
     ):
         ckpt = torch.load(checkpoint_path, map_location="cpu")
@@ -172,6 +179,8 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
 
         if fragment_size is not None:
             config.fragment_size = fragment_size
+
+        config.lazy = lazy
 
         return cls(config, **kwargs)
 

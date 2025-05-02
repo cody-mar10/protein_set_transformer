@@ -30,6 +30,7 @@ class PredictMode:
         devices: int = 1,
         batch_size: Optional[int] = None,
         fragment_size: Optional[int] = None,
+        lazy: bool = False,
     ) -> Optional[dict[str, torch.Tensor]]:
         """PST predict mode for predicting with a pretrained Protein Set Transformer
 
@@ -45,6 +46,11 @@ class PredictMode:
                 batch size in checkpoint file.
             fragment_size (Optional[int], optional): fragment size to use for prediction.
                 Defaults to fragment size in checkpoint file.
+            lazy (bool, optional): whether to use lazy loading for the dataset.
+                If True, the dataset will be loaded lazily, which can save memory
+                but may be slower. If False, the dataset will be fully loaded into memory
+                before prediction. --lazy true is HIGHLY recommended for large microbial datasets.
+                Defaults to False.
         """
         model_inference(
             model_type=model_type,
@@ -54,6 +60,7 @@ class PredictMode:
             devices=devices,
             batch_size=batch_size,
             fragment_size=fragment_size,
+            lazy=lazy,
             node_embeddings=True,
             graph_embeddings=True,
             return_predictions=True,
@@ -68,6 +75,7 @@ def model_inference(
     devices: int = 1,
     batch_size: Optional[int] = None,
     fragment_size: Optional[int] = None,
+    lazy: bool = False,
     node_embeddings: bool = True,
     graph_embeddings: bool = True,
     return_predictions: bool = False,
@@ -81,6 +89,7 @@ def model_inference(
         devices=devices,
         batch_size=batch_size,
         fragment_size=fragment_size,
+        lazy=lazy,
         node_embeddings=node_embeddings,
         graph_embeddings=graph_embeddings,
         return_predictions=return_predictions,
@@ -103,7 +112,13 @@ def model_inference(
 
     logger.info(msg)
 
-    return predictor.predict_loop()
+    if lazy:
+        logger.info(
+            "Lazy loading is enabled. This may slow down the prediction process, but will save memory."
+        )
+
+    results = predictor.predict_loop()
+    return results
 
 
 # TODO: This is only an embedding predictor, so we don't really need to consider if using a GenomeLoader?
@@ -121,6 +136,7 @@ class Predictor:
         devices: int = 1,
         batch_size: Optional[int] = None,
         fragment_size: Optional[int] = None,
+        lazy: bool = False,
         node_embeddings: bool = True,
         graph_embeddings: bool = True,
         return_predictions: bool = False,
@@ -131,6 +147,7 @@ class Predictor:
         self.predict_cfg = predict
         self.batch_size = batch_size
         self.fragment_size = fragment_size
+        self.lazy = lazy
 
         if not node_embeddings and not graph_embeddings:
             raise ValueError("At least one of node_embeddings and graph_embeddings must be True")
@@ -187,6 +204,7 @@ class Predictor:
             batch_size=self.batch_size,
             fragment_size=self.fragment_size,
             shuffle=False,
+            lazy=self.lazy,
         )
         self.datamodule.setup("predict")
         if self.datamodule.dataset.any_multi_scaffold_genomes():
@@ -498,3 +516,4 @@ class Predictor:
 
     def close(self):
         self._file.close()
+        self.datamodule.teardown("predict")

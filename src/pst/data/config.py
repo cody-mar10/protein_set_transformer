@@ -146,6 +146,9 @@ class DataConfig(AttrsDataclassUtilitiesMixin):
         fragment_size (int): artificially break scaffolds into fragments that have no more than
             this many proteins. Default is no fragmentation.
         dataloader (DataLoaderType): dataloader type for loading minibatches of data.
+        lazy (bool): whether to load the data lazily or not. If True, the data will be loaded
+            lazily, meaning that the data will be loaded on the fly from the file. If False,
+            the data will be loaded into memory before the training/inference.
     """
 
     file: Path = field(validator=file_exists, converter=Path)
@@ -196,9 +199,7 @@ class DataConfig(AttrsDataclassUtilitiesMixin):
     log_inverse: bool = False
     """take the log of inverse class freqs as weights"""
 
-    fragment_size: int = field(
-        default=_SENTINEL_FRAGMENT_SIZE, validator=optional_positive_int
-    )
+    fragment_size: int = field(default=_SENTINEL_FRAGMENT_SIZE, validator=optional_positive_int)
     """artificially break scaffolds into fragments that have no more than this many proteins
     Default is no fragmentation."""
 
@@ -211,6 +212,11 @@ class DataConfig(AttrsDataclassUtilitiesMixin):
     - `scaffold` will only load the proteins from each scaffold WITHOUT considering if the
     source genome has other scaffolds
     """
+
+    lazy: bool = False
+    """whether to load the data lazily or not. If True, the data will be loaded lazily, meaning
+    that the data will be loaded on the fly from the file. If False, the data will be loaded
+    into memory before the training/inference."""
 
 
 @define
