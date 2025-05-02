@@ -27,6 +27,7 @@ class PredictMode:
         predict: PredictArgs,
         model_type: BaseModelTypes = ProteinSetTransformer,
         accelerator: AcceleratorOpts = AcceleratorOpts.auto,
+        devices: int = 1,
         batch_size: Optional[int] = None,
         fragment_size: Optional[int] = None,
     ) -> Optional[dict[str, torch.Tensor]]:
@@ -37,6 +38,9 @@ class PredictMode:
             predict (PredictArgs): predict configuration
             model_type (BaseModelTypes, optional): PST model type to use for prediction
             accelerator (AcceleratorOpts, optional): accelerator to use
+            devices (int, optional): number of devices to use for prediction depending on the
+                accelerator. For GPUs, this is the number of GPU devices to use. For CPU-only
+                servers, this is the number of CPU cores to use.
             batch_size (Optional[int], optional): batch size to use for prediction. Defaults to
                 batch size in checkpoint file.
             fragment_size (Optional[int], optional): fragment size to use for prediction.
@@ -47,6 +51,7 @@ class PredictMode:
             file=file,
             predict=predict,
             accelerator=accelerator,
+            devices=devices,
             batch_size=batch_size,
             fragment_size=fragment_size,
             node_embeddings=True,
@@ -60,6 +65,7 @@ def model_inference(
     file: Path,
     predict: PredictArgs,
     accelerator: AcceleratorOpts = AcceleratorOpts.auto,
+    devices: int = 1,
     batch_size: Optional[int] = None,
     fragment_size: Optional[int] = None,
     node_embeddings: bool = True,
@@ -72,6 +78,7 @@ def model_inference(
         file=file,
         predict=predict,
         accelerator=accelerator,
+        devices=devices,
         batch_size=batch_size,
         fragment_size=fragment_size,
         node_embeddings=node_embeddings,
@@ -111,6 +118,7 @@ class Predictor:
         file: Path,
         predict: PredictArgs,
         accelerator: AcceleratorOpts = AcceleratorOpts.auto,
+        devices: int = 1,
         batch_size: Optional[int] = None,
         fragment_size: Optional[int] = None,
         node_embeddings: bool = True,
@@ -125,9 +133,7 @@ class Predictor:
         self.fragment_size = fragment_size
 
         if not node_embeddings and not graph_embeddings:
-            raise ValueError(
-                "At least one of node_embeddings and graph_embeddings must be True"
-            )
+            raise ValueError("At least one of node_embeddings and graph_embeddings must be True")
 
         self.node_embeddings = node_embeddings
         self.graph_embeddings = graph_embeddings
@@ -142,10 +148,11 @@ class Predictor:
 
         self.setup()
 
-        self.filters = H5_FILE_COMPR_FILTERS
+        if self.device.type == "cpu":
+            torch.set_num_threads(devices)
 
-        # TODO: should just let users provide the file name directly since this is just a single file
-        self._file = tb.File(self.predict_cfg.outdir.joinpath("predictions.h5"), "w")  # type: ignore
+        self.filters = H5_FILE_COMPR_FILTERS
+        self._file = tb.File(self.predict_cfg.output, "w", filters=self.filters)  # type: ignore
 
         self.storage, self.in_memory_storage = self._init_storages()
         self._return_value: dict[str, torch.Tensor] = dict()
@@ -157,7 +164,10 @@ class Predictor:
         self._setup_data(ckptfile)
         self._setup_model(ckptfile)
 
-        self.predict_cfg.outdir.mkdir(parents=True, exist_ok=True)
+        if self.predict_cfg.output.exists():
+            logger.warning(
+                f"Output file {self.predict_cfg.output} already exists and will be overwritten"
+            )
 
     def _setup_accelerator(self):
         if self.accelerator == "auto":
@@ -246,9 +256,7 @@ class Predictor:
         return earray
 
     def _init_storage(self) -> dict["Predictor.OutputType", tb.EArray]:
-        return {
-            name: self._create_earray(name) for name in get_args(Predictor.OutputType)
-        }
+        return {name: self._create_earray(name) for name in get_args(Predictor.OutputType)}
 
     def _init_in_memory_storage(
         self,
@@ -321,9 +329,7 @@ class Predictor:
         )
 
         # shape: [N genomes, D]
-        genome_embeddings = scatter(
-            scaffold_embeddings, scaffold_level_genome_label, reduce=reduce
-        )
+        genome_embeddings = scatter(scaffold_embeddings, scaffold_level_genome_label, reduce=reduce)
 
         return fragment_embeddings, scaffold_embeddings, genome_embeddings
 
@@ -437,9 +443,7 @@ class Predictor:
 
             x_cat, _, _ = self.model.internal_embeddings(batch)
 
-            node_output: EdgeAttnOutput = self.model.encoder(
-                x_cat, batch.edge_index, batch.batch
-            )
+            node_output: EdgeAttnOutput = self.model.encoder(x_cat, batch.edge_index, batch.batch)
 
             if self.node_embeddings:
                 self.append(name="node", data=node_output.out)
