@@ -22,6 +22,7 @@ class FinetuneMode:
         model_type: BaseModelTypes = ProteinSetTransformer,
         batch_size: Optional[int] = None,
         fragment_size: Optional[int] = None,
+        lazy: bool = False,
     ):
         """Finetune a pretrained PST with new data.
 
@@ -34,10 +35,11 @@ class FinetuneMode:
                 the checkpoint.
             fragment_size (Optional[int]): The genome fragmentation size if different from the
                 checkpoint.
+            lazy (bool): Whether to use lazy loading for the dataset. If True, will load data lazily
+                from the file. If False, will fully load data into memory. This is useful for large
+                datasets that may not fit into memory. Defaults to False.
         """
-        logger.info(
-            f"Finetuning a pretrained PST of type {model_type.__name__} with new data."
-        )
+        logger.info(f"Finetuning a pretrained PST of type {model_type.__name__} with new data.")
 
         # if --fragment-size passed, dataset will be automatically fragmented
         # NOTE: don't need to worry about previous run having validation
@@ -48,6 +50,7 @@ class FinetuneMode:
             batch_size=batch_size,
             fragment_size=fragment_size,
             shuffle=True,
+            lazy=lazy,
         )
 
         if model_type is ProteinSetTransformer:
