@@ -6,7 +6,13 @@ from lightning import LightningDataModule
 from lightning_cv import CrossValidationDataModuleMixin
 
 from pst.data.config import CrossValDataConfig, CrossValidationType, CVStrategies, DataConfig
-from pst.data.dataset import FeatureLevel, GenomeDataset, LazyGenomeDataset, SubsetGenomeDataset
+from pst.data.dataset import (
+    FeatureLevel,
+    GenomeDataset,
+    LazyGenomeDataset,
+    SubsetGenomeDataset,
+    _BaseGenomeDataset,
+)
 from pst.data.loader import EmptyDataLoader, GenomeDataLoader
 from pst.data.split import random_split
 from pst.typing import KwargType
@@ -28,11 +34,11 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
     }
 
     config: _BaseConfigType
-    dataset: GenomeDataset
-    train_dataset: GenomeDataset | SubsetGenomeDataset
-    val_dataset: Optional[GenomeDataset | SubsetGenomeDataset]
-    test_dataset: GenomeDataset
-    predict_dataset: GenomeDataset
+    dataset: _BaseGenomeDataset
+    train_dataset: _BaseGenomeDataset | SubsetGenomeDataset
+    val_dataset: Optional[_BaseGenomeDataset | SubsetGenomeDataset]
+    test_dataset: _BaseGenomeDataset
+    predict_dataset: _BaseGenomeDataset
 
     def __init__(
         self,
@@ -54,9 +60,7 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
 
         dataset_cls = LazyGenomeDataset if config.lazy else GenomeDataset
 
-        self.dataset: GenomeDataset = dataset_cls(
-            **config.to_dict(include=GenomeDataset._init_arg_names())
-        )
+        self.dataset = dataset_cls(**config.to_dict(include=LazyGenomeDataset._init_arg_names()))
         self.config = config
         self.batch_size = config.batch_size
         self.dataloader_kwargs = dataloader_kwargs
@@ -128,14 +132,14 @@ class GenomeDataModuleMixin(LightningDataModule, Generic[_BaseConfigType]):
             self.predict_dataset = self.dataset
 
     def teardown(self, stage: str) -> None:
-        if isinstance(self.dataset, LazyGenomeDataset):
+        if self.dataset.lazy:
             self.dataset._file.close()
 
-    def simple_dataloader(self, dataset: GenomeDataset | SubsetGenomeDataset, **kwargs):
+    def simple_dataloader(self, dataset: _BaseGenomeDataset | SubsetGenomeDataset, **kwargs):
         kwargs = self._overwrite_dataloader_kwargs(**kwargs)
         kwargs["dataset"] = dataset
         if self._dataloader is not GenomeDataLoader:
-            kwargs["collate_fn"] = GenomeDataset.collate
+            kwargs["collate_fn"] = _BaseGenomeDataset.collate
         kwargs["batch_size"] = self.batch_size
         return self._dataloader(**kwargs)
 

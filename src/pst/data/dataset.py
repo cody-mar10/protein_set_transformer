@@ -1,21 +1,17 @@
 import logging
 from collections.abc import Iterable
 from functools import cached_property
-from typing import Any, Sequence, overload
+from typing import Any, Sequence, Union, overload
 
 import tables as tb
 import torch
 from more_itertools import all_equal
+from torch import Tensor
 from torch.utils.data import Dataset, Subset
 from torch_geometric.data import Batch
 from torch_geometric.utils import scatter
 from typing_extensions import deprecated
 
-from pst.data._types import (
-    GenomeFeaturesTypeMixin,
-    ProteinFeaturesTypeMixin,
-    ScaffoldFeaturesTypeMixin,
-)
 from pst.data.graph import (
     _DEFAULT_CHUNK_SIZE,
     _DEFAULT_EDGE_STRATEGY,
@@ -27,6 +23,7 @@ from pst.data.utils import (
     FeatureLevel,
     RegisteredFeature,
     _FragmentedData,
+    _merge_indices,
     _ScaffoldFeatureFragmentedData,
     graph_sizes_to_index_pointer,
 )
@@ -35,19 +32,12 @@ from pst.typing import EdgeIndexStrategy, FilePath, GenomeGraphBatch, OptTensor
 _SENTINEL_FRAGMENT_SIZE = -1
 logger = logging.getLogger(__name__)
 
+_IndexT = Union[int, slice, Iterable[int]]
 
-# TODO: I think theoretically this could support lazy loading of the data?
-# prob wouldn't be that good, but we can just completely load the ptr? and then just load the data when needed
-# but would prob be fairly slow? and we'd have to keep the file handle open
-class GenomeDataset(
-    Dataset[GenomeGraphBatch],
-    ProteinFeaturesTypeMixin,
-    ScaffoldFeaturesTypeMixin,
-    GenomeFeaturesTypeMixin,
-):
-    # mixins are to provide obj attribute type annotations
-    # the names of these attributes refer to what they are labeling and thus what the expected
-    # shape of each tensor should be. For example, "protein_data" should be of shape:
+
+class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
+    # The names of protein/scaffold/genome attributes refer to what they are labeling and thus what
+    # the expected shape of each tensor should be. For example, "protein_data" should be of shape:
     # [num proteins, D]. The __X_attr__ class attributes define the attributes at each level.
 
     __minimum_h5_fields__ = {"data", "sizes", "strand"}
@@ -66,10 +56,28 @@ class GenomeDataset(
         # "class_id",
         "scaffold_label",
         "genome_label",
-        "edge_indices",
+        # "edge_indices", # not part of the Lazy class
         "part_of_multiscaffold",
     }
     __genome_attr__ = {"is_multiscaffold"}
+
+    # ------------- Protein/Scaffold/Genome level attributes -------------
+    # shapes should all refer to number of proteins
+    # protein_data: Tensor
+    protein_data: tb.Array
+    protein_strand: Tensor
+
+    # shapes should all refer to number of scaffolds
+    scaffold_ptr: Tensor
+    scaffold_sizes: Tensor
+    scaffold_edge_indices: list[Tensor]
+    scaffold_label: Tensor
+    scaffold_genome_label: Tensor
+    scaffold_part_of_multiscaffold: Tensor
+
+    # shapes should all refer to number of genomes
+    genome_is_multiscaffold: Tensor
+    # --------------------------------------------------------------------
 
     __feature_levels__ = {"protein", "scaffold", "genome"}
 
@@ -85,33 +93,18 @@ class GenomeDataset(
         chunk_size: int = _DEFAULT_CHUNK_SIZE,
         threshold: int = _SENTINEL_THRESHOLD,
         fragment_size: int = _SENTINEL_FRAGMENT_SIZE,
+        lazy: bool = True,
     ) -> None:
         super().__init__()
+        self.lazy = lazy
 
         self._setup_registry()
         self._read_h5_file(file)
-
-        if not hasattr(self, "scaffold_genome_label"):
-            # assume each scaffold is a separate genome
-            self.scaffold_genome_label = torch.arange(len(self.scaffold_sizes), dtype=torch.long)
-
-        if not hasattr(self, "scaffold_label"):
-            self.scaffold_label = torch.arange(len(self.scaffold_sizes), dtype=torch.long)
-
-        # shape: [Num genomes]
-        self.genome_is_multiscaffold = torch.bincount(self.scaffold_genome_label) > 1
-
-        # shape: [Num scaffolds]
-        self.scaffold_part_of_multiscaffold = self.genome_is_multiscaffold[
-            self.scaffold_genome_label
-        ]
+        self._compute_missing_attribute_tensors()
+        self._convert_strand_tensor()
 
         if self.any_multi_scaffold_genomes():
             logger.info("Multi-scaffold genomes detected.")
-
-        # convert strand array from [-1, 1] -> [0, 1]
-        # this will be used as an idx in a lut embedding
-        self.protein_strand[self.protein_strand == -1] = 0
 
         self.edge_create_fn = GenomeGraph._edge_index_create_method(
             edge_strategy=edge_strategy,
@@ -125,12 +118,14 @@ class GenomeDataset(
                     f"Invalid fragment size {fragment_size}. Must be and integer greater than 1."
                 )
 
-            self.fragment(fragment_size, inplace=True)
+            # defer validation for eager dataset subclasses that fully load data
+            self.fragment(fragment_size, inplace=True, validate=False)
             self._fragmented = True
         else:
             # .fragment will compute edge indices and call .validate
             self._fragmented = False
-            self.scaffold_edge_indices = self.compute_edge_indices()
+
+        if self.lazy:
             self.validate()
 
     def _setup_registry(self):
@@ -142,69 +137,89 @@ class GenomeDataset(
         self._registered_features: dict[str, RegisteredFeature] = dict()
 
     def _read_h5_file(self, file: FilePath):
+        # for lazy loading, self.protein_data points to the h5 file Array
         features_to_register: list[dict[str, Any]] = []
-        with tb.File(file) as fp:  # type: ignore
-            for node in fp.root:
-                name: str = node._v_name  # type: ignore
+        protein_data_node_path = None
+        self._file = tb.open_file(file)  # type: ignore
 
-                # allow subgroups in h5 file, all data fields beneath them will be registered
-                if isinstance(node, tb.Group):
-                    if name not in GenomeDataset.__feature_levels__:
+        for node in self._file.root:
+            name: str = node._v_name  # type: ignore
+
+            # allow subgroups in h5 file, all data fields beneath them will be registered
+            if isinstance(node, tb.Group):
+                if name not in _BaseGenomeDataset.__feature_levels__:
+                    raise ValueError(
+                        f"Unknown feature level {name}. Subgroups must be one of {_BaseGenomeDataset.__feature_levels__}"
+                    )
+                # register all fields beneath this group
+                for subnode in node:
+                    if not isinstance(subnode, tb.Array):
                         raise ValueError(
-                            f"Unknown feature level {name}. Subgroups must be one of {GenomeDataset.__feature_levels__}"
+                            f"Only arrays are allowed underneath H5 groups. Found {subnode}"
                         )
-                    # register all fields beneath this group
-                    for subnode in node:
-                        if not isinstance(subnode, tb.Array):
-                            raise ValueError(
-                                f"Only arrays are allowed underneath H5 groups. Found {subnode}"
-                            )
-                        subname = subnode._v_name
-                        features_to_register.append(
-                            {
-                                "name": subname,
-                                "data": torch.from_numpy(subnode[:]),
-                                "feature_level": name,
-                            }
-                        )
-                else:
-                    if name in GenomeDataset.__expected_h5_fields__:
-                        # directly set these as attributes
-                        if name in GenomeDataset.__protein_attr__:
-                            prefix = "protein"
-                        elif name in GenomeDataset.__scaffold_attr__:
-                            prefix = "scaffold"
-                        # there are no expected genome fields
-                        else:
-                            assert False, "UNREACHABLE"
+                    subname = subnode._v_name
+                    features_to_register.append(
+                        {
+                            "name": subname,
+                            "data": torch.from_numpy(subnode[:]),
+                            "feature_level": name,
+                        }
+                    )
+            else:
+                if name in _BaseGenomeDataset.__expected_h5_fields__:
+                    # directly set these as attributes
+                    if name in _BaseGenomeDataset.__protein_attr__:
+                        prefix = "protein"
+                    elif name in _BaseGenomeDataset.__scaffold_attr__:
+                        prefix = "scaffold"
+                    # there are no expected genome fields
+                    else:
+                        assert False, "UNREACHABLE"
 
-                        obj_attr_name = name if name == "scaffold_label" else f"{prefix}_{name}"
+                    obj_attr_name = name if name == "scaffold_label" else f"{prefix}_{name}"
+
+                    if obj_attr_name != "protein_data":
                         setattr(self, obj_attr_name, torch.from_numpy(node[:]))  # type: ignore
                     else:
-                        # then other top level fields will become a registered feature
-                        # so self._setup_registry() should be called before this method
-                        # these are REQUIRED to label the name with "protein_", "scaffold_", or "genome_"
-                        feature_level = name.split("_", 1)[0]
-                        if feature_level not in GenomeDataset.__feature_levels__:
-                            if name == "class_id":
-                                # backwards compatibility
-                                feature_level = "scaffold"
-                            else:
-                                raise ValueError(
-                                    f"Field {name} is not a recognized protein, scaffold, or genome attribute."
-                                )
+                        protein_data_node_path = node._v_pathname
+                else:
+                    # then other top level fields will become a registered feature
+                    # so self._setup_registry() should be called before this method
+                    # these are REQUIRED to label the name with "protein_", "scaffold_", or "genome_"
+                    feature_level = name.split("_", 1)[0]
+                    if feature_level not in _BaseGenomeDataset.__feature_levels__:
+                        if name == "class_id":
+                            # backwards compatibility
+                            feature_level = "scaffold"
+                        else:
+                            raise ValueError(
+                                f"Field {name} is not a recognized protein, scaffold, or genome attribute."
+                            )
 
-                        features_to_register.append(
-                            {
-                                "name": name,
-                                "data": torch.from_numpy(node[:]),  # type: ignore
-                                "feature_level": feature_level,
-                            }
-                        )
+                    features_to_register.append(
+                        {
+                            "name": name,
+                            "data": torch.from_numpy(node[:]),  # type: ignore
+                            "feature_level": feature_level,
+                        }
+                    )
+
+        if protein_data_node_path is None:
+            raise ValueError(
+                "Could not find protein embedding data in the h5 file. Please check the file format."
+            )
+
+        if protein_data_node_path.count("/") > 1:
+            protein_data_where, protein_data_name = protein_data_node_path.rsplit("/", 1)
+        else:
+            protein_data_where = "/"
+            protein_data_name = protein_data_node_path[1:]  # remove leading "/"
+
+        self.protein_data = self._file.get_node(protein_data_where, protein_data_name)  # type: ignore
 
         # now need to check that the minimum required fields are set
         missing: set[str] = set()
-        for name in GenomeDataset.__minimum_h5_fields__:
+        for name in _BaseGenomeDataset.__minimum_h5_fields__:
             if name in self.__protein_attr__:
                 prefix = "protein"
             elif name in self.__scaffold_attr__:
@@ -227,14 +242,57 @@ class GenomeDataset(
         for feature in features_to_register:
             self.register_feature(**feature)
 
-    def compute_edge_indices(self) -> list[torch.Tensor]:
-        # needed to compute edge indices for new fragmented datasets
-        edge_indices: list[torch.Tensor] = list()
+    def _compute_missing_attribute_tensors(self):
+        # check that all attributes exist
+        if not hasattr(self, "scaffold_genome_label"):
+            # assume each scaffold is a separate genome
+            self.scaffold_genome_label = torch.arange(len(self.scaffold_sizes), dtype=torch.long)
 
-        for num_nodes, is_multi_scaffold in zip(
-            self.scaffold_sizes, self.scaffold_part_of_multiscaffold
-        ):
-            is_multi_scaffold = bool(is_multi_scaffold)
+        if not hasattr(self, "scaffold_label"):
+            self.scaffold_label = torch.arange(len(self.scaffold_sizes), dtype=torch.long)
+
+        # shape: [Num genomes]
+        self.genome_is_multiscaffold = torch.bincount(self.scaffold_genome_label) > 1
+
+        # shape: [Num scaffolds]
+        self.scaffold_part_of_multiscaffold = self.genome_is_multiscaffold[
+            self.scaffold_genome_label
+        ]
+
+    def _convert_strand_tensor(self):
+        # convert strand array from [-1, 1] -> [0, 1]
+        # this will be used as an idx in a lut embedding
+        self.protein_strand[self.protein_strand == -1] = 0
+
+    def _standardize_indices(self, idx: int | slice | Iterable[int]) -> Iterable[int]:
+        # this will convert all indices to a list of integers
+        if isinstance(idx, int):
+            return [idx]
+
+        if isinstance(idx, slice):
+            return range(*idx.indices(len(self)))
+
+        if isinstance(idx, torch.Tensor):
+            return idx.tolist()
+
+        if isinstance(idx, Iterable):
+            return list(idx)
+
+        raise ValueError(f"Invalid index type {type(idx)}")
+
+    def _compute_edge_indices(self, idx: _IndexT | None = None) -> list[Tensor]:
+        if idx is None:
+            # compute all edge indices
+            indices = range(len(self))
+        else:
+            indices = self._standardize_indices(idx)
+
+        # needed to compute edge indices for new fragmented datasets
+        edge_indices: list[Tensor] = list()
+
+        for index in indices:
+            num_nodes = int(self.scaffold_sizes[index])
+            is_multi_scaffold = bool(self.scaffold_part_of_multiscaffold[index])
 
             try:
                 edge_index = self.edge_create_fn(num_nodes=num_nodes)
@@ -269,8 +327,113 @@ class GenomeDataset(
         return self.genome_is_multiscaffold.numel()
 
     @cached_property
-    def num_proteins_per_genome(self) -> torch.Tensor:
+    def num_proteins_per_genome(self) -> Tensor:
         return scatter(self.scaffold_sizes, self.scaffold_genome_label, reduce="sum")
+
+    def _get_scaffold_data(self, idx: Iterable[int]) -> dict[str, list[torch.Tensor]]:
+        # this will return all scaffold-level data for the given index
+        # idx should be Iterable[int] now
+
+        scaffold_data: dict[str, list[torch.Tensor]] = {
+            name: []
+            for name in (
+                # "edge_index",
+                "num_proteins",
+                "scaffold_label",
+                "genome_label",
+                "pos",
+                "scaffold_idx",
+            )
+        }
+
+        for name in self._scaffold_registry:
+            scaffold_data[name] = []
+
+        scaffold_edge_indices = self._compute_edge_indices(idx)
+
+        scaffold_data["edge_index"] = scaffold_edge_indices
+
+        for i in idx:
+            num_proteins = self.scaffold_sizes[i]
+            scaffold_data["num_proteins"].append(num_proteins)
+            pos = (
+                torch.arange(int(num_proteins)).unsqueeze(-1).to(self.scaffold_ptr.device)
+            )  # dont think device matters here since the batch will be moved later
+            scaffold_data["pos"].append(pos)
+            scaffold_data["scaffold_label"].append(self.scaffold_label[i])
+            scaffold_data["genome_label"].append(self.scaffold_genome_label[i])
+
+            for name in self._scaffold_registry:
+                data = self._registered_features[name].data
+                scaffold_data[name].append(data[i])
+
+            scaffold_data["scaffold_idx"].append(torch.tensor(i))
+
+        # could concat some of these, but this is all handled better by the GenomeGraph
+        # batching system
+        return scaffold_data
+
+    def _get_protein_data(self, idx: Iterable[int]) -> dict[str, list[torch.Tensor]]:
+        # these slices refer to scaffolds, not proteins, so now we need to convert
+        # to protein indices
+        scaffold_slices = _merge_indices(idx)
+        protein_slices: list[slice] = []
+        for scaffold_slice in scaffold_slices:
+            start = self.scaffold_ptr[scaffold_slice.start]
+            stop = self.scaffold_ptr[scaffold_slice.stop]
+            protein_slices.append(slice(start, stop))
+
+        batched_protein_data: dict[str, list[torch.Tensor]] = {name: [] for name in ("x", "strand")}
+
+        for name in self._protein_registry:
+            batched_protein_data[name] = []
+
+        for slc in protein_slices:
+            # if lazy x will be a numpy FloatArray
+            # else it will be a torch tensor
+            x = self.protein_data[slc]
+            if self.lazy:  # x will be loaded from file as a numpy FloatArray
+                x = torch.from_numpy(x)
+
+            strand = self.protein_strand[slc]
+            batched_protein_data["x"].append(x)
+            batched_protein_data["strand"].append(strand)
+
+            for name in self._protein_registry:
+                data = self._registered_features[name].data
+                batched_protein_data[name].append(data[slc])
+
+        return batched_protein_data
+
+    def _unbatch_protein_data(
+        self, batched_protein_data: dict[str, list[Tensor]], num_proteins_per_scaffold: Tensor
+    ) -> dict[str, list[Tensor]]:
+        """NOTE: clears the input `batched_protein_data` dict to avoid storing unnecessary data"""
+        # we need to unbatch the data here so that each pos in the protein_data list points to an
+        # individual scaffold.
+        # this is bc we need to create individual GenomeGraph objects
+
+        stacked_protein_data = {
+            key: torch.concat(tensor_list) for key, tensor_list in batched_protein_data.items()
+        }
+
+        batched_protein_data.clear()
+
+        protein_data: dict[str, list[torch.Tensor]] = {
+            key: [] for key in stacked_protein_data.keys()
+        }
+
+        n_scaffolds = num_proteins_per_scaffold.numel()
+        scaffold_ptr = graph_sizes_to_index_pointer(num_proteins_per_scaffold)
+
+        for scaffold_idx in range(n_scaffolds):
+            start = scaffold_ptr[scaffold_idx]
+            stop = scaffold_ptr[scaffold_idx + 1]
+
+            for key, tensor in stacked_protein_data.items():
+                protein_data[key].append(tensor[start:stop])
+
+        return protein_data
 
     @overload
     def __getitem__(self, idx: int) -> GenomeGraph: ...
@@ -281,66 +444,41 @@ class GenomeDataset(
     @overload
     def __getitem__(self, idx: Iterable[int]) -> GenomeGraphBatch: ...
 
-    def __getitem__(self, idx: int | slice | Iterable[int]) -> GenomeGraph | GenomeGraphBatch:
+    def __getitem__(self, idx: _IndexT) -> GenomeGraph | GenomeGraphBatch:
         # this is scaffold-level access, for genome-level access use .get_genome
-        if isinstance(idx, int):
-            # idx should be for a single scaffold
-            try:
-                start = self.scaffold_ptr[idx]
-                stop = self.scaffold_ptr[idx + 1]
-            except IndexError as e:
-                clsname = self.__class__.__name__
-                raise IndexError(
-                    f"{idx=} is out of range for {clsname} with {len(self)} genomes"
-                ) from e
 
-            registered_features: dict[str, torch.Tensor | int | float] = {}
+        idx = self._standardize_indices(idx)
+        if any(i >= len(self) for i in idx):
+            raise IndexError(f"Index {idx} out of range for dataset of size {len(self)}")
 
-            #### node/item level access (ptn)
-            x = self.protein_data[start:stop]
-            strand = self.protein_strand[start:stop]
+        scaffold_data = self._get_scaffold_data(idx)
+        batched_protein_data = self._get_protein_data(idx)
 
-            for name in self._protein_registry:
-                data = self._registered_features[name].data
-                registered_features[name] = data[start:stop]
+        num_proteins_per_scaffold = torch.tensor(scaffold_data["num_proteins"])
+        protein_data = self._unbatch_protein_data(batched_protein_data, num_proteins_per_scaffold)
 
-            #### graph/set level access (scaffold)
-            edge_index = self.scaffold_edge_indices[idx]
-            num_proteins = int(self.scaffold_sizes[idx])
-            # shape: [N, 1]
-            pos = torch.arange(num_proteins).unsqueeze(-1).to(x.device)
-            scaffold_label = int(self.scaffold_label[idx])
-            genome_label = int(self.scaffold_genome_label[idx])
+        graph_data = scaffold_data | protein_data  # works py 3.9+
 
-            for name in self._scaffold_registry:
-                data = self._registered_features[name].data
-                registered_features[name] = data[idx]
+        # validate the data
+        num_scaffolds = num_proteins_per_scaffold.numel()
+        for key, tensor_list in graph_data.items():
+            if len(tensor_list) != num_scaffolds:
+                raise ValueError(
+                    f"Expected {num_scaffolds} tensors for key {key}, but got {len(tensor_list)}"
+                )
 
-            # save the idx as a registered feature to track global indices at batch level
-            registered_features["scaffold_idx"] = idx
+        genome_graphs: list[GenomeGraph] = []
+        for scaffold_idx in range(num_scaffolds):
+            # create a new genome graph object for each scaffold
+            data = {key: tensor_list[scaffold_idx] for key, tensor_list in graph_data.items()}
+            genome_graph = GenomeGraph(**data)  # type: ignore
+            genome_graphs.append(genome_graph)
 
-            # the edge index will already be created so no need to pass edge creation info
-            graph = GenomeGraph(
-                x=x,
-                edge_index=edge_index,
-                num_proteins=num_proteins,
-                strand=strand,
-                pos=pos,
-                scaffold_label=scaffold_label,
-                genome_label=genome_label,
-                **registered_features,  # type: ignore
-            )
-            return graph
-        else:
-            if isinstance(idx, slice):
-                idx = range(*idx.indices(len(self)))
-            elif isinstance(idx, torch.Tensor):
-                idx = idx.tolist()
-            elif isinstance(idx, Iterable):
-                idx = list(idx)
-            else:
-                raise ValueError(f"Invalid index type {type(idx)}")
-            return self.collate([self[i] for i in idx])
+        if len(genome_graphs) == 1:
+            # if only one genome graph, return it directly
+            return genome_graphs[0]
+
+        return self.collate(genome_graphs)
 
     def get_genome(self, genome_id: int) -> GenomeGraphBatch:
         # always return a batch obj even if only one genome
@@ -350,7 +488,7 @@ class GenomeDataset(
         genome_idx = genome_idx.tolist()
         return self[genome_idx]
 
-    def _register_feature(self, name: str, data: torch.Tensor, feature_level: FeatureLevel):
+    def _register_feature(self, name: str, data: Tensor, feature_level: FeatureLevel):
         # feature_level is one of {protein, scaffold, genome}
 
         name_registry: set[str] = getattr(self, f"_{feature_level}_registry")
@@ -362,7 +500,7 @@ class GenomeDataset(
     def register_feature(
         self,
         name: str,
-        data: torch.Tensor,
+        data: Tensor,
         *,
         feature_level: FeatureLevel,
         overwrite_previously_registered: bool = False,
@@ -412,7 +550,7 @@ class GenomeDataset(
 
         self._register_feature(name, data, feature_level)
 
-    def get_registered_feature(self, name: str) -> torch.Tensor:
+    def get_registered_feature(self, name: str) -> Tensor:
         # TODO: should allow people to prefix names?
         return self._registered_features[name].data
 
@@ -457,12 +595,12 @@ class GenomeDataset(
 
         return databatch
 
-    def collate_indices(self, idx_batch: list[torch.Tensor]) -> GenomeGraphBatch:
+    def collate_indices(self, idx_batch: list[Tensor]) -> GenomeGraphBatch:
         batch = [self[int(idx)] for idx in idx_batch]
         return self.collate(batch)
 
     def _resize_scaffold_features(
-        self, chunk_scaffold_labels: torch.Tensor
+        self, chunk_scaffold_labels: Tensor
     ) -> _ScaffoldFeatureFragmentedData:
         # need to resize scaffold level features during fragmenting
         # just propagate labels to each sub-scaffold fragment
@@ -545,7 +683,7 @@ class GenomeDataset(
         )
         return output
 
-    def _update_from_fragmented_data(self, fragmented_data: _FragmentedData):
+    def _update_from_fragmented_data(self, fragmented_data: _FragmentedData, validate: bool = True):
         registered_feature: RegisteredFeature
         for key, value in fragmented_data.items():
             if "_registry" in key:
@@ -567,17 +705,19 @@ class GenomeDataset(
         # smallest integer that does not produce single protein fragments
         # -> note that this issue only affects genomes that were not originally multiscaffold
         self._fragmented = True
-        self.scaffold_edge_indices = self.compute_edge_indices()
-        self.validate()
+
+        if validate:
+            self.validate()
+
         logger.info(
             f"Fragmented dataset into {len(self)} fragments with <= {self.max_size} proteins."
         )
 
-    def fragment(self, max_size: int, inplace: bool = True):
+    def fragment(self, max_size: int, inplace: bool = True, validate: bool = True):
         fragmented_data = self._fragment(max_size)
 
         if inplace:
-            self._update_from_fragmented_data(fragmented_data)
+            self._update_from_fragmented_data(fragmented_data, validate)
             return self
 
         from copy import copy, deepcopy
@@ -589,7 +729,7 @@ class GenomeDataset(
         # however, we need to make a deep copy of the registered features
         # so that the new and old datasets don't share the same dict
         new_dataset._registered_features = deepcopy(self._registered_features)
-        new_dataset._update_from_fragmented_data(fragmented_data)
+        new_dataset._update_from_fragmented_data(fragmented_data, validate)
 
         return new_dataset
 
@@ -659,10 +799,10 @@ class GenomeDataset(
 
     def save(self, file: FilePath):
         """Save the dataset to an HDF5 file."""
-        with tb.open_file(file, "w") as fp:  # type: ignore
-            for field in GenomeDataset.__expected_h5_fields__:
+        with tb.open_file(file, "w", filters=H5_FILE_COMPR_FILTERS) as fp:  # type: ignore
+            for field in _BaseGenomeDataset.__expected_h5_fields__:
                 data = getattr(self, field).numpy()
-                fp.create_carray("/", field, data, filters=H5_FILE_COMPR_FILTERS)
+                fp.create_carray("/", field, data)
 
             groups: dict[str, tb.Group] = dict()
             for feature in self._registered_features.values():
@@ -672,12 +812,7 @@ class GenomeDataset(
                     fp.create_group(fp.root, group_name),
                 )
 
-                fp.create_carray(
-                    group,
-                    feature.name,
-                    feature.data.numpy(),
-                    filters=H5_FILE_COMPR_FILTERS,
-                )
+                fp.create_carray(group, feature.name, feature.data.numpy())
 
     def any_multi_scaffold_genomes(self) -> bool:
         return bool(self.genome_is_multiscaffold.any())
@@ -704,7 +839,7 @@ class GenomeDataset(
         "Deprecated since v1.3: Use .protein_data instead for clarity",
         category=DeprecationWarning,
     )
-    def data(self) -> torch.Tensor:
+    def data(self) -> Tensor:
         """Protein embeddings, shape: [num proteins, D]"""
         return self.protein_data
 
@@ -713,7 +848,7 @@ class GenomeDataset(
         "Deprecated since v1.3: Use .scaffold_ptr instead for clarity",
         category=DeprecationWarning,
     )
-    def ptr(self) -> torch.Tensor:
+    def ptr(self) -> Tensor:
         """CSR Index pointer to the start of each set of protein embeddings in
         self.protein_data for each scaffold, shape: [num scaffolds + 1]"""
         return self.scaffold_ptr
@@ -723,7 +858,7 @@ class GenomeDataset(
         "Deprecated since v1.3: Use .scaffold_sizes instead for clarity",
         category=DeprecationWarning,
     )
-    def sizes(self) -> torch.Tensor:
+    def sizes(self) -> Tensor:
         """Number of proteins in each scaffold, shape: [num scaffolds]"""
         return self.scaffold_sizes
 
@@ -764,9 +899,84 @@ class GenomeDataset(
         "Deprecated since v1.3: Use .protein_strand instead for clarity",
         category=DeprecationWarning,
     )
-    def strand(self) -> torch.Tensor:
+    def strand(self) -> Tensor:
         """Strand of each protein, shape: [num proteins]"""
         return self.protein_strand
+
+    @property
+    @deprecated(
+        "Deprecated since v1.3: Use .scaffold_genome_label instead for clarity",
+        category=DeprecationWarning,
+    )
+    def genome_label(self) -> Tensor:
+        """Genome label for each scaffold, shape: [num scaffolds]"""
+        return self.scaffold_genome_label
+
+
+class LazyGenomeDataset(_BaseGenomeDataset):
+    def __init__(
+        self,
+        file: FilePath,
+        edge_strategy: EdgeIndexStrategy = _DEFAULT_EDGE_STRATEGY,
+        chunk_size: int = _DEFAULT_CHUNK_SIZE,
+        threshold: int = _SENTINEL_THRESHOLD,
+        fragment_size: int = _SENTINEL_FRAGMENT_SIZE,
+    ) -> None:
+        super().__init__(
+            file=file,
+            edge_strategy=edge_strategy,
+            chunk_size=chunk_size,
+            threshold=threshold,
+            fragment_size=fragment_size,
+            lazy=True,
+        )
+
+
+class GenomeDataset(_BaseGenomeDataset):
+    """Genome dataset that fully loads all protein embeddings and edge indices into memory.
+
+    If memory is not an issue, this is the preferred way to use the dataset as it is faster,
+    especially during training. For inference, where each genome only needs to be loaded once,
+    eager vs lazy loading should not make a significant difference.
+
+    If memory is an issue, prefer `LazyGenomeDataset` instead.
+    """
+
+    protein_data: Tensor
+
+    scaffold_edge_indices: list[Tensor]
+
+    # add edge_indices
+    __scaffold_attr__ = _BaseGenomeDataset.__scaffold_attr__ | {
+        "edge_indices",
+    }
+
+    def __init__(
+        self,
+        file: FilePath,
+        edge_strategy: EdgeIndexStrategy = _DEFAULT_EDGE_STRATEGY,
+        chunk_size: int = _DEFAULT_CHUNK_SIZE,
+        threshold: int = _SENTINEL_THRESHOLD,
+        fragment_size: int = _SENTINEL_FRAGMENT_SIZE,
+    ) -> None:
+        super().__init__(
+            file=file,
+            edge_strategy=edge_strategy,
+            chunk_size=chunk_size,
+            threshold=threshold,
+            fragment_size=fragment_size,
+            lazy=False,
+        )
+
+        self.protein_data = torch.from_numpy(self.protein_data[:])
+        # no longer need the file handle open
+        self._file.close()
+
+        # compute and store edge indices for all scaffolds
+        self.scaffold_edge_indices = self._compute_edge_indices()
+
+        # we can now validate the dataset since edge indices should exist
+        self.validate()
 
     @property
     @deprecated(
@@ -779,302 +989,10 @@ class GenomeDataset(
         """
         return self.scaffold_edge_indices
 
-    @property
-    @deprecated(
-        "Deprecated since v1.3: Use .scaffold_genome_label instead for clarity",
-        category=DeprecationWarning,
-    )
-    def genome_label(self) -> torch.Tensor:
-        """Genome label for each scaffold, shape: [num scaffolds]"""
-        return self.scaffold_genome_label
-
-
-class LazyGenomeDataset(GenomeDataset):
-    protein_data: tb.Array
-
-    # TODO: this should probably be the parent class...
-    # bc we can just fully load the protein embeddings from this class
-    def _read_h5_file(self, file: FilePath):
-        # protein_data needs to remain as the h5 file object instead of a tensor/array
-        features_to_register: list[dict[str, Any]] = []
-        protein_data_node_path = None
-        self._file = tb.open_file(file)  # type: ignore
-
-        for node in self._file.root:
-            name: str = node._v_name  # type: ignore
-
-            # theoretically could use the .walk_nodes() method
-            # but this forces only 2 types of data formats: flat and 1 level deep
-
-            # allow subgroups in h5 file, all data fields beneath them will be registered
-            if isinstance(node, tb.Group):
-                if name not in GenomeDataset.__feature_levels__:
-                    raise ValueError(
-                        f"Unknown feature level {name}. Subgroups must be one of {GenomeDataset.__feature_levels__}"
-                    )
-                # register all fields beneath this group
-                for subnode in node:
-                    if not isinstance(subnode, tb.Array):
-                        raise ValueError(
-                            f"Only arrays are allowed underneath H5 groups. Found {subnode}"
-                        )
-                    subname = subnode._v_name
-                    features_to_register.append(
-                        {
-                            "name": subname,
-                            "data": torch.from_numpy(subnode[:]),
-                            "feature_level": name,
-                        }
-                    )
-            else:
-                if name in GenomeDataset.__expected_h5_fields__:
-                    # directly set these as attributes
-                    if name in GenomeDataset.__protein_attr__:
-                        prefix = "protein"
-                    elif name in GenomeDataset.__scaffold_attr__:
-                        prefix = "scaffold"
-                    # there are no expected genome fields
-                    else:
-                        assert False, "UNREACHABLE"
-
-                    obj_attr_name = name if name == "scaffold_label" else f"{prefix}_{name}"
-
-                    if obj_attr_name != "protein_data":
-                        setattr(self, obj_attr_name, torch.from_numpy(node[:]))  # type: ignore
-                    else:
-                        protein_data_node_path = node._v_pathname
-                else:
-                    # then other top level fields will become a registered feature
-                    # so self._setup_registry() should be called before this method
-                    # these are REQUIRED to label the name with "protein_", "scaffold_", or "genome_"
-                    feature_level = name.split("_", 1)[0]
-                    if feature_level not in GenomeDataset.__feature_levels__:
-                        if name == "class_id":
-                            # backwards compatibility
-                            feature_level = "scaffold"
-                        else:
-                            raise ValueError(
-                                f"Field {name} is not a recognized protein, scaffold, or genome attribute."
-                            )
-
-                    features_to_register.append(
-                        {
-                            "name": name,
-                            "data": torch.from_numpy(node[:]),  # type: ignore
-                            "feature_level": feature_level,
-                        }
-                    )
-
-        if protein_data_node_path is None:
-            raise ValueError(
-                "Could not find protein embedding data in the h5 file. Please check the file format."
-            )
-
-        if protein_data_node_path.count("/") > 1:
-            protein_data_where, protein_data_name = protein_data_node_path.rsplit("/", 1)
-        else:
-            protein_data_where = "/"
-            protein_data_name = protein_data_node_path[1:]  # remove leading "/"
-
-        self.protein_data = self._file.get_node(
-            protein_data_where, protein_data_name
-        )  # keep as h5 object
-
-        # now need to check that the minimum required fields are set
-        missing: set[str] = set()
-        for name in GenomeDataset.__minimum_h5_fields__:
-            if name in self.__protein_attr__:
-                prefix = "protein"
-            elif name in self.__scaffold_attr__:
-                prefix = "scaffold"
-
-            obj_attr_name = name if name == "scaffold_label" else f"{prefix}_{name}"
-
-            if not hasattr(self, obj_attr_name):
-                missing.add(obj_attr_name)
-
-        if missing:
-            raise ValueError(
-                f"Missing required fields: {missing}. These fields are required to create a GenomeDataset object."
-            )
-
-        if not hasattr(self, "scaffold_ptr"):
-            # just compute it from scaffold sizes
-            self.scaffold_ptr = graph_sizes_to_index_pointer(self.scaffold_sizes)
-
-        for feature in features_to_register:
-            self.register_feature(**feature)
-
-    def _standardize_indices(self, idx: int | slice | Iterable[int]) -> Iterable[int]:
-        # this will convert all indices to a list of integers
-        if isinstance(idx, int):
-            return [idx]
-
-        if isinstance(idx, slice):
-            return range(*idx.indices(len(self)))
-
-        if isinstance(idx, torch.Tensor):
-            return idx.tolist()
-
-        if isinstance(idx, Iterable):
-            return list(idx)
-
-        raise ValueError(f"Invalid index type {type(idx)}")
-
-    def _get_scaffold_data(self, idx: Iterable[int]) -> dict[str, list[torch.Tensor]]:
-        # this will return all scaffold-level data for the given index
-        # idx should be Iterable[int] now
-
-        scaffold_data: dict[str, list[torch.Tensor]] = {
-            name: []
-            for name in (
-                "edge_index",
-                "num_proteins",
-                "scaffold_label",
-                "genome_label",
-                "pos",
-                "scaffold_idx",
-            )
-        }
-
-        for name in self._scaffold_registry:
-            scaffold_data[name] = []
-
-        for i in idx:
-            scaffold_data["edge_index"].append(self.scaffold_edge_indices[i])
-            num_proteins = self.scaffold_sizes[i]
-            scaffold_data["num_proteins"].append(num_proteins)
-            pos = (
-                torch.arange(int(num_proteins)).unsqueeze(-1).to(self.scaffold_ptr.device)
-            )  # dont think device matters here since the batch will be moved later
-            scaffold_data["pos"].append(pos)
-            scaffold_data["scaffold_label"].append(self.scaffold_label[i])
-            scaffold_data["genome_label"].append(self.scaffold_genome_label[i])
-
-            for name in self._scaffold_registry:
-                data = self._registered_features[name].data
-                scaffold_data[name].append(data[i])
-
-            scaffold_data["scaffold_idx"].append(torch.tensor(i))
-
-        # could concat some of these, but this is all handled better by the GenomeGraph
-        # batching system
-        return scaffold_data
-
-    def _merge_indices(self, indices: Iterable[int]) -> list[slice]:
-        # this will merge contiguous indices into slices for more efficient access
-        # e.g. [0, 1, 2, 4, 5] -> [slice(0, 3), slice(4, 6)]
-        indices = sorted(set(indices))
-        slices: list[slice] = []
-        start = indices[0]
-        stop = start + 1
-
-        prev = start
-        for curr in indices[1:]:
-            diff = curr - prev
-            prev = curr
-            if diff == 1:
-                stop += 1
-            else:
-                slices.append(slice(start, stop))
-                start = curr
-                stop = start + 1
-
-        slices.append(slice(start, stop))
-        return slices
-
-    def _get_protein_data(self, idx: Iterable[int]) -> dict[str, list[torch.Tensor]]:
-        # these slices refer to scaffolds, not proteins, so now we need to convert
-        # to protein indices
-        scaffold_slices = self._merge_indices(idx)
-        protein_slices: list[slice] = []
-        for scaffold_slice in scaffold_slices:
-            start = self.scaffold_ptr[scaffold_slice.start]
-            stop = self.scaffold_ptr[scaffold_slice.stop]
-            protein_slices.append(slice(start, stop))
-
-        batched_protein_data: dict[str, list[torch.Tensor]] = {name: [] for name in ("x", "strand")}
-
-        for name in self._protein_registry:
-            batched_protein_data[name] = []
-
-        for slc in protein_slices:
-            x = torch.from_numpy(self.protein_data[slc])
-            strand = self.protein_strand[slc]
-            batched_protein_data["x"].append(x)
-            batched_protein_data["strand"].append(strand)
-
-            for name in self._protein_registry:
-                data = self._registered_features[name].data
-                batched_protein_data[name].append(data[slc])
-
-        return batched_protein_data
-
-    def __getitem__(self, idx: int | slice | Iterable[int]) -> GenomeGraph | GenomeGraphBatch:
-        idx = self._standardize_indices(idx)
-        if any(i >= len(self) for i in idx):
-            raise IndexError(f"Index {idx} is out of range for {self.__class__.__name__}")
-
-        scaffold_data = self._get_scaffold_data(idx)
-        batched_protein_data = self._get_protein_data(idx)
-
-        # we need to unbatch the data here so that each pos in the protein_data list points to an individual scaffold
-        # this is bc we need to create individual GenomeGraph objects
-
-        stacked_protein_data = {
-            key: torch.concat(tensor_list) for key, tensor_list in batched_protein_data.items()
-        }
-
-        batched_protein_data.clear()
-
-        protein_data: dict[str, list[torch.Tensor]] = {
-            key: [] for key in stacked_protein_data.keys()
-        }
-
-        num_proteins_per_scaffold = torch.tensor(scaffold_data["num_proteins"])
-        n_scaffolds = num_proteins_per_scaffold.numel()
-        scaffold_ptr = graph_sizes_to_index_pointer(num_proteins_per_scaffold)
-
-        for scaffold_idx in range(n_scaffolds):
-            start = scaffold_ptr[scaffold_idx]
-            stop = scaffold_ptr[scaffold_idx + 1]
-
-            for key, tensor in stacked_protein_data.items():
-                protein_data[key].append(tensor[start:stop])
-
-        graph_data = scaffold_data | protein_data  # works in python 3.9+
-
-        for key, tensor_list in graph_data.items():
-            if len(tensor_list) != n_scaffolds:
-                raise ValueError(
-                    f"Expected {n_scaffolds} graphs, but got {len(tensor_list)} for {key}"
-                )
-
-        genome_graphs: list[GenomeGraph] = []
-        for genome_idx in range(n_scaffolds):
-            data = {key: tensor_list[genome_idx] for key, tensor_list in graph_data.items()}
-
-            graph = GenomeGraph(**data)  # type: ignore
-            genome_graphs.append(graph)
-
-        if len(genome_graphs) == 1:
-            return genome_graphs[0]
-
-        return self.collate(genome_graphs)
-
-    @property
-    @deprecated(
-        "Deprecated since v1.3: Use .protein_data instead for clarity",
-        category=DeprecationWarning,
-    )
-    def data(self) -> tb.Array:
-        """Protein embeddings, shape: [num proteins, D]"""
-        return self.protein_data
-
 
 # only used for type hints
 class SubsetGenomeDataset(Subset[GenomeGraphBatch]):
-    dataset: GenomeDataset
+    dataset: LazyGenomeDataset
     indices: Sequence[int]
 
     def __init__(self, dataset: GenomeDataset, indices: Sequence[int]):
