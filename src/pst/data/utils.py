@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from typing import NamedTuple, TypedDict
 
 import tables as tb
@@ -6,7 +7,7 @@ from torch_geometric.utils import scatter
 
 from pst.data._types import FeatureLevel
 
-H5_FILE_COMPR_FILTERS = tb.Filters(complevel=4, complib="blosc:lz4")
+H5_FILE_COMPR_FILTERS = tb.Filters(complevel=4, complib="blosc:lz4")  # type: ignore
 
 
 def graph_sizes_to_index_pointer(sizes: torch.Tensor) -> torch.Tensor:
@@ -108,9 +109,7 @@ def convert_to_scaffold_level_genome_label(
         torch.Tensor: scaffold-level genome label tensor, shape: [N scaffolds]
     """
     if genome_label.numel() != scaffold_label.numel():
-        raise ValueError(
-            "Genome label and scaffold label must have the same number of elements"
-        )
+        raise ValueError("Genome label and scaffold label must have the same number of elements")
 
     return scatter(genome_label, scaffold_label, reduce="any")
 
@@ -128,9 +127,7 @@ def compute_group_frequency_weights(
         torch.Tensor: 1D tensor of weights for each group
     """
     group_counts: torch.Tensor
-    _, inverse_index, group_counts = torch.unique(
-        groups, return_inverse=True, return_counts=True
-    )
+    _, inverse_index, group_counts = torch.unique(groups, return_inverse=True, return_counts=True)
 
     freq = group_counts / group_counts.sum()
     inv_freq = 1 / freq
@@ -143,6 +140,50 @@ def compute_group_frequency_weights(
 
     weights = inv_freq[inverse_index]
     return weights
+
+
+def _merge_indices(indices: Iterable[int]) -> list[slice]:
+    """Merge a list of indices into a list of slices. This converts individual indices into
+    slices when they are contiguous. For example, the indices [0, 1, 2, 4, 5, 6] will be
+    converted to [slice(0, 3), slice(4, 7)], which can be used for list/array slicing.
+
+    Args:
+        indices (Iterable[int]): A list of indices to merge.
+
+    Returns:
+        list[slice]: A list of slices representing the merged indices.
+
+    Example:
+        >>> _merge_indices([0, 1, 2, 4, 5, 6])
+        [slice(0, 3), slice(4, 7)]
+        >>> _merge_indices([0, 2, 3, 4, 5])
+        [slice(0, 1), slice(2, 6)]
+    """
+    indices = sorted(set(indices))
+    if not indices:
+        return []
+
+    if len(indices) == 1:
+        return [slice(indices[0], indices[0] + 1)]
+
+    slices: list[slice] = []
+    start = indices[0]
+    stop = start + 1
+
+    prev = start
+    for curr in indices[1:]:
+        diff = curr - prev
+        prev = curr
+        if diff == 1:
+            stop += 1
+        else:
+            slices.append(slice(start, stop))
+            start = curr
+            stop = start + 1
+
+    # get the last slice
+    slices.append(slice(start, stop))
+    return slices
 
 
 class RegisteredFeature(NamedTuple):
