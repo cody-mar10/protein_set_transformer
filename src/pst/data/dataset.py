@@ -70,7 +70,7 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
     # shapes should all refer to number of scaffolds
     scaffold_ptr: Tensor
     scaffold_sizes: Tensor
-    scaffold_edge_indices: list[Tensor]
+    # scaffold_edge_indices: list[Tensor]
     scaffold_label: Tensor
     scaffold_genome_label: Tensor
     scaffold_part_of_multiscaffold: Tensor
