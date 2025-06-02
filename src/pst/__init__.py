@@ -2,7 +2,7 @@ import logging
 
 # public API
 from pst.data.config import CrossValDataConfig, DataConfig
-from pst.data.dataset import GenomeDataset
+from pst.data.dataset import GenomeDataset, LazyGenomeDataset
 from pst.data.graph import GenomeGraph
 from pst.data.loader import GenomeDataLoader, ScaffoldDataLoader
 from pst.data.modules import CrossValGenomeDataModule, GenomeDataModule
@@ -24,6 +24,7 @@ __all__ = [
     "CrossValDataConfig",
     "DataConfig",
     "GenomeDataset",
+    "LazyGenomeDataset",
     "GenomeGraph",
     "GenomeDataLoader",
     "ScaffoldDataLoader",
