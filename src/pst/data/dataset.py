@@ -931,6 +931,27 @@ class LazyGenomeDataset(_BaseGenomeDataset):
             lazy=True,
         )
 
+    def _convert_strand_tensor(self):
+        # [-1, 1] -> [0, 1]
+        super()._convert_strand_tensor()
+
+        # lazy loading suggests that memory is an issue, so we can save 8x memory by
+        # storing the strand tensor as a bool compared to int64
+
+        self.protein_strand = self.protein_strand.bool()
+
+        # then we just need to convert it back when needed for the strand embedding lut
+
+    def _get_protein_data(self, idx: Iterable[int]) -> dict[str, list[Tensor]]:
+        batched_protein_data = super()._get_protein_data(idx)
+
+        # convert bool strand back to int64 for indexing
+        batched_protein_data["strand"] = [
+            strand.long() for strand in batched_protein_data["strand"]
+        ]
+
+        return batched_protein_data
+
 
 class GenomeDataset(_BaseGenomeDataset):
     """Genome dataset that fully loads all protein embeddings and edge indices into memory.
