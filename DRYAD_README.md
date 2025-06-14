@@ -266,3 +266,74 @@ To prevent data duplication, we did not provide the genome pointers used for acc
 ## Code/Software
 
 Code to use this data and reproduce manuscript analyses can be found at: [https://github.com/AnantharamanLab/protein_set_transformer](https://github.com/AnantharamanLab/protein_set_transformer).
+
+## Changelog
+
+### June 03, 2025
+
+#### Added
+
+- `foldseek_databases.tar.gz`
+  - Precomputed foldseek 3Di databases for each test dataset
+- `PST-TL-P__small.ckpt.gz`
+  - New pretrained model checkpoint for model trained with triplet loss and tuned with protein diversity groups
+- `PST-TL-P__large.ckpt.gz`
+  - New pretrained model checkpoint for model trained with triplet loss and tuned with protein diversity groups
+- `PST-MLM.tar.gz`
+  - New pretrained model checkpoints for models trained with masked language modeling loss
+- `PST_training_set_PST-TL-P__large_protein_embeddings.h5`
+- `IMGVRv4_test_set_PST-TL-P__large_protein_embeddings.h5`
+- `MGnify_set_PST-TL-P__large_protein_embeddings.h5`
+- `PST_training_set_PST-TL-P__small_protein_embeddings.h5`
+- `IMGVRv4_test_set_PST-TL-P__small_protein_embeddings.h5`
+- `MGnify_set_PST-TL-P__small_protein_embeddings.h5`
+
+#### Changed
+
+- `esm-large_protein_embeddings.tar.gz`
+  - Now part of `esm_embeddings.tar.gz`
+  - Includes MGnify test set
+- `esm-small_protein_embeddings.tar.gz`
+  - Now part of `esm_embeddings.tar.gz`
+  - Includes MGnify test set
+- `fasta.tar.gz`
+  - Includes MGnify test set
+- `genome_clusters.tar.gz`
+  - Includes MGnify test set
+- `genome_embeddings.tar.gz`
+  - Split into different files:
+    - `PST-TL_genome_embeddings.tar.gz` contain all `PST-TL` genome embeddings for each dataset
+    - `other_genome_embeddings.tar.gz` contain all others
+- `genslm_protein_embeddings.tar.gz`
+  - Converted into a single `.h5` file called `genslm_ORF_embeddings.h5`
+  - Includes MGnify test set
+- `host_prediction.tar.gz`
+  - Knowledge graphs were reconstructed using a different vector similarity search method
+  - Retrained models using new genome embeddings
+- `protein_clusters.tar.gz`
+  - Includes MGnify test set
+- `pst-large_protein_embeddings.tar.gz`
+  - Split into dataset specific files for easier access for each dataset:
+    - `PST_training_set_PST-TL-T__large_protein_embeddings.h5`
+    - `IMGVRv4_test_set_PST-TL-T__large_protein_embeddings.h5`
+    - `MGnify_set_PST-TL-T__large_protein_embeddings.h5`
+- `pst-small_protein_embeddings.tar.gz`
+  - Split into dataset specific files for easier access for each dataset:
+    - `PST_training_set_PST-TL-T__small_protein_embeddings.h5`
+    - `IMGVRv4_test_set_PST-TL-T__small_protein_embeddings.h5`
+    - `MGnify_set_PST-TL-T__small_protein_embeddings.h5`
+- `supplementary_data.tar.gz`
+  - Most figures were modified, so all supplementary datasets changed to reflect changes in manuscript
+- `supplementary_tables.zip`
+  - Added 3 new supplementary tables and included the MGnify test dataset in the existing tables
+- `trained_models.tar.gz`
+  - Split into separate files for easier access of individual models:
+    - `PST-TL-T__small.ckpt.gz`
+    - `PST-TL-T__large.ckpt.gz`
+
+#### Removed
+
+- `aai.tar.gz`
+  - These were originally raw protein-protein alignments for the IMGVRv4 dataset
+  - These have been summarized in `supplementary_data.tar.gz`
+  - But the raw alignments had to be removed to make more storage
