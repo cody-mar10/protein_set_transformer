@@ -90,6 +90,8 @@ All data associated with the initial training model training can be found here: 
 
 We have provided the README to the DRYAD data repository to render [here](DRYAD_README.md). Additionally, we have provided a programmatic way to access the data from the command line using `pst download`:
 
+**NOTE**: we have recently changed the DRYAD repository corresponding to manuscript resubmission, so these commands will not work at the moment. However, the latest dataset will be available to download directly through DRYAD soon.
+
 ```txt
 usage: pst download [-h] [--all] [--outdir PATH] [--esm-large] [--esm-small] [--vpst-large] [--vpst-small] [--genome] [--genslm]
                     [--trained-models] [--genome-clusters] [--protein-clusters] [--aai] [--fasta] [--host-prediction] [--no-readme]
@@ -149,7 +151,32 @@ Here is a summary of each model:
 
 ## Usage, Finetuning, and Model API
 
-Please read the [wiki](https://github.com/AnantharamanLab/protein_set_transformer/wiki) for more information about how to use these models, extend them for finetuning and transfer learning, and the specific model API to integrate new models into your own workflows.
+Please read the [wiki](https://github.com/AnantharamanLab/protein_set_transformer/wiki) for more information about how to use these models, extend them for finetuning and transfer learning, and the specific model API to integrate new models into your own workflows. **Note: This is still a work in progress.**
+
+## Expected runtime and memory consumption
+
+The expected runtime for training the final models after hyperparameter tuning can be found in `Supplementary Table 11` and ranged from 3.9-33.7h on 1 A100 GPU.
+
+### Inference times
+
+These are estimates of inference times for a dataset composed of ~12k viral genomes encoding ~140k proteins (such as the MGnify test dataset):
+
+| Model Size | Accelerator | ESM2 embedding* | PST inference | Total Time |
+|------------|-------------|-----------------|---------------|------------|
+| Large      | 1 A100 GPU  | 18 min          | <1 min        | ~19 min    |
+| Large      | 128 CPUs    | 6h              | <1 min        | ~6h        |
+| Large      | 8 CPUs      | 96h             | 11 min        | ~96h       |
+| Small      | 1 A100 GPU  | 9 min           | <1 min        | ~9 min     |
+| Small      | 128 CPUs    | 3h              | <1 min        | ~3h        |
+| Small      | 8 CPUs      | 48h             | 6 min         | ~96h       |
+
+\* ESM2 embeddings are computed independently for each protein, so input FASTA files can be split into equal batches and processed in parallel with as many GPUs as available.
+
+- These will need to be concatenated in the same order as the original FASTA file.
+
+### Memory
+
+Memory usage should be negligible for inference, especially if using a `LazyGenomeDataset`. Less than 4GB of memory is needed for inference.
 
 ## Manuscript
 
