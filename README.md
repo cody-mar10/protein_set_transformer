@@ -168,7 +168,7 @@ These are estimates of inference times for a dataset composed of ~12k viral geno
 | Large      | 8 CPUs      | 96h             | 11 min        | ~96h       |
 | Small      | 1 A100 GPU  | 9 min           | <1 min        | ~9 min     |
 | Small      | 128 CPUs    | 3h              | <1 min        | ~3h        |
-| Small      | 8 CPUs      | 48h             | 6 min         | ~96h       |
+| Small      | 8 CPUs      | 48h             | 6 min         | ~48h       |
 
 \* ESM2 embeddings are computed independently for each protein, so input FASTA files can be split into equal batches and processed in parallel with as many GPUs as available.
 
