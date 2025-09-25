@@ -46,6 +46,14 @@ class PositionalStrandEmbeddingModule(L.LightningModule):
 
         self.extra_embedding_dim = 2 * embedding_dim
 
+    def _convert_strand_if_needed(self, strand: torch.Tensor) -> torch.Tensor:
+        """Convert the strand tensor from bool to long if needed. This is necessary for indexing
+        the strand embeddings."""
+
+        if strand.dtype != torch.long:
+            return strand.long()
+        return strand
+
     def internal_embeddings(
         self, batch: GenomeGraphBatch
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -64,7 +72,8 @@ class PositionalStrandEmbeddingModule(L.LightningModule):
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
                 (concatenated embeddings, positional embeddings, strand embeddings)
         """
-        strand_embed = self.strand_embedding(batch.strand)
+        strand = self._convert_strand_if_needed(batch.strand)
+        strand_embed = self.strand_embedding(strand)
         positional_embed = self.positional_embedding(batch.pos.squeeze())
 
         x_cat = self.concatenate_embeddings(
@@ -78,6 +87,7 @@ class PositionalStrandEmbeddingModule(L.LightningModule):
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         node_mask = batch.node_mask
         strand = batch.strand[node_mask]
+        strand = self._convert_strand_if_needed(strand)
         pos = batch.pos.squeeze()[node_mask]
         x = batch.masked_embeddings
 
