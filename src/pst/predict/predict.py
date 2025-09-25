@@ -10,7 +10,10 @@ from tqdm import tqdm
 
 from pst.data.dataset import _SENTINEL_FRAGMENT_SIZE
 from pst.data.modules import GenomeDataModule
-from pst.data.utils import H5_FILE_COMPR_FILTERS, convert_to_scaffold_level_genome_label
+from pst.data.utils import (
+    H5_FILE_COMPR_FILTERS,
+    convert_to_scaffold_level_genome_label,
+)
 from pst.nn.base import BaseModelTypes, BaseProteinSetTransformer
 from pst.nn.modules import ProteinSetTransformer
 from pst.typing import EdgeAttnOutput, GenomeGraphBatch, GraphAttnOutput, PairTensor
@@ -30,7 +33,7 @@ class PredictMode:
         devices: int = 1,
         batch_size: Optional[int] = None,
         fragment_size: Optional[int] = None,
-        lazy: bool = False,
+        lazy: bool = True,
         return_protein_embeddings: bool = True,
         return_genome_embeddings: bool = True,
     ) -> Optional[dict[str, torch.Tensor]]:
@@ -50,9 +53,9 @@ class PredictMode:
                 Defaults to fragment size in checkpoint file.
             lazy (bool, optional): whether to use lazy loading for the dataset.
                 If True, the dataset will be loaded lazily, which can save memory
-                but may be slower. If False, the dataset will be fully loaded into memory
-                before prediction. --lazy true is HIGHLY recommended for large microbial datasets.
-                Defaults to False.
+                but may be marginally slower. If False, the dataset will be fully loaded into memory
+                before prediction. --lazy true is HIGHLY recommended for large microbial datasets or if memory is an issue.
+                Defaults to True.
             return_protein_embeddings (bool, optional): whether to return protein embeddings.
                 Defaults to True.
             return_genome_embeddings (bool, optional): whether to return genome embeddings.
@@ -156,7 +159,9 @@ class Predictor:
         self.lazy = lazy
 
         if not node_embeddings and not graph_embeddings:
-            raise ValueError("At least one of node_embeddings and graph_embeddings must be True")
+            raise ValueError(
+                "At least one of node_embeddings and graph_embeddings must be True"
+            )
 
         self.node_embeddings = node_embeddings
         self.graph_embeddings = graph_embeddings
@@ -236,9 +241,13 @@ class Predictor:
         self.is_genomic = isinstance(self.model, BaseProteinSetTransformer)
 
         if self.is_genomic:
-            self.compute_scaffold_embeddings = self._genomic_model_scaffold_embeddings
+            self.compute_scaffold_embeddings = (
+                self._genomic_model_scaffold_embeddings
+            )
         else:
-            self.compute_scaffold_embeddings = self._protein_model_scaffold_embeddings
+            self.compute_scaffold_embeddings = (
+                self._protein_model_scaffold_embeddings
+            )
 
         expected_max_size = self.model.positional_embedding.max_size
         actual_max_size = self.datamodule.dataset.max_size
@@ -287,7 +296,10 @@ class Predictor:
         return earray
 
     def _init_storage(self) -> dict["Predictor.OutputType", tb.EArray]:
-        return {name: self._create_earray(name) for name in get_args(Predictor.OutputType)}
+        return {
+            name: self._create_earray(name)
+            for name in get_args(Predictor.OutputType)
+        }
 
     def _init_in_memory_storage(
         self,
@@ -347,8 +359,8 @@ class Predictor:
         # self.graph_type = "fragmented scaffold", ie the graph embeddings are for fragments of scaffolds
         # that represent individual scaffolds in a multi-scaffold genomes
 
-        fragment_embeddings, scaffold_embeddings = self._reduce_fragments_to_scaffolds(
-            reduce=reduce
+        fragment_embeddings, scaffold_embeddings = (
+            self._reduce_fragments_to_scaffolds(reduce=reduce)
         )
 
         # this is needed since the genome_label labels each individual FRAGMENT
@@ -360,7 +372,9 @@ class Predictor:
         )
 
         # shape: [N genomes, D]
-        genome_embeddings = scatter(scaffold_embeddings, scaffold_level_genome_label, reduce=reduce)
+        genome_embeddings = scatter(
+            scaffold_embeddings, scaffold_level_genome_label, reduce=reduce
+        )
 
         return fragment_embeddings, scaffold_embeddings, genome_embeddings
 
@@ -436,7 +450,9 @@ class Predictor:
 
         if self.graph_type == "genome":
             # data = genome
-            self._file.rename_node(where=self._file.root, name="data", newname="genome")
+            self._file.rename_node(
+                where=self._file.root, name="data", newname="genome"
+            )
         else:
             self._file.remove_node(where=self._file.root, name="data")
 
@@ -474,7 +490,9 @@ class Predictor:
 
             x_cat, _, _ = self.model.internal_embeddings(batch)
 
-            node_output: EdgeAttnOutput = self.model.encoder(x_cat, batch.edge_index, batch.batch)
+            node_output: EdgeAttnOutput = self.model.encoder(
+                x_cat, batch.edge_index, batch.batch
+            )
 
             if self.node_embeddings:
                 self.append(name="node", data=node_output.out)
@@ -501,7 +519,9 @@ class Predictor:
             # the graph embeddings are at the fragment level
             # need to reduce fragment level embeddings to scaffold level
             # here, the scaffold level embeddings are the same as genome level
-            fragmented_embeddings, genome_embeddings = self.reduce_fragmented_genomes()
+            fragmented_embeddings, genome_embeddings = (
+                self.reduce_fragmented_genomes()
+            )
             reduced_embeddings["fragment"] = fragmented_embeddings
             reduced_embeddings["genome"] = genome_embeddings
         elif self.graph_type == "fragmented scaffold":
