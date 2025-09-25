@@ -1,72 +1,83 @@
+from typing import Literal
+
 from attrs import define
+
+ManuscriptChoices = Literal[
+    "source_data",
+    "supplementary_data",
+    "supplementary_tables",
+    "host_prediction",
+    "fasta",
+    "foldseek_databases",
+    "README",
+]
 
 
 @define
 class ManuscriptDataArgs:
     """MANUSCRIPT DATA"""
 
-    aai: bool = False
-    """download AAI data for training and test viruses (aai.tar.gz)"""
+    choices: list[ManuscriptChoices] | None = None
+    "Download manuscript-specific data. Defaults to only the README."
 
-    fasta: bool = False
-    """download protein fasta files for training and test viruses (fasta.tar.gz)"""
+    def __attrs_post_init__(self):
+        if self.choices is None:
+            self.choices = ["README"]
 
-    host_prediction: bool = False
-    """download all data associated with the host prediction proof of concept 
-    (host_prediction.tar.gz)"""
 
-    readme: bool = True
-    """download the DRYAD README (README.md)"""
-
-    supplementary_data: bool = False
-    """download supplementary data directly used to make the figures in the manuscript 
-    (supplementary_data.tar.gz)"""
-
-    supplementary_tables: bool = False
-    """download supplementary tables (supplementary_tables.zip)"""
+ClusterChoices = Literal["genome", "protein"]
 
 
 @define
 class ClusterArgs:
     """CLUSTER DATA"""
 
-    genome_clusters: bool = False
-    """download genome cluster labels (genome_clusters.tar.gz)"""
+    choices: list[ClusterChoices] | None = None
+    """Download genome or protein clusters."""
 
-    protein_clusters: bool = False
-    """download protein cluster labels (protein_clusters.tar.gz)"""
+
+ModelChoices = Literal[
+    "PST-TL-P__small",
+    "PST-TL-P__large",
+    "PST-TL-T__small",
+    "PST-TL-T__large",
+    "PST-MLM",
+]
 
 
 @define
 class ModelArgs:
     """PRETRAINED MODELS"""
 
-    trained_models: bool = False
-    "download trained vPST models (trained_models.tar.gz)"
+    choices: list[ModelChoices] | None = None
+    """Download pretrained models."""
+
+
+EmbeddingChoices = Literal[
+    ### protein
+    "esm2",
+    "IMGVR_PST-TL-P__large",
+    "IMGVR_PST-TL-P__small",
+    "IMGVR_PST-TL-T__large",
+    "IMGVR_PST-TL-T__small",
+    "MGnify_PST-TL-P__large",
+    "MGnify_PST-TL-P__small",
+    "MGnify_PST-TL-T__large",
+    "MGnify_PST-TL-T__small",
+    "genslm_ORF",
+    "train_PST-TL-P__large",
+    "train_PST-TL-P__small",
+    "train_PST-TL-T__large",
+    "train_PST-TL-T__small",
+    ### genome
+    "PST-TL_genome",
+    "other_genome",
+]
 
 
 @define
 class EmbeddingsArgs:
     """EMBEDDINGS"""
 
-    esm_large: bool = False
-    """download ESM2 large [t33_150M] PROTEIN embeddings for training and test viruses 
-    (esm-large_protein_embeddings.tar.gz)"""
-
-    esm_small: bool = False
-    """download ESM2 small [t6_8M] PROTEIN embeddings for training and test viruses 
-    (esm-small_protein_embeddings.tar.gz)"""
-
-    vpst_large: bool = False
-    """download vPST large PROTEIN embeddings for training and test viruses 
-    (pst-large_protein_embeddings.tar.gz)"""
-
-    vpst_small: bool = False
-    """download vPST small PROTEIN embeddings for training and test viruses 
-    (pst-small_protein_embeddings.tar.gz)"""
-
-    genome: bool = False
-    """download all genome embeddings for training and test viruses (genome_embeddings.tar.gz)"""
-
-    genslm: bool = False
-    """download GenSLM ORF embeddings (genslm_protein_embeddings.tar.gz)"""
+    choices: list[EmbeddingChoices] | None = None
+    """Download embedding files."""

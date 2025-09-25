@@ -1,15 +1,9 @@
-import ast
 import gzip
-import inspect
-import re
 import shutil
 import tarfile
 import zipfile
-from dataclasses import asdict, fields
 from functools import partial
-from itertools import pairwise
 from pathlib import Path
-from textwrap import dedent
 
 import requests
 from tqdm import tqdm
@@ -21,64 +15,50 @@ from pst.utils.cli.download import (
     ModelArgs,
 )
 
+_DataclassT = ClusterArgs | EmbeddingsArgs | ManuscriptDataArgs | ModelArgs
 
-def get_class_attribute_docs(cls):
-    """Get docstrings of an class attribute assigned after the attribute definition.
-
-    Example:
-    ```python
-    from dataclasses import dataclass
-
-    @dataclass
-    class A:
-        a: int
-        '''This is a docstring for a'''
-
-        b: str
-        '''This is a docstring for b'''
-
-    >>> get_class_attribute_docs(A)
-    {'a': 'This is a docstring for a', 'b': 'This is a docstring for b'}
-    ```
-    """
-
-    # from here: https://davidism.com/attribute-docstrings/
-
-    cls_node = ast.parse(dedent(inspect.getsource(cls))).body[0]
-
-    if not isinstance(cls_node, ast.ClassDef):
-        raise TypeError("Expected a class definition")
-
-    docstrings: dict[str, str] = {}
-
-    # Consider each pair of nodes.
-    for a, b in pairwise(cls_node.body):
-        # Must be an assignment then a constant string.
-        if (
-            not isinstance(a, ast.Assign | ast.AnnAssign)
-            or not isinstance(b, ast.Expr)
-            or not isinstance(b.value, ast.Constant)
-            or not isinstance(b.value.value, str)
-        ):
-            continue
-
-        doc = inspect.cleandoc(b.value.value)
-
-        if isinstance(a, ast.Assign):
-            # An assignment can have multiple targets (a = b = v).
-            targets = a.targets
-        else:
-            # An annotated assignment only has one target.
-            targets = [a.target]
-
-        for target in targets:
-            # Must be assigning to a plain name.
-            if not isinstance(target, ast.Name):
-                continue
-
-            docstrings[target.id] = " ".join(line.rstrip() for line in doc.split("\n"))
-
-    return docstrings
+choice_mapper = {
+    "manuscript": {
+        "source_data": "source_data.tar.gz",
+        "supplementary_data": "supplementary_data.tar.gz",
+        "supplementary_tables": "supplementary_tables.tar.gz",
+        "host_prediction": "host_prediction.tar.gz",
+        "fasta": "fasta.tar.gz",
+        "foldseek_databases": "foldseek_databases.tar.gz",
+        "README": "README.md",
+    },
+    "cluster": {
+        "genome": "genome_clusters.tar.gz",
+        "protein": "protein_clusters.tar.gz",
+    },
+    "model": {
+        "PST-TL-P__small": "PST-TL-P__small.ckpt.gz",
+        "PST-TL-P__large": "PST-TL-P__large.ckpt.gz",
+        "PST-TL-T__small": "PST-TL-T__small.ckpt.gz",
+        "PST-TL-T__large": "PST-TL-T__large.ckpt.gz",
+        "PST-MLM": "PST-MLM.tar.gz",
+    },
+    "embeddings": {
+        ### protein:
+        "esm2": "esm_embeddings.tar.gz",
+        "IMGVR_PST-TL-P__large": "IMGVRv4_test_set_PST-TL-P__large_protein_embeddings.h5",
+        "IMGVR_PST-TL-P__small": "IMGVRv4_test_set_PST-TL-P__small_protein_embeddings.h5",
+        "IMGVR_PST-TL-T__large": "IMGVRv4_test_set_PST-TL-T__large_protein_embeddings.h5",
+        "IMGVR_PST-TL-T__small": "IMGVRv4_test_set_PST-TL-T__small_protein_embeddings.h5",
+        "MGnify_PST-TL-P__large": "MGnify_test_set_PST-TL-P__large_protein_embeddings.h5",
+        "MGnify_PST-TL-P__small": "MGnify_test_set_PST-TL-P__small_protein_embeddings.h5",
+        "MGnify_PST-TL-T__large": "MGnify_test_set_PST-TL-T__large_protein_embeddings.h5",
+        "MGnify_PST-TL-T__small": "MGnify_test_set_PST-TL-T__small_protein_embeddings.h5",
+        "genslm_ORF": "genslm_ORF_embeddings.h5",
+        "train_PST-TL-P__large": "PST_training_set_PST-TL-P__large_protein_embeddings.h5",
+        "train_PST-TL-P__small": "PST_training_set_PST-TL-P__small_protein_embeddings.h5",
+        "train_PST-TL-T__large": "PST_training_set_PST-TL-T__large_protein_embeddings.h5",
+        "train_PST-TL-T__small": "PST_training_set_PST-TL-T__small_protein_embeddings.h5",
+        ### genome:
+        "PST-TL_genome": "PST-TL_genome_embeddings.tar.gz",
+        "other_genome": "other_genome_embeddings.tar.gz",
+    },
+}
 
 
 class DryadDownloader:
@@ -95,7 +75,7 @@ class DryadDownloader:
         all: bool,
         outdir: Path,
     ):
-        self.args = {
+        self.args: dict[str, _DataclassT] = {
             "manuscript": manuscript,
             "cluster": cluster,
             "model": model,
@@ -107,7 +87,6 @@ class DryadDownloader:
         self._validate_downloads()
 
         self.outdir = outdir
-        self.filename_map = self.field2filename()
 
         self._session: requests.Session | None = None
 
@@ -116,32 +95,32 @@ class DryadDownloader:
             return
 
         for dc in self.args.values():
-            if any(asdict(dc).values()):
+            if dc.choices is not None:
                 return
 
-        raise ValueError("No data to download. Please specify at least one download.")
-
-    def field2filename(self) -> dict[str, str]:
-        filenames: dict[str, str] = dict()
-        file_pattern = re.compile(r"\((.*)\)$")
-
-        for dc in self.args.values():
-            docstrings = get_class_attribute_docs(dc.__class__)
-            for fieldname, desc in docstrings.items():
-                filenames[fieldname] = file_pattern.findall(desc)[0]
-
-        return filenames
+        raise ValueError(
+            "No data to download. Please specify at least one download."
+        )
 
     def get_files_to_download(self) -> list[str]:
         files: list[str] = list()
 
-        for dc in self.args.values():
-            for field in fields(dc):
-                fieldname = field.name
-                fieldvalue = getattr(dc, fieldname)
+        if self.download_all:
+            for filemap in choice_mapper.values():
+                files.extend(filemap.values())
 
-                if fieldvalue or self.download_all:
-                    files.append(self.filename_map[fieldname])
+        else:
+            for name, dc in self.args.items():
+                mapper = choice_mapper[name]
+
+                choices = dc.choices
+                if choices is not None:
+                    for choice in choices:
+                        file = mapper[choice]
+                        files.append(file)
+
+            # unique files only
+            files = list(set(files))
 
         return files
 
@@ -153,6 +132,7 @@ class DryadDownloader:
         return self._session
 
     def get_dryad_dataset_id(self) -> int:
+        # this will always point to the latest version
         url = f"{self.DRYAD_REST_API}/datasets/{self.DRYAD_DOI_REST_API}"
 
         response = self.session.get(url)
@@ -163,34 +143,47 @@ class DryadDownloader:
         return dryad_dataset_id
 
     def get_dryad_file_ids(self, dataset_id: int) -> dict[str, int]:
-        url = f"{self.DRYAD_REST_API}/versions/{dataset_id}/files"
+        baseurl = f"{self.DRYAD_REST_API}/versions/{dataset_id}/files"
 
-        response = self.session.get(url)
         file_ids: dict[str, int] = dict()
+        page = 1
+        while True:
+            if page == 1:
+                url = baseurl
+            else:
+                url = f"{baseurl}?page={page}"
 
-        for file_metadata in response.json()["_embedded"]["stash:files"]:
-            file_id = int(
-                file_metadata["_links"]["stash:download"]["href"].split("/")[-2]
-            )
-            file_name = file_metadata["path"]
+            response = self.session.get(url)
+            json = response.json()
+            for file_metadata in json["_embedded"]["stash:files"]:
+                file_id = int(
+                    file_metadata["_links"]["stash:download"]["href"].split("/")[-2]
+                )
+                file_name = file_metadata["path"]
 
-            file_ids[file_name] = file_id
+                file_ids[file_name] = file_id
+
+            if "next" in json["_links"]:
+                page += 1
+            else:
+                break
 
         return file_ids
 
     def download(self):
         dryad_dataset_id = self.get_dryad_dataset_id()
         file_ids = self.get_dryad_file_ids(dryad_dataset_id)
+
         files_to_download = self.get_files_to_download()
         n_files = len(files_to_download)
 
+        msg = f"Downloading the following {n_files} file{'s' if n_files > 1 else ''} to {self.outdir}"
+        print(msg)
+        for file in files_to_download:
+            print(f"\t{file}")
+
         BLOCK_SIZE = 1024
         self.outdir.mkdir(parents=True, exist_ok=True)
-
-        print(
-            f"Downloading {n_files} file{'s' if n_files > 1 else ''} to {self.outdir}"
-        )
-
         for idx, file in enumerate(files_to_download):
             file_id = file_ids[file]
             url = f"{self.DRYAD_REST_API}/files/{file_id}/download"
