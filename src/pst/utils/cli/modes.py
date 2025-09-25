@@ -44,7 +44,7 @@ class DownloadMode:
         all: bool = False,
         outdir: Path = Path("pstdata"),
     ):
-        """Download mode to download data and trained models from DRYAD
+        """Download mode to download data and trained models from DRYAD. Example usage: pst download --manuscript.choices="[source_data, supplementary_data]"
 
         Args:
             manuscript (ManuscriptDataArgs): MANUSCRIPT DATA
