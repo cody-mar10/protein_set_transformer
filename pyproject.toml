@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ptn-set-transformer"
-version = "2.5.0"
+version = "2.6.0"
 authors = [{ name = "Cody Martin", email = "codycmar10@gmail.com" }]
 description = "Training and inference on protein sets (genomes)"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.9,<3.12"
+requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
@@ -21,7 +21,7 @@ dependencies = [
     "tables",
     "torch_geometric",
     "torch_scatter",
-    "numpy<2.0",
+    "numpy",
     "more-itertools",
     "lightning-cv[tune]>=1.0",                          
     "optuna>=3.1",
