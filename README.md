@@ -10,7 +10,9 @@ Cody Martin, Anthony Gitter, and Karthik Anantharaman.
 
 ## Installation
 
-*We highly recommend using [uv](https://docs.astral.sh/uv/) for installation, since it will be significantly faster to solve the dependencies and install everything. If you don't have the ability to use `uv`, then just remove `uv` from the following commands.*
+>We highly recommend using [uv](https://docs.astral.sh/uv/) for installation, since it will be significantly faster to solve the dependencies and install everything.
+>
+>If you don't have the ability to install `uv`, then just remove `uv` from the following commands.
 
 ### Optional: Setup a virtual environment
 
@@ -27,14 +29,23 @@ Just make sure you activate your virtual environment before proceeding with the 
 You can try simply doing:
 
 ```bash
-uv pip install ptn-set-transformer
+uv pip install torch
+uv pip install ptn-set-transformer --no-build-isolation
 ```
 
-But I prefer to manually setup the PyTorch installation to control CPU/GPU availability.
+This will do 2 things:
 
-This full installation can be achieved with `uv`, which should take no more than 5 minutes.
+1. Install the latest version of `PyTorch` with the default `CUDA` runtime, even if your system does not have GPUs
+   1. This will run fine on CPU-only systems, but the install will be larger
+2. Install the `PST` library and force some of the required `PyTorch` extension libraries (specifically `PyTorch-Scatter`) to build on your target machine. This will take a few minutes.
+
+For most use cases, this should work fine.
+
+-----
 
 Optional Note: If you would like to install the latest release from this repository, you will likely need to link your git command line interface with an online github account. Follow [this link](https://docs.github.com/en/get-started/getting-started-with-git/set-up-git#setting-up-git) for help setting up git at the command line.
+
+*If you would like to proceed further for a more advanced setup or ran into issues, then try the more manual setups below.*
 
 ### Manually setup PyTorch
 
@@ -104,7 +115,7 @@ uv pip install ptn-set-transformer
 
 ### Installation issues
 
-Due to the various `PyTorch` dependencies, which are typically shipped as precompiled binaries for specific Python/CUDA/GCC compiler/Linux/etc versions, there can sometimes be version conflict issues that can be hard to resolve.
+Due to the various `PyTorch` dependencies, which are typically shipped as precompiled binaries for specific Python/CUDA/GCC/Linux/etc versions, there can sometimes be version conflict issues that can be hard to resolve.
 
 We have primarily encountered these errors when installing the `PyTorch` extension libaries, so we will focus on how to resolve issues installing `torch_geometric`, `torch_scatter`, and `torch_sparse`.
 
@@ -130,7 +141,7 @@ which will return a string such as `2.8.0+cu126` or `2.8.0+cpu`.
 
 #### GLIBC version errors
 
-The precompiled binaries are compiled with specific versions of the GCC C compiler, which may not be present on your system. You could update your GCC compiler or install a version that is compatible with the precompiled binaries. However, it is much simpler to recompile these libraries for your target system:
+The precompiled binaries are compiled with specific versions of your system's C compiler, which may not be present on your system. You could update your C compiler/C lib or install a version that is compatible with the precompiled binaries. However, it is much simpler to recompile these libraries for your target system:
 
 ```bash
 uv pip install torch_geometric torch_scatter torch_sparse --verbose --no-build-isolation
@@ -178,7 +189,7 @@ There should be 3 fields in the prediciton file:
 
 ## What if I don't have GPU access?
 
-We have provided a [PST inference notebook](examples/pst_inference.ipynb) that can be used within a `Google Colab` runtime environment. You can use free (although less powerful and lower memory) GPUs for inference of relatively small datasets (ie <10k genomes encoding <250k proteins).
+We have provided a [PST inference notebook](https://colab.research.google.com/github/cody-mar10/protein_set_transformer/blob/main/examples/pst_inference.ipynb) that can be used within a `Google Colab` runtime environment. You can use free (although less powerful and lower memory) GPUs for inference of relatively small datasets (ie <10k genomes encoding <250k proteins).
 
 ## Data availability
 
