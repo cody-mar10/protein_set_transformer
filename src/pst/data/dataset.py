@@ -176,7 +176,9 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
                     else:
                         assert False, "UNREACHABLE"
 
-                    obj_attr_name = name if name == "scaffold_label" else f"{prefix}_{name}"
+                    obj_attr_name = (
+                        name if name == "scaffold_label" else f"{prefix}_{name}"
+                    )
 
                     if obj_attr_name != "protein_data":
                         setattr(self, obj_attr_name, torch.from_numpy(node[:]))  # type: ignore
@@ -210,12 +212,16 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
             )
 
         if protein_data_node_path.count("/") > 1:
-            protein_data_where, protein_data_name = protein_data_node_path.rsplit("/", 1)
+            protein_data_where, protein_data_name = protein_data_node_path.rsplit(
+                "/", 1
+            )
         else:
             protein_data_where = "/"
             protein_data_name = protein_data_node_path[1:]  # remove leading "/"
 
-        self.protein_data = self._file.get_node(protein_data_where, protein_data_name)  # type: ignore
+        self.protein_data = self._file.get_node(
+            protein_data_where, protein_data_name
+        )  # type: ignore
 
         # now need to check that the minimum required fields are set
         missing: set[str] = set()
@@ -246,10 +252,14 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
         # check that all attributes exist
         if not hasattr(self, "scaffold_genome_label"):
             # assume each scaffold is a separate genome
-            self.scaffold_genome_label = torch.arange(len(self.scaffold_sizes), dtype=torch.long)
+            self.scaffold_genome_label = torch.arange(
+                len(self.scaffold_sizes), dtype=torch.long
+            )
 
         if not hasattr(self, "scaffold_label"):
-            self.scaffold_label = torch.arange(len(self.scaffold_sizes), dtype=torch.long)
+            self.scaffold_label = torch.arange(
+                len(self.scaffold_sizes), dtype=torch.long
+            )
 
         # shape: [Num genomes]
         self.genome_is_multiscaffold = torch.bincount(self.scaffold_genome_label) > 1
@@ -264,7 +274,9 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
         # this will be used as an idx in a lut embedding
         self.protein_strand[self.protein_strand == -1] = 0
 
-    def _standardize_indices(self, idx: int | slice | Iterable[int]) -> Iterable[int]:
+    def _standardize_indices(
+        self, idx: int | slice | Iterable[int]
+    ) -> Iterable[int]:
         # this will convert all indices to a list of integers
         if isinstance(idx, int):
             return [idx]
@@ -330,7 +342,9 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
     def num_proteins_per_genome(self) -> Tensor:
         return scatter(self.scaffold_sizes, self.scaffold_genome_label, reduce="sum")
 
-    def _get_scaffold_data(self, idx: Iterable[int]) -> dict[str, list[torch.Tensor]]:
+    def _get_scaffold_data(
+        self, idx: Iterable[int]
+    ) -> dict[str, list[torch.Tensor]]:
         # this will return all scaffold-level data for the given index
         # idx should be Iterable[int] now
 
@@ -357,7 +371,9 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
             num_proteins = self.scaffold_sizes[i]
             scaffold_data["num_proteins"].append(num_proteins)
             pos = (
-                torch.arange(int(num_proteins)).unsqueeze(-1).to(self.scaffold_ptr.device)
+                torch.arange(int(num_proteins))
+                .unsqueeze(-1)
+                .to(self.scaffold_ptr.device)
             )  # dont think device matters here since the batch will be moved later
             scaffold_data["pos"].append(pos)
             scaffold_data["scaffold_label"].append(self.scaffold_label[i])
@@ -376,6 +392,7 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
     def _get_protein_data(self, idx: Iterable[int]) -> dict[str, list[torch.Tensor]]:
         # these slices refer to scaffolds, not proteins, so now we need to convert
         # to protein indices
+        # goal here is to load embeddings in as few contiguous chunks as possible
         scaffold_slices = _merge_indices(idx)
         protein_slices: list[slice] = []
         for scaffold_slice in scaffold_slices:
@@ -383,7 +400,9 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
             stop = self.scaffold_ptr[scaffold_slice.stop]
             protein_slices.append(slice(start, stop))
 
-        batched_protein_data: dict[str, list[torch.Tensor]] = {name: [] for name in ("x", "strand")}
+        batched_protein_data: dict[str, list[torch.Tensor]] = {
+            name: [] for name in ("x", "strand")
+        }
 
         for name in self._protein_registry:
             batched_protein_data[name] = []
@@ -406,15 +425,31 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
         return batched_protein_data
 
     def _unbatch_protein_data(
-        self, batched_protein_data: dict[str, list[Tensor]], num_proteins_per_scaffold: Tensor
+        self,
+        idx: Iterable[int],
+        batched_protein_data: dict[str, list[Tensor]],
+        num_proteins_per_scaffold: Tensor,
     ) -> dict[str, list[Tensor]]:
         """NOTE: clears the input `batched_protein_data` dict to avoid storing unnecessary data"""
         # we need to unbatch the data here so that each pos in the protein_data list points to an
         # individual scaffold.
         # this is bc we need to create individual GenomeGraph objects
 
+        # also the protein data is loaded in sorted order, which
+        # is meant to load data in the fewest number of lookups possible
+        # especially important for lazily loaded data
+        # we need to put this in the expected order as the idx
+
+        # this is the current scaffold order of the protein data
+        t_idx = torch.tensor(idx)
+
+        # we need an inverse sorting index to map expected positions to actual positions
+        argsort_idx = t_idx.argsort()
+        inv_argsort_idx = argsort_idx.argsort()
+
         stacked_protein_data = {
-            key: torch.concat(tensor_list) for key, tensor_list in batched_protein_data.items()
+            key: torch.concat(tensor_list)
+            for key, tensor_list in batched_protein_data.items()
         }
 
         batched_protein_data.clear()
@@ -423,16 +458,28 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
             key: [] for key in stacked_protein_data.keys()
         }
 
+        # num_proteins_per_scaffold is in the correct order as idx
         n_scaffolds = num_proteins_per_scaffold.numel()
-        scaffold_ptr = graph_sizes_to_index_pointer(num_proteins_per_scaffold)
+
+        # num_proteins_per_scaffold is in the correct order
+        # as idx
+        # but we need to sort it to be in the order that the protein data
+        # is actually in
+        scaffold_ptr = graph_sizes_to_index_pointer(
+            num_proteins_per_scaffold[argsort_idx]
+        )
 
         for scaffold_idx in range(n_scaffolds):
+            scaffold_idx = int(inv_argsort_idx[scaffold_idx])
+
             start = scaffold_ptr[scaffold_idx]
             stop = scaffold_ptr[scaffold_idx + 1]
 
             for key, tensor in stacked_protein_data.items():
                 protein_data[key].append(tensor[start:stop])
 
+        # the protein embeddings will be returned in the correct order
+        # as specified by the sampled scaffold indices in idx
         return protein_data
 
     @overload
@@ -449,13 +496,17 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
 
         idx = self._standardize_indices(idx)
         if any(i >= len(self) for i in idx):
-            raise IndexError(f"Index {idx} out of range for dataset of size {len(self)}")
+            raise IndexError(
+                f"Index {idx} out of range for dataset of size {len(self)}"
+            )
 
         scaffold_data = self._get_scaffold_data(idx)
         batched_protein_data = self._get_protein_data(idx)
 
         num_proteins_per_scaffold = torch.tensor(scaffold_data["num_proteins"])
-        protein_data = self._unbatch_protein_data(batched_protein_data, num_proteins_per_scaffold)
+        protein_data = self._unbatch_protein_data(
+            idx, batched_protein_data, num_proteins_per_scaffold
+        )
 
         graph_data = scaffold_data | protein_data  # works py 3.9+
 
@@ -470,7 +521,10 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
         genome_graphs: list[GenomeGraph] = []
         for scaffold_idx in range(num_scaffolds):
             # create a new genome graph object for each scaffold
-            data = {key: tensor_list[scaffold_idx] for key, tensor_list in graph_data.items()}
+            data = {
+                key: tensor_list[scaffold_idx]
+                for key, tensor_list in graph_data.items()
+            }
             genome_graph = GenomeGraph(**data)  # type: ignore
             genome_graphs.append(genome_graph)
 
@@ -488,13 +542,17 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
         genome_idx = genome_idx.tolist()
         return self[genome_idx]
 
-    def _register_feature(self, name: str, data: Tensor, feature_level: FeatureLevel):
+    def _register_feature(
+        self, name: str, data: Tensor, feature_level: FeatureLevel
+    ):
         # feature_level is one of {protein, scaffold, genome}
 
         name_registry: set[str] = getattr(self, f"_{feature_level}_registry")
         name_registry.add(name)
 
-        feature = RegisteredFeature(name=name, data=data, feature_level=feature_level)
+        feature = RegisteredFeature(
+            name=name, data=data, feature_level=feature_level
+        )
         self._registered_features[name] = feature
 
     def register_feature(
@@ -505,7 +563,9 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
         feature_level: FeatureLevel,
         overwrite_previously_registered: bool = False,
     ):
-        if name in (self.__protein_attr__ | self.__scaffold_attr__ | self.__genome_attr__):
+        if name in (
+            self.__protein_attr__ | self.__scaffold_attr__ | self.__genome_attr__
+        ):
             raise ValueError(
                 f"Cannot register feature with name {name} as it is a reserved attribute."
             )
@@ -572,8 +632,12 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
 
         # TODO: there is a bug when collate genome batches instead of scaffold batches
         # since .get_genome uses this fn all genome labels become 0...
-        _, rel_scaffold_label = databatch.scaffold_label.unique(sorted=False, return_inverse=True)
-        _, rel_genome_label = databatch.genome_label.unique(sorted=False, return_inverse=True)
+        _, rel_scaffold_label = databatch.scaffold_label.unique(
+            sorted=False, return_inverse=True
+        )
+        _, rel_genome_label = databatch.genome_label.unique(
+            sorted=False, return_inverse=True
+        )
 
         # scaffold_label and genome_label are not really relevant at the minibatch level
         # they are more useful at the dataset level where we can artificially fragment
@@ -631,7 +695,9 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
         # these are per genome
         num_max_size_chunks = torch.floor(self.scaffold_sizes / max_size).long()
         size_of_smallest_chunk = self.scaffold_sizes % max_size
-        n_chunks_per_genome = num_max_size_chunks + (size_of_smallest_chunk > 0).long()
+        n_chunks_per_genome = (
+            num_max_size_chunks + (size_of_smallest_chunk > 0).long()
+        )
 
         total_chunks = int(n_chunks_per_genome.sum())
 
@@ -683,7 +749,9 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
         )
         return output
 
-    def _update_from_fragmented_data(self, fragmented_data: _FragmentedData, validate: bool = True):
+    def _update_from_fragmented_data(
+        self, fragmented_data: _FragmentedData, validate: bool = True
+    ):
         registered_feature: RegisteredFeature
         for key, value in fragmented_data.items():
             if "_registry" in key:
@@ -733,7 +801,12 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
 
         return new_dataset
 
-    def _validate(self, expected_num: int, feature_level: FeatureLevel, data_srcs: dict[str, int]):
+    def _validate(
+        self,
+        expected_num: int,
+        feature_level: FeatureLevel,
+        data_srcs: dict[str, int],
+    ):
         if not all_equal(data_srcs.values()):
             msg = (
                 f"Expected {expected_num} {feature_level}s but get the following number of "
@@ -760,7 +833,9 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
             "num_scaffolds": self.num_scaffolds,
         }
         for field in self.__scaffold_attr__:
-            attr_name = field if field.startswith("scaffold") else f"scaffold_{field}"
+            attr_name = (
+                field if field.startswith("scaffold") else f"scaffold_{field}"
+            )
             attr = getattr(self, attr_name)
             if field == "edge_indices":
                 # edge_indices is a list
