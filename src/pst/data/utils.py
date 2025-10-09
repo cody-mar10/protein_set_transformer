@@ -109,7 +109,9 @@ def convert_to_scaffold_level_genome_label(
         torch.Tensor: scaffold-level genome label tensor, shape: [N scaffolds]
     """
     if genome_label.numel() != scaffold_label.numel():
-        raise ValueError("Genome label and scaffold label must have the same number of elements")
+        raise ValueError(
+            "Genome label and scaffold label must have the same number of elements"
+        )
 
     return scatter(genome_label, scaffold_label, reduce="any")
 
@@ -127,7 +129,9 @@ def compute_group_frequency_weights(
         torch.Tensor: 1D tensor of weights for each group
     """
     group_counts: torch.Tensor
-    _, inverse_index, group_counts = torch.unique(groups, return_inverse=True, return_counts=True)
+    _, inverse_index, group_counts = torch.unique(
+        groups, return_inverse=True, return_counts=True
+    )
 
     freq = group_counts / group_counts.sum()
     inv_freq = 1 / freq
@@ -159,7 +163,8 @@ def _merge_indices(indices: Iterable[int]) -> list[slice]:
         >>> _merge_indices([0, 2, 3, 4, 5])
         [slice(0, 1), slice(2, 6)]
     """
-    indices = sorted(set(indices))
+    # it may be desirable to have duplicates...
+    indices = sorted(indices)
     if not indices:
         return []
 
