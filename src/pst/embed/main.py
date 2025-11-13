@@ -2,7 +2,6 @@ import os
 from pathlib import Path
 from typing import Literal
 
-import esm
 import lightning as L
 import torch
 from attrs import define, field
@@ -74,8 +73,8 @@ def embed(input: Path, outdir: Path, model_cfg: ModelArgs, trainer_cfg: TrainerA
     L.seed_everything(111)
 
     model = ESM2.from_model_name(model_cfg.esm)
-    data = SequenceDataset(
-        data=esm.FastaBatchedDataset.from_file(input),
+    data = SequenceDataset.from_file(
+        fasta_file=input,
         alphabet=model.alphabet,
         batch_size=model_cfg.batch_size,
     )
