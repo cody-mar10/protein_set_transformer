@@ -145,6 +145,10 @@ class _BaseGenomeDataset(Dataset[GenomeGraphBatch]):
         for node in self._file.root:
             name: str = node._v_name  # type: ignore
 
+            # ignore version
+            if name == "_version":
+                continue
+
             # allow subgroups in h5 file, all data fields beneath them will be registered
             if isinstance(node, tb.Group):
                 if name not in _BaseGenomeDataset.__feature_levels__:
