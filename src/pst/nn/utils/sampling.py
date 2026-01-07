@@ -7,7 +7,9 @@ from pst.nn.utils.distance import pairwise_chamfer_distance
 from pst.typing import NO_NEGATIVES_MODES, OptTensor, PairTensor
 
 
-def positive_sampling(pairwise_dist: torch.Tensor, clone: bool = False) -> torch.Tensor:
+def positive_sampling(
+    pairwise_dist: torch.Tensor, clone: bool = False
+) -> torch.Tensor:
     """Perform positive sampling using a pairwise distance metric.
 
     It is recommended that the pairwise distance be calculated BEFORE a model forward
@@ -48,15 +50,17 @@ def distance_from_index(
             corresponds to position ij in the pairwise distance tensor
 
     Returns:
-        torch.Tensor: distance tensor of shape [N]
+        torch.Tensor: distance tensor of shape [N, 1]
     """
     if index.ndim == 1:
         index = rearrange(index, "batch -> batch 1")
-    return pairwise_dist.gather(dim=-1, index=index).squeeze()
+    return pairwise_dist.gather(dim=-1, index=index)
 
 
 def _semi_hard_negative_sampling(
-    dist_from_pos: torch.Tensor, pos_idx: torch.Tensor, batch_size: Optional[int] = None
+    dist_from_pos: torch.Tensor,
+    pos_idx: torch.Tensor,
+    batch_size: Optional[int] = None,
 ) -> torch.Tensor:
     if batch_size is None:
         batch_size = pos_idx.size(0)
