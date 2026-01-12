@@ -16,7 +16,11 @@ from transformers import get_linear_schedule_with_warmup
 from pst.data.modules import GenomeDataset
 from pst.nn.config import BaseModelConfig
 from pst.nn.layers import PositionalEmbedding
-from pst.nn.models import SetTransformer, SetTransformerDecoder, SetTransformerEncoder
+from pst.nn.models import (
+    SetTransformer,
+    SetTransformerDecoder,
+    SetTransformerEncoder,
+)
 from pst.typing import (
     EdgeAttnOutput,
     GenomeGraphBatch,
@@ -39,10 +43,14 @@ class PositionalStrandEmbeddingModule(L.LightningModule):
         self.max_size = max_size
         embedding_dim = in_dim // embed_scale
 
-        self.positional_embedding = PositionalEmbedding(dim=embedding_dim, max_size=max_size)
+        self.positional_embedding = PositionalEmbedding(
+            dim=embedding_dim, max_size=max_size
+        )
 
         # embed +/- gene strand
-        self.strand_embedding = torch.nn.Embedding(num_embeddings=2, embedding_dim=embedding_dim)
+        self.strand_embedding = torch.nn.Embedding(
+            num_embeddings=2, embedding_dim=embedding_dim
+        )
 
         self.extra_embedding_dim = 2 * embedding_dim
 
@@ -126,11 +134,17 @@ class PositionalStrandEmbeddingModule(L.LightningModule):
             torch.Tensor: concatenated embeddings, shape: [num_proteins, in_dim + 2 * embedding_dim],
                 order: [protein embeddings, positional embeddings, strand embeddings]
         """
+        x, positional_embed, strand_embed = torch.atleast_2d(
+            x, positional_embed, strand_embed
+        )
+
         x_cat = torch.cat((x, positional_embed, strand_embed), dim=-1)
         return x_cat
 
 
-class _BaseProteinSetTransformer(PositionalStrandEmbeddingModule, Generic[_ModelT, _BaseConfigT]):
+class _BaseProteinSetTransformer(
+    PositionalStrandEmbeddingModule, Generic[_ModelT, _BaseConfigT]
+):
     """Base class for `ProteinSetTransformer` models for either genome-level or protein-level
     tasks. This class sets up either the underlying `SetTransformer` model (genome) or the
     `SetTransformerEncoder` (protein) along with the positional and strand embeddings.
@@ -250,7 +264,9 @@ class _BaseProteinSetTransformer(PositionalStrandEmbeddingModule, Generic[_Model
 
         return self._setup_model(model_type, include=include, **kwargs)
 
-    def setup_objective(self, **kwargs) -> torch.nn.Module | Callable[..., torch.Tensor]:
+    def setup_objective(
+        self, **kwargs
+    ) -> torch.nn.Module | Callable[..., torch.Tensor]:
         """**Must be overridden by subclasses to setup the loss function.**
 
         This function is always passed all fields on the `LossConfig` defined as a subfield of
@@ -352,7 +368,9 @@ class _BaseProteinSetTransformer(PositionalStrandEmbeddingModule, Generic[_Model
     ) -> torch.Tensor:
         return self._loss_step(batch=val_batch, stage="val", **kwargs)
 
-    def test_step(self, test_batch: GenomeGraphBatch, batch_idx: int, **kwargs) -> torch.Tensor:
+    def test_step(
+        self, test_batch: GenomeGraphBatch, batch_idx: int, **kwargs
+    ) -> torch.Tensor:
         return self(batch=test_batch, stage="test", **kwargs)
 
     def _databatch_forward_with_embeddings(
@@ -369,7 +387,9 @@ class _BaseProteinSetTransformer(PositionalStrandEmbeddingModule, Generic[_Model
     def predict_step(
         self, batch: GenomeGraphBatch, batch_idx: int, dataloader_idx: int = 0
     ) -> GraphAttnOutput | EdgeAttnOutput:
-        return self._databatch_forward_with_embeddings(batch=batch, return_attention_weights=True)
+        return self._databatch_forward_with_embeddings(
+            batch=batch, return_attention_weights=True
+        )
 
     ### End lightning.Trainer methods ###
 
@@ -510,7 +530,9 @@ class _BaseProteinSetTransformer(PositionalStrandEmbeddingModule, Generic[_Model
         )
         return cast(type[_BaseConfigT], model_config_type)
 
-    def _try_load_state_dict(self, state_dict: dict[str, torch.Tensor], strict: bool = True):
+    def _try_load_state_dict(
+        self, state_dict: dict[str, torch.Tensor], strict: bool = True
+    ):
         try:
             # just try to load directly
             self.load_state_dict(state_dict, strict=True)
@@ -520,7 +542,9 @@ class _BaseProteinSetTransformer(PositionalStrandEmbeddingModule, Generic[_Model
 
             # get the base parameters of the SetTransformer or SetTransformerEncoder
             # along with the positional and strand embeddings
-            base_params = {f"model.{name}" for name, _ in self.model.named_parameters()}
+            base_params = {
+                f"model.{name}" for name, _ in self.model.named_parameters()
+            }
 
             # PositionalStrandEmbeddingModuleMixin params
             for embedding_name in ("positional_embedding", "strand_embedding"):
@@ -534,7 +558,9 @@ class _BaseProteinSetTransformer(PositionalStrandEmbeddingModule, Generic[_Model
             new_params = current_params - base_params
 
             # now try to load the state dict
-            missing, unexpected = map(set, self.load_state_dict(state_dict, strict=False))
+            missing, unexpected = map(
+                set, self.load_state_dict(state_dict, strict=False)
+            )
 
             # missing should be equivalent to the new params if loaded correctly
             still_missing = new_params - missing
@@ -603,7 +629,9 @@ class _BaseProteinSetTransformer(PositionalStrandEmbeddingModule, Generic[_Model
             if pretrained_model_name_or_path in valid_model_names:
                 # load from external source
                 # TODO: can call download code written in this module...
-                raise NotImplementedError("Loading from external source not implemented yet")
+                raise NotImplementedError(
+                    "Loading from external source not implemented yet"
+                )
             else:
                 # assume str is a file path
                 pretrained_model_name_or_path = Path(pretrained_model_name_or_path)
@@ -642,7 +670,9 @@ class _BaseProteinSetTransformer(PositionalStrandEmbeddingModule, Generic[_Model
         return model
 
 
-class BaseProteinSetTransformer(_BaseProteinSetTransformer[SetTransformer, _BaseConfigT]):
+class BaseProteinSetTransformer(
+    _BaseProteinSetTransformer[SetTransformer, _BaseConfigT]
+):
     """Base class for a genome-level `ProteinSetTransformer` model. This class sets up the
     the underlying `SetTransformer` model along with the positional and strand embeddings.
 
@@ -800,7 +830,9 @@ class BaseProteinSetTransformerEncoder(
             **update_kwargs,
         )
 
-    def _try_load_state_dict(self, state_dict: dict[str, torch.Tensor], strict: bool = True):
+    def _try_load_state_dict(
+        self, state_dict: dict[str, torch.Tensor], strict: bool = True
+    ):
         try:
             # try loading directly, which should work for pretrained protein PSTs
             # derived from this class
@@ -829,7 +861,8 @@ class BaseProteinSetTransformerEncoder(
             # from PST, the encoder is under the field model.encoder.AAA
             # but for the protein PST, the expected field is model.AAA
             new_state_dict = {
-                name.replace("encoder.", ""): state_dict[name] for name in params_to_extract
+                name.replace("encoder.", ""): state_dict[name]
+                for name in params_to_extract
             }
 
             # get all new params
@@ -838,7 +871,9 @@ class BaseProteinSetTransformerEncoder(
             new_params = current_params - new_state_dict.keys()
 
             # now try to load the state dict
-            missing, unexpected = map(set, self.load_state_dict(new_state_dict, strict=False))
+            missing, unexpected = map(
+                set, self.load_state_dict(new_state_dict, strict=False)
+            )
 
             # missing should be equivalent to the new params if loaded correctly
             still_missing = new_params - missing
@@ -906,6 +941,10 @@ BaseModelTypes = Union[
     type[BaseProteinSetTransformer],
 ]
 
+BaseModels = Union[
+    BaseProteinSetTransformerEncoder,
+    BaseProteinSetTransformer,
+]
 BaseModels = Union[
     BaseProteinSetTransformerEncoder,
     BaseProteinSetTransformer,
