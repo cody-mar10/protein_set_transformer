@@ -328,8 +328,9 @@ class Predictor:
         else:
             data = self._file.root.data[:]
 
-        return torch.from_numpy(data)
+        return torch.from_numpy(data).to(self.device)
 
+    # TODO: these should possibly be done iteratively instead of all at once
     def _reduce_fragments_to_scaffolds(self, reduce: str = "mean") -> PairTensor:
         # self.graph_type is either "fragment" or "fragmented scaffold"
         # shape: [N chunks, D]
