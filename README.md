@@ -2,11 +2,11 @@
 
 This repository contains the Protein Set Transformer (PST) framework for contextualizing protein language model embeddings at genome-scale to produce genome embeddings. You can use this code to train your own models. Using our foundation model pre-trained on viruses (vPST), you can also generate genome embeddings for input viruses.
 
-For more information, see our manuscript:
+For more information, see our publication:
 
-Protein Set Transformer: A protein-based genome language model to power high diversity viromics.  
-Cody Martin, Anthony Gitter, and Karthik Anantharaman.
-*bioRxiv*, 2024, doi: [10.1101/2024.07.26.605391](https://doi.org/10.1101/2024.07.26.605391).
+Protein Set Transformer: a protein-based genome language model to power high diversity viromics.  
+Cody Martin, Anthony Gitter, and Karthik Anantharaman. 2025.
+*Nature Communications* 16, 11123. doi: [https://doi.org/10.1038/s41467-025-66049-4](https://doi.org/10.1038/s41467-025-66049-4).
 
 ## Installation
 
@@ -338,20 +338,22 @@ There are several other repositories associated with the model code and the manu
 
 ### Citation
 
-Please cite our preprint if you find our work useful:
+Please cite our publication if you find our work useful:
 
-Martin C, Gitter A, Anantharaman K. (2024) "[Protein Set Transformer: A protein-based genome language model to power high diversity viromics.](https://doi.org/10.1101/2024.07.26.605391)"
+Protein Set Transformer: a protein-based genome language model to power high diversity viromics.  
+Cody Martin, Anthony Gitter, and Karthik Anantharaman. 2025.
+*Nature Communications* 16, 11123. doi: [https://doi.org/10.1038/s41467-025-66049-4](https://doi.org/10.1038/s41467-025-66049-4).
 
 ```bibtex
 @article {
   author = {Cody Martin and Anthony Gitter and Karthik Anantharaman},
-  title = {Protein Set Transformer: A protein-based genome language model to power high diversity viromics},
-  elocation-id = {2024.07.26.605391},
-  year = {2024},
-  doi = {10.1101/2024.07.26.605391},
-  publisher = {Cold Spring Harbor Laboratory},
-  URL = {https://www.biorxiv.org/content/10.1101/2024.07.26.605391v1},
-  eprint = {https://www.biorxiv.org/content/10.1101/2024.07.26.605391v1.full.pdf}
-  journal = {bioRxiv},
+  title = {Protein Set Transformer: a protein-based genome language model to power high diversity viromics},
+  year = {2025},
+  month = {Nov},
+  volume = {16},
+  doi = {10.1038/s41467-025-66049-4},
+  URL = {https://www.nature.com/articles/s41467-025-66049-4},
+  eprint = {https://www.nature.com/articles/s41467-025-66049-4}
+  journal = {Nature Communications},
 }
 ```
